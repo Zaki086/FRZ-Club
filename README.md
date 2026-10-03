@@ -24,6 +24,18 @@ stale gateway payments, email outbox; daily 00:05 IST: membership expiry + remin
 
 To start over: `npm run db:reset && npm run seed`.
 
+### Run it 24/7 with PM2
+
+```bash
+npm run build
+pm2 start ecosystem.config.cjs   # champions-web (port 3200, all interfaces) + champions-worker (scheduled jobs)
+pm2 save                         # restored automatically after a reboot (pm2 startup)
+```
+
+Set `APP_URL` in `.env` to the address people use (e.g. `http://<server-ip>:3200`); it is used in emailed links.
+Postgres runs with `restart: unless-stopped`. Over plain HTTP the session cookie is not marked `Secure` (browsers
+would drop it); behind HTTPS it is. Dev tools (time travel) are disabled in production by design.
+
 ## Logins
 
 All staff passwords: **`champions123`** · all member passwords: **`member123`** · login at `/login` with phone or email.
