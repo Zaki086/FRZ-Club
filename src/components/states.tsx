@@ -13,9 +13,9 @@ export function Loading({ label = "Loading…" }: { label?: string }) {
 
 export function Empty({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+    <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed bg-card py-10 text-center">
       <Inbox className="h-8 w-8 text-muted-foreground" />
-      <p className="font-medium">{title}</p>
+      <p className="font-semibold">{title}</p>
       {hint ? <p className="max-w-sm text-sm text-muted-foreground">{hint}</p> : null}
       {action}
     </div>
@@ -24,9 +24,9 @@ export function Empty({ title, hint, action }: { title: string; hint?: string; a
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 py-8 text-center">
+    <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 py-8 text-center">
       <AlertTriangle className="h-6 w-6 text-destructive" />
-      <p className="max-w-md text-sm text-red-800">{message}</p>
+      <p className="max-w-md text-sm text-destructive">{message}</p>
       {onRetry ? (
         <Button variant="outline" size="sm" onClick={onRetry}>
           Try again
@@ -57,7 +57,7 @@ export function DataState<T>({
 export function RejectionBanner({ error }: { error: { code?: string; message: string } | null }) {
   if (!error) return null;
   return (
-    <div role="alert" className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
+    <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
       {error.code ? <span className="mr-2 font-mono text-xs font-semibold">{error.code}</span> : null}
       {error.message}
     </div>

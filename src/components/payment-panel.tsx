@@ -13,6 +13,7 @@ import { DrawerOpener, emptyTender, MethodSelect, ProofFields, tenderProof, UpiQ
 import { DataState, RejectionBanner } from "./states";
 import { Money } from "./money";
 import { StatusBadge } from "./badges";
+import { RefundRequestForm } from "./refund-request";
 
 export type BillView = {
   id: string;
@@ -27,6 +28,9 @@ export type BillView = {
   due: number;
   lines: Array<{ id: string; description: string; qty: number; unitPrice: number; discountAmount: number; netAmount: number; taxAmount: number; explanation: string; voidedAt: string | null }>;
   payments: Array<{ id: string; type: string; method: string; amount: number; status: string; reference: string | null; occurredAt: string; changeGiven: number | null }>;
+  refundable?: number;
+  canRequestRefund?: boolean;
+  openRefunds?: Array<{ id: string; code: string; amount: number; status: string }>;
 };
 
 export function BillLines({ bill }: { bill: BillView }) {
@@ -44,7 +48,7 @@ export function BillLines({ bill }: { bill: BillView }) {
             </div>
             <div className="text-right">
               <Money paise={l.netAmount} className="font-medium" />
-              {l.discountAmount ? <p className="text-xs text-green-700">−{formatINR(l.discountAmount)} discount</p> : null}
+              {l.discountAmount ? <p className="text-xs text-success-text">−{formatINR(l.discountAmount)} discount</p> : null}
             </div>
           </div>
         ))}
@@ -185,6 +189,12 @@ export function PaymentPanel({
               </div>
             </div>
           ) : null}
+          {bill.openRefunds?.length ? (
+            <p className="text-xs text-muted-foreground">
+              {bill.openRefunds.map((r) => `${r.code} ${formatINR(r.amount)} ${r.status === "REQUESTED" ? "awaiting approval" : "ready to pay out"}`).join(" · ")}
+            </p>
+          ) : null}
+          {bill.canRequestRefund ? <RefundRequestForm billId={bill.id} refundable={bill.refundable ?? 0} onDone={() => void state.reload()} /> : null}
           {bill.payments.length ? (
             <div className="text-xs text-muted-foreground">
               {bill.payments.map((p) => (

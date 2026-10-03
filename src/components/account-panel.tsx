@@ -59,7 +59,7 @@ function Details({ p, onSaved }: { p: Profile; onSaved: () => void }) {
           >
             Save details
           </Button>
-          {saved ? <span className="text-xs text-green-700">Saved</span> : null}
+          {saved ? <span className="text-xs text-success-text">Saved</span> : null}
         </div>
       </CardContent>
     </Card>
@@ -81,7 +81,7 @@ function Password({ changedAt }: { changedAt: string | null }) {
         <Field label="New password" hint="At least 8 characters"><Input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} /></Field>
         <Field label="Repeat the new password"><Input type="password" autoComplete="new-password" value={repeat} onChange={(e) => setRepeat(e.target.value)} /></Field>
         <RejectionBanner error={error} />
-        {done ? <p className="text-green-700" data-testid="password-changed">Password changed. Other devices have been logged out.</p> : null}
+        {done ? <p className="text-success-text" data-testid="password-changed">Password changed. Other devices have been logged out.</p> : null}
         <Button
           size="sm"
           className="self-start"

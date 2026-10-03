@@ -11,7 +11,7 @@ export default async function BookingsPage() {
   if (!can(actor, "courts.view")) forbidden();
   return (
     <div>
-      <PageHeader title="Bookings" subtitle="Every booking for a day. Open one to check in players, take payment, change players or cancel." />
+      <PageHeader title="Bookings" subtitle="Open a booking to check players in, take payment, change players or cancel." />
       <BookingsList initialDate={istDate(clock.now())} perms={{ book: can(actor, "bookings.any"), checkin: can(actor, "checkin") }} />
     </div>
   );

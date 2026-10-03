@@ -14,6 +14,9 @@ export type PublicCapabilities = {
   upiVpa: string | null;
   clubName: string;
   sampleData: boolean;
+  /** v3 §6.3: the VAPID public key when Web Push is set up. */
+  pushKey: string | null;
+  whatsappApi: boolean;
 };
 
 export const METHOD_LABEL: Record<string, string> = { CASH: "Cash", CARD: "Card", UPI: "UPI", BANK_TRANSFER: "Bank transfer", ONLINE: "Online" };
@@ -41,7 +44,7 @@ export function useCapabilities(): PublicCapabilities | null {
     let alive = true;
     loadCapabilities()
       .then((c) => alive && setCaps(c))
-      .catch(() => alive && setCaps({ counterMethods: ["CASH"], online: false, email: false, delivery: null, gst: false, upiVpa: null, clubName: "", sampleData: false }));
+      .catch(() => alive && setCaps({ counterMethods: ["CASH"], online: false, email: false, delivery: null, gst: false, upiVpa: null, clubName: "", sampleData: false, pushKey: null, whatsappApi: false }));
     return () => {
       alive = false;
     };

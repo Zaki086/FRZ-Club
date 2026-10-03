@@ -32,7 +32,7 @@ function Rows({ title, rows }: { title: string; rows: Array<{ label: string; kpi
   return (
     <table className="w-full text-sm">
       <thead>
-        <tr className="border-b text-left text-xs uppercase tracking-wide text-slate-500">
+        <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
           <th className="py-1">{title}</th>
           <th className="py-1 text-right">This period</th>
           <th className="py-1 text-right">Previous</th>
@@ -41,11 +41,11 @@ function Rows({ title, rows }: { title: string; rows: Array<{ label: string; kpi
       </thead>
       <tbody>
         {rows.map((r) => (
-          <tr key={r.label} className="border-b border-slate-100">
+          <tr key={r.label} className="border-b border-border">
             <td className="py-1">{r.label}</td>
             <td className="tabular py-1 text-right">{formatINR(r.kpi.value)}</td>
-            <td className="tabular py-1 text-right text-slate-500">{formatINR(r.kpi.prev)}</td>
-            <td className="tabular py-1 text-right text-slate-500">{change(r.kpi.change)}</td>
+            <td className="tabular py-1 text-right text-muted-foreground">{formatINR(r.kpi.prev)}</td>
+            <td className="tabular py-1 text-right text-muted-foreground">{change(r.kpi.change)}</td>
           </tr>
         ))}
       </tbody>
@@ -63,13 +63,13 @@ function Rows({ title, rows }: { title: string; rows: Array<{ label: string; kpi
 export function ReportSummary({ data, clubName }: { data: ReportData; clubName: string }) {
   const m = data.money;
   return (
-    <div className="flex flex-col gap-5 rounded-lg border bg-white p-6 text-slate-900 print:border-0 print:p-0">
+    <div className="flex flex-col gap-5 rounded-lg border bg-white p-6 text-foreground print:border-0 print:p-0">
       <div className="flex flex-wrap items-end justify-between gap-2 border-b pb-3">
         <div>
           <p className="text-xl font-bold">{clubName}</p>
           <p className="text-sm">Owner report · {data.period.label}</p>
         </div>
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-muted-foreground">
           {fmtDate(data.period.from)} – {fmtDate(data.period.to)}
           <br />
           compared with {fmtDate(data.period.prevFrom)} – {fmtDate(data.period.prevTo)}
@@ -77,24 +77,24 @@ export function ReportSummary({ data, clubName }: { data: ReportData; clubName: 
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         {m.collected ? (
-          <div className="rounded-md bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">Collected (net of refunds)</p>
+          <div className="rounded-md bg-secondary p-3">
+            <p className="text-xs text-muted-foreground">Collected (net of refunds)</p>
             <p className="tabular text-2xl font-bold">{formatINR(m.collected.value)}</p>
-            <p className="text-xs text-slate-500">prev {formatINR(m.collected.prev)} · {change(m.collected.change)}</p>
+            <p className="text-xs text-muted-foreground">prev {formatINR(m.collected.prev)} · {change(m.collected.change)}</p>
           </div>
         ) : null}
         {m.expenses && m.payroll ? (
-          <div className="rounded-md bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">Paid out (expenses + payroll)</p>
+          <div className="rounded-md bg-secondary p-3">
+            <p className="text-xs text-muted-foreground">Paid out (expenses + payroll)</p>
             <p className="tabular text-2xl font-bold">{formatINR(m.expenses.value + m.payroll.value)}</p>
-            <p className="text-xs text-slate-500">expenses {formatINR(m.expenses.value)} · payroll {formatINR(m.payroll.value)}</p>
+            <p className="text-xs text-muted-foreground">expenses {formatINR(m.expenses.value)} · payroll {formatINR(m.payroll.value)}</p>
           </div>
         ) : null}
         {m.netCashFlow ? (
-          <div className="rounded-md bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">Net cash flow</p>
+          <div className="rounded-md bg-secondary p-3">
+            <p className="text-xs text-muted-foreground">Net cash flow</p>
             <p className="tabular text-2xl font-bold">{formatINR(m.netCashFlow.value)}</p>
-            <p className="text-xs text-slate-500">prev {formatINR(m.netCashFlow.prev)} · {change(m.netCashFlow.change)}</p>
+            <p className="text-xs text-muted-foreground">prev {formatINR(m.netCashFlow.prev)} · {change(m.netCashFlow.change)}</p>
           </div>
         ) : null}
       </div>
@@ -105,22 +105,22 @@ export function ReportSummary({ data, clubName }: { data: ReportData; clubName: 
       <div className="grid gap-3 sm:grid-cols-2">
         {data.receivables ? (
           <div className="rounded-md border p-3">
-            <p className="text-xs text-slate-500">What we are owed (receivables, now)</p>
+            <p className="text-xs text-muted-foreground">What we are owed (receivables, now)</p>
             <p className="tabular text-xl font-bold">{formatINR(data.receivables.total)}</p>
-            <p className="text-xs text-slate-500">{data.receivables.count} unpaid customer bills and invoices</p>
+            <p className="text-xs text-muted-foreground">{data.receivables.count} unpaid customer bills and invoices</p>
           </div>
         ) : null}
         {data.payables ? (
           <div className="rounded-md border p-3">
-            <p className="text-xs text-slate-500">What we owe (payables)</p>
+            <p className="text-xs text-muted-foreground">What we owe (payables)</p>
             <p className="tabular text-xl font-bold">{formatINR(data.payables.total)}</p>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               supplier bills {formatINR(data.payables.expenses)} · approved payroll {formatINR(data.payables.payroll)} · GST collected (estimate) {formatINR(data.payables.gst)}
             </p>
           </div>
         ) : null}
       </div>
-      <p className="text-[11px] text-slate-500">
+      <p className="text-[11px] text-muted-foreground">
         All figures are read from the club ledger. Refunds are netted against their original source. GST is an estimate for report support, not a filing.
       </p>
     </div>

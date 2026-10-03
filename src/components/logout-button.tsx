@@ -10,6 +10,7 @@ export function LogoutButton() {
     <Button
       variant="ghost"
       size="sm"
+      className="hover:bg-current/10"
       onClick={async () => {
         await api("/api/auth/logout", { body: {} });
         router.push("/login");

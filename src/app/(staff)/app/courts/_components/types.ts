@@ -55,6 +55,9 @@ export type BookingResult = {
 };
 
 export type BookingView = {
+  /** v3 CC-4/CC-5: set when the club cancelled a paid booking. */
+  resolution?: import("@/components/club-cancellation-choice").Resolution | null;
+  cancelReason?: string | null;
   id: string;
   code: string;
   court: string;

@@ -55,12 +55,12 @@ export function BookingDialog({
       <DialogContent title={`Book ${target.courtName}`} description={`${fmtDay(target.date)} · ${fmtRange(startDate, endDate)} (60 minutes)`} wide>
         {result ? (
           <div className="flex flex-col gap-3" data-testid="booking-success">
-            <div className="rounded-md border border-green-300 bg-green-50 p-3">
+            <div className="rounded-md border border-success/40 bg-success/10 p-3">
               <p className="text-lg font-bold">{result.bookingCode} confirmed</p>
               <p className="text-sm">
                 {result.court} · {fmtRange(result.startAt, result.endAt)} · total <Money paise={result.total} /> · <StatusBadge status={result.billStatus} />
               </p>
-              {result.due > 0 ? <p className="text-sm text-amber-800">Due at check-in: <Money paise={result.due} /></p> : null}
+              {result.due > 0 ? <p className="text-sm text-warning-text">Due at check-in: <Money paise={result.due} /></p> : null}
             </div>
             <ul className="text-sm">
               {result.players.map((p, i) => (

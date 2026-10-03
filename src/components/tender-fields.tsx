@@ -104,7 +104,7 @@ export function DrawerOpener({ onOpened, defaultArea = "DESK" }: { onOpened: () 
   const [float, setFloat] = useState("");
   const [err, setErr] = useState<string | null>(null);
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" data-testid="drawer-opener">
+    <div className="flex flex-col gap-2 rounded-md border border-warning/50 bg-warning/15 p-3 text-sm text-warning-foreground" data-testid="drawer-opener">
       <p className="font-medium">Open your cash drawer first: count the starting float.</p>
       <div className="flex flex-wrap gap-2">
         <Select value={area} onChange={(e) => setArea(e.target.value as typeof area)} aria-label="Drawer" className="w-32">
@@ -130,7 +130,7 @@ export function DrawerOpener({ onOpened, defaultArea = "DESK" }: { onOpened: () 
           Open drawer
         </Button>
       </div>
-      {err ? <p className="text-red-700">{err}</p> : null}
+      {err ? <p className="text-destructive">{err}</p> : null}
     </div>
   );
 }

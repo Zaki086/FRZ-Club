@@ -6,7 +6,22 @@ import { api, ApiError } from "./api";
 import { Money } from "./money";
 import { RejectionBanner } from "./states";
 
-export type CatalogueVariant = { id: string; sku: string; barcode?: string | null; label: string; price: number; available: number | null; stockLabel: string; inStock: boolean };
+/** `offerPrice`/`offer`: what a walk-in pays right now under a shop discount (the engine's price; null = no discount). */
+export type CatalogueVariant = { id: string; sku: string; barcode?: string | null; label: string; price: number; offerPrice?: number | null; offer?: string | null; available: number | null; stockLabel: string; inStock: boolean };
+
+/** The catalogue price: struck through with the discounted price beside it while a shop discount is on. */
+export function OfferPrice({ v, className }: { v: Pick<CatalogueVariant, "price" | "offerPrice" | "offer">; className?: string }) {
+  if (v.offerPrice === null || v.offerPrice === undefined) return <Money paise={v.price} className={className} />;
+  return (
+    <span className="inline-flex flex-col items-end" data-testid="offer-price">
+      <span className={className}>
+        <s className="mr-1 text-sm font-normal text-muted-foreground" aria-label={`was ${formatINR(v.price)}`}>{formatINR(v.price)}</s>
+        <Money paise={v.offerPrice} />
+      </span>
+      {v.offer ? <span className="text-xs font-medium text-success-text">{v.offer}</span> : null}
+    </span>
+  );
+}
 export type CatalogueProduct = {
   id: string;
   name: string;
@@ -73,7 +88,7 @@ export function QuoteLines({ quote, error, loading }: { quote?: ShopQuote; error
             </div>
             <div className="text-right">
               <Money paise={l.netAmount} className="font-medium" />
-              {l.discountAmount ? <p className="text-xs text-green-700">−{formatINR(l.discountAmount)}</p> : null}
+              {l.discountAmount ? <p className="text-xs text-success-text">−{formatINR(l.discountAmount)}</p> : null}
             </div>
           </div>
         ))}
@@ -93,6 +108,6 @@ export function QuoteLines({ quote, error, loading }: { quote?: ShopQuote; error
 export { SHOP_CATEGORIES, categoryLabel } from "./shop-categories";
 
 export function StockLabel({ label, inStock }: { label: string; inStock: boolean }) {
-  const tone = !inStock ? "bg-red-100 text-red-800" : label.startsWith("Only") ? "bg-amber-100 text-amber-800" : label === "Service" ? "bg-blue-100 text-blue-800" : "bg-green-100 text-green-800";
+  const tone = !inStock ? "bg-destructive/10 text-destructive" : label.startsWith("Only") ? "bg-warning/15 text-warning-text" : label === "Service" ? "bg-junior/10 text-junior" : "bg-success/10 text-success-text";
   return <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${tone}`}>{label}</span>;
 }

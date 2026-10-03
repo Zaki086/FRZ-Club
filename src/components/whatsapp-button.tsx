@@ -37,7 +37,7 @@ export function WhatsAppButton({ target, label = "WhatsApp", size = "sm" }: { ta
       >
         <MessageCircle className="h-4 w-4" /> {label}
       </Button>
-      {error ? <span className="text-xs text-red-700">{error}</span> : null}
+      {error ? <span className="text-xs text-destructive">{error}</span> : null}
     </span>
   );
 }

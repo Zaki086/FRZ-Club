@@ -1,8 +1,12 @@
 "use client";
+// v3 §3.2: social play with the standard FilterBar and summary strip; the sessions are still shown as a board of
+// cards (create, add player, take the fee, check in, remove, cancel) — now filtered and paged on the server.
+import Link from "next/link";
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import { api, newIdempotencyKey, useApi } from "@/components/api";
-import { DataState, RejectionBanner } from "@/components/states";
+import { FilteredList, useListReload } from "@/components/list/filtered-list";
+import { RejectionBanner } from "@/components/states";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/input";
@@ -13,15 +17,15 @@ import { PaymentPanel } from "@/components/payment-panel";
 import { emptyTender, MethodSelect, ProofFields, tenderProof, useTenderMethods, type TenderDraft } from "@/components/tender-fields";
 import { StatusBadge, TierBadge } from "@/components/badges";
 import { Money } from "@/components/money";
-import { addDays, fmtDay, fmtRange, minutesToTime, timeToMinutes } from "@/lib/time";
+import { addDays, fmtDay, fmtRange, istDate, minutesToTime, timeToMinutes } from "@/lib/time";
 import { PlayerPicker } from "../_components/player-picker";
 import { errorOf, type PickedPlayer } from "../_components/types";
 import { useNow } from "../_components/use-now";
 
-type Session = {
-  id: string; title: string; seriesId: string | null; date: string; startAt: string; endAt: string; status: string;
-  courts: string[]; capacity: number; joined: number;
-  participants: Array<{ id: string; name: string; memberId: string | null; tier: string; fee: number; checkedInAt: string | null; billId: string | null }>;
+type Participant = { id: string; name: string; memberId: string | null; tier: string; fee: number; checkedInAt: string | null; billId: string | null };
+type Row = {
+  id: string; title: string; series_id: string | null; start_at: string; end_at: string; status: string; capacity: number; joined: number;
+  free: number; courts: string | null; checked_in: number; due: number; fees: number; participants: Participant[];
 };
 type Perms = { manage: boolean; book: boolean; checkin: boolean };
 
@@ -92,7 +96,7 @@ function CreateSession({ today, onDone }: { today: string; onDone: () => void })
   );
 }
 
-function ParticipantBill({ billId, onPaid }: { billId: string; onPaid: () => void }) {
+export function ParticipantBill({ billId, onPaid }: { billId: string; onPaid: () => void }) {
   const bill = useApi<{ due: number; status: string }>(`/api/bills/${billId}`);
   const [open, setOpen] = useState(false);
   if (!bill.data) return <span className="text-xs text-muted-foreground">…</span>;
@@ -105,7 +109,7 @@ function ParticipantBill({ billId, onPaid }: { billId: string; onPaid: () => voi
   );
 }
 
-function AddPlayer({ session, onDone }: { session: Session; onDone: () => void }) {
+function AddPlayer({ session, onDone }: { session: { id: string; title: string }; onDone: () => void }) {
   const [open, setOpen] = useState(false);
   const [players, setPlayers] = useState<PickedPlayer[]>([]);
   const [payNow, setPayNow] = useState(false);
@@ -157,7 +161,7 @@ function AddPlayer({ session, onDone }: { session: Session; onDone: () => void }
   );
 }
 
-function CheckInSocial({ id, onDone }: { id: string; onDone: () => void }) {
+export function CheckInSocial({ id, onDone }: { id: string; onDone: () => void }) {
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   return (
     <div className="flex flex-col items-start gap-1">
@@ -170,63 +174,78 @@ function CheckInSocial({ id, onDone }: { id: string; onDone: () => void }) {
   );
 }
 
-export function SocialBoard({ today, perms }: { today: string; perms: Perms }) {
-  const state = useApi<Session[]>(`/api/social?from=${today}&days=56`, { pollMs: 15000 });
+function SessionCard({ s, perms }: { s: Row; perms: Perms }) {
+  const reload = useListReload();
   const now = useNow();
-  const reload = () => void state.reload();
   return (
-    <div className="flex flex-col gap-3">
-      {perms.manage ? <div><CreateSession today={today} onDone={reload} /></div> : null}
-      <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: "No social sessions scheduled", hint: perms.manage ? "Create the Friday social series above." : "A manager can schedule one." }}>
-        {(sessions) => (
-          <div className="flex flex-col gap-3">
-            {sessions.map((s) => (
-              <Card key={s.id}>
-                <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <CardTitle>{s.title} · {fmtDay(s.date)} {fmtRange(s.startAt, s.endAt)}</CardTitle>
-                    <p className="text-sm text-muted-foreground">{s.courts.join(", ")} · {s.joined}/{s.capacity} players{s.seriesId ? " · weekly series" : ""}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge status={s.status} />
-                    {s.status === "SCHEDULED" && perms.book ? <AddPlayer session={s} onDone={reload} /> : null}
-                    {s.status === "SCHEDULED" && perms.manage ? (
-                      <ConfirmButton trigger="Cancel session" title={`Cancel ${s.title}?`} description="Every participant is refunded and the courts are released." requireReason confirmLabel="Cancel session"
-                        onConfirm={async (reason) => { await api(`/api/social/${s.id}/cancel`, { body: { reason } }); reload(); }} />
+    <Card>
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
+        <div>
+          <CardTitle>{s.title} · {fmtDay(istDate(new Date(s.start_at)))} {fmtRange(s.start_at, s.end_at)}</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            {s.courts ?? "—"} · {s.joined}/{s.capacity} players{s.series_id ? " · weekly series" : ""}
+            {s.due > 0 ? <> · <Money paise={s.due} /> to collect</> : null}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <StatusBadge status={s.status} />
+          {s.status === "SCHEDULED" && perms.book ? <AddPlayer session={s} onDone={reload} /> : null}
+          {s.status === "SCHEDULED" && perms.manage ? (
+            <ConfirmButton trigger="Cancel session" title={`Cancel ${s.title}?`} description="Every participant is refunded and the courts are released." requireReason confirmLabel="Cancel session"
+              onConfirm={async (reason) => { await api(`/api/social/${s.id}/cancel`, { body: { reason } }); reload(); }} />
+          ) : null}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {s.participants.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nobody has joined yet.</p>
+        ) : (
+          <Table>
+            <THead><TR><TH>Player</TH><TH>Tier</TH><TH>Fee</TH><TH>Payment</TH><TH>Check-in</TH><TH /></TR></THead>
+            <TBody>
+              {s.participants.map((p) => (
+                <TR key={p.id}>
+                  <TD className="font-medium">{p.name}</TD>
+                  <TD><TierBadge tier={p.tier} /></TD>
+                  <TD><Money paise={p.fee} /></TD>
+                  <TD>{p.billId ? <ParticipantBill billId={p.billId} onPaid={reload} /> : "—"}</TD>
+                  <TD>{p.checkedInAt ? <span className="text-xs text-green-700">Checked in</span> : perms.checkin && s.status === "SCHEDULED" ? <CheckInSocial id={p.id} onDone={reload} /> : "—"}</TD>
+                  <TD>
+                    {perms.book && s.status === "SCHEDULED" && new Date(s.start_at).getTime() > now ? (
+                      <ConfirmButton trigger="Remove" title={`Remove ${p.name}?`} description="Leaving 2 h or more before start refunds the fee in cash from your drawer (online payments go back online) (BK-7)." confirmLabel="Remove player"
+                        onConfirm={async () => { await api(`/api/social/participants/${p.id}/leave`, { body: { refundMethod: "CASH" } }); reload(); }} />
                     ) : null}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {s.participants.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Nobody has joined yet.</p>
-                  ) : (
-                    <Table>
-                      <THead><TR><TH>Player</TH><TH>Tier</TH><TH>Fee</TH><TH>Payment</TH><TH>Check-in</TH><TH /></TR></THead>
-                      <TBody>
-                        {s.participants.map((p) => (
-                          <TR key={p.id}>
-                            <TD className="font-medium">{p.name}</TD>
-                            <TD><TierBadge tier={p.tier} /></TD>
-                            <TD><Money paise={p.fee} /></TD>
-                            <TD>{p.billId ? <ParticipantBill billId={p.billId} onPaid={reload} /> : "—"}</TD>
-                            <TD>{p.checkedInAt ? <span className="text-xs text-green-700">Checked in</span> : perms.checkin && s.status === "SCHEDULED" ? <CheckInSocial id={p.id} onDone={reload} /> : "—"}</TD>
-                            <TD>
-                              {perms.book && s.status === "SCHEDULED" && new Date(s.startAt).getTime() > now ? (
-                                <ConfirmButton trigger="Remove" title={`Remove ${p.name}?`} description="Leaving 2 h or more before start refunds the fee in cash from your drawer (online payments go back online) (BK-7)." confirmLabel="Remove player"
-                                  onConfirm={async () => { await api(`/api/social/participants/${p.id}/leave`, { body: { refundMethod: "CASH" } }); reload(); }} />
-                              ) : null}
-                            </TD>
-                          </TR>
-                        ))}
-                      </TBody>
-                    </Table>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
         )}
-      </DataState>
-    </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CreateSessionButton({ today }: { today: string }) {
+  const reload = useListReload();
+  return <CreateSession today={today} onDone={reload} />;
+}
+
+export function SocialBoard({ today, perms }: { today: string; perms: Perms }) {
+  return (
+    <FilteredList<Row>
+      list="social"
+      searchPlaceholder="Session, court or player"
+      pollMs={15_000}
+      toolbar={
+        <>
+          <Button asChild variant="outline"><Link href="/app/courts/social/players">All players</Link></Button>
+          {perms.manage ? <CreateSessionButton today={today} /> : null}
+        </>
+      }
+      columns={[]}
+      view={(rows) => <div className="flex flex-col gap-3">{rows.map((s) => <SessionCard key={s.id} s={s} perms={perms} />)}</div>}
+      empty={{ title: "No social sessions scheduled", hint: perms.manage ? "Create the Friday social series above." : "A manager can schedule one." }}
+    />
   );
 }
