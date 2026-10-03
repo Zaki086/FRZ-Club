@@ -11,9 +11,12 @@ export const POST = route(
     const input = await body(req, schema);
     const s = await login(input.identifier, input.password);
     const jar = await cookies();
+    // Secure cookies are only stored by browsers over HTTPS; on plain HTTP (e.g. http://<server-ip>:3200) the
+    // session must still work, so the flag follows the actual protocol (directly or via a proxy).
+    const https = req.nextUrl.protocol === "https:" || req.headers.get("x-forwarded-proto") === "https";
     jar.set(SESSION_COOKIE, s.token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: https,
       sameSite: "lax",
       path: "/",
       expires: s.expiresAt,
