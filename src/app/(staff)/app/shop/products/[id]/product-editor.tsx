@@ -250,7 +250,7 @@ export function ProductEditor({ id }: { id: string }) {
                 <THead><TR><TH>Size / colour</TH><TH>Price</TH><TH className="text-right">Available</TH><TH>Reorder at</TH><TH>Tax</TH><TH /></TR></THead>
                 <TBody>{d.variants.map((v) => <VariantRow key={v.id} d={d} v={v} onDone={reload} />)}</TBody>
               </Table>
-              <p className="text-xs text-muted-foreground">Stock changes through <Link className="underline" href="/app/shop/stock">receipts and adjustments</Link> or a stock take — never here.{d.canEditPrices ? " A new price starts now, or from the date and time you choose; every change is kept in the price history." : " Prices are set by shop staff, the manager or the owner."}</p>
+              <p className="text-xs text-muted-foreground">Stock changes through <Link className="underline" href="/app/shop/stock">receipts and adjustments</Link> or a stock take — never here.{d.canEditPrices ? " A new price starts now, or from the date and time you choose; every change is kept in the price history." : " Prices are set by shop staff or the owner."}</p>
               <NewVariant d={d} onDone={reload} />
             </CardContent>
           </Card>

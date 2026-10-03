@@ -244,7 +244,7 @@ export function Pager<R>({ data, update }: { data: ListData<R>; update: (p: Reco
 }
 
 /** A list page body: summary strip, FilterBar, then a dense table (or a custom view of the rows), then paging. */
-export function FilteredList<R extends { id: string }>({ list, columns, searchPlaceholder, onRowClick, rowExtra, toolbar, pollMs, dayStepper, view, empty }: {
+export function FilteredList<R extends { id: string }>({ list, columns, searchPlaceholder, onRowClick, rowExtra, toolbar, pollMs, dayStepper, view, empty, summaryView }: {
   list: string;
   columns: Column<R>[];
   searchPlaceholder: string;
@@ -257,6 +257,8 @@ export function FilteredList<R extends { id: string }>({ list, columns, searchPl
   /** Replace the table with another presentation of the same rows (e.g. a board). */
   view?: (rows: R[], data: ListData<R>) => ReactNode;
   empty?: { title: string; hint?: string };
+  /** Replace the standard summary strip (e.g. a figure that combines two summary values). */
+  summaryView?: (data: ListData<R>, update: (p: Record<string, string | null>) => void) => ReactNode;
 }) {
   const s = useList<R>(list, { pollMs });
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -266,7 +268,7 @@ export function FilteredList<R extends { id: string }>({ list, columns, searchPl
       {(data) => (
         <div className="flex flex-col gap-3">
           {toolbar ? <div className="flex flex-wrap justify-end gap-2">{toolbar}</div> : null}
-          <SummaryStrip data={data} update={s.update} />
+          {summaryView ? summaryView(data, s.update) : <SummaryStrip data={data} update={s.update} />}
           <FilterBar data={data} params={s.params} update={s.update} replaceAll={s.replaceAll} qs={s.qs} list={list} searchPlaceholder={searchPlaceholder} dayStepper={dayStepper} />
           {data.rows.length === 0 ? (
             <Empty title={empty?.title ?? "Nothing matches these filters"} hint={empty?.hint ?? "Remove a filter or widen the dates."} />

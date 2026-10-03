@@ -14,6 +14,7 @@ import { DataState, RejectionBanner } from "./states";
 import { Money } from "./money";
 import { StatusBadge } from "./badges";
 import { RefundRequestForm } from "./refund-request";
+import { drawerChanged } from "./drawer-badge";
 
 export type BillView = {
   id: string;
@@ -153,6 +154,7 @@ export function PaymentPanel({
                       if (submit) await submit(parsed);
                       else for (const p of parsed) await api("/api/payments/counter", { body: { billId, ...p }, idempotencyKey: newIdempotencyKey() });
                       setParts([]);
+                      drawerChanged(); // CD-1: the header badge shows the new cash at once
                       await state.reload();
                       onPaid?.();
                     } catch (e) {

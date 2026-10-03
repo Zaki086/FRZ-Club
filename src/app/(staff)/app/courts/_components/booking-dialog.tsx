@@ -123,7 +123,7 @@ export function BookingDialog({
                 <div className="flex flex-col gap-2 pl-6">
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                     <MethodSelect methods={methods} value={tender.method} onChange={(m) => setTender({ ...tender, method: m })} />
-                    <ProofFields className="sm:col-span-2" value={tender} onChange={(patch) => setTender({ ...tender, ...patch })} />
+                    <ProofFields className="sm:col-span-2" value={tender} due={quote?.total ?? null} onChange={(patch) => setTender({ ...tender, ...patch })} />
                   </div>
                   {tender.method === "UPI" ? <UpiQr amountPaise={quote?.total ?? null} note={`${target.courtName} ${target.date} ${target.time}`} /> : null}
                 </div>

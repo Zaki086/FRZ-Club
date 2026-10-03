@@ -15,7 +15,7 @@ export type ReportData = {
     netCashFlow?: Kpi;
   };
   receivables?: { total: number; count: number };
-  payables?: { total: number; expenses: number; payroll: number; gst: number };
+  payables?: { total: number; expenses: number; payroll: number; gst: number; refunds?: number; refundCount?: number; refundOldestDays?: number | null };
   generatedAt: string;
 };
 
@@ -116,6 +116,7 @@ export function ReportSummary({ data, clubName }: { data: ReportData; clubName: 
             <p className="tabular text-xl font-bold">{formatINR(data.payables.total)}</p>
             <p className="text-xs text-muted-foreground">
               supplier bills {formatINR(data.payables.expenses)} · approved payroll {formatINR(data.payables.payroll)} · GST collected (estimate) {formatINR(data.payables.gst)}
+              {data.payables.refunds != null ? <> · refunds payable {formatINR(data.payables.refunds)} ({data.payables.refundCount ?? 0} waiting at the desk{data.payables.refundOldestDays != null ? `, oldest ${data.payables.refundOldestDays} d` : ""})</> : null}
             </p>
           </div>
         ) : null}
