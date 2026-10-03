@@ -200,7 +200,7 @@ describe("Phase 2 — cancellation, card, Member 360 (MB-13, MB-14, R-05, R-06)"
     expect(ms.status).toBe("CANCELLED");
     // v3 RF-3: the refund is a request — someone else approves it, then the desk pays it out (D-68).
     await approveRefund(w.actors.OWNER, c.refundRequest!.id);
-    await payOutRefund(w.actors.FRONT_DESK, c.refundRequest!.id, { method: "UPI", reference: utr() });
+    await payOutRefund(w.actors.FRONT_DESK, c.refundRequest!.id, { method: "UPI", reference: utr(), identityChecked: true }); // v4 RF-9: identity tick
     const sum = await prisma.ledgerEntry.aggregate({ where: { billId: r.billId! }, _sum: { amount: true } });
     expect(sum._sum.amount).toBe(100000);
     expect((await effectiveStatus(r.memberId)).tier).toBe("WALK_IN");

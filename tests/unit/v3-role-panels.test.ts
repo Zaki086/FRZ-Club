@@ -9,6 +9,7 @@ import { ROLE_HOME } from "@/server/auth/sessions";
 import { can } from "@/server/rbac/permissions";
 import type { UserActor } from "@/server/rbac/actor";
 import { deskToday } from "@/server/services/desk";
+import { listApprovals } from "@/server/services/approvals";
 import { requestLeave } from "@/server/services/staff";
 import { myTodo, todoKeys, TODO_HOME } from "@/server/services/todo";
 import { makeWorld, type World } from "../helpers/world";
@@ -55,18 +56,24 @@ describe("role panels — staff menus", () => {
     for (const role of ROLES.filter((r) => r !== "OWNER")) for (const p of OWNER_ONLY) expect(hrefs(role)).not.toContain(p);
   });
 
-  it("the notification log is one entry (Messages to send), not two", () => {
-    for (const role of ["OWNER", "MANAGER", "FRONT_DESK"] as const) {
-      expect(hrefs(role).filter((h) => h === "/app/messages")).toHaveLength(1);
-      expect(labels(role)).toContain("Messages to send");
-      expect(labels(role)).not.toContain("Notification log");
-    }
+  // v4 §1.1 changed this (was: Owner, Manager and Front desk each had one "Messages to send" entry): the Front desk has
+  // "Messages to Send", the Owner "Notification Log", the Manager neither — still never two entries for the one screen.
+  it("the notification log is at most one entry per menu (Front desk: Messages to Send; Owner: Notification Log)", () => {
+    for (const role of ["OWNER", "FRONT_DESK"] as const) expect(hrefs(role).filter((h) => h === "/app/messages")).toHaveLength(1);
+    expect(labels("FRONT_DESK")).toContain("Messages to Send");
+    expect(labels("FRONT_DESK")).not.toContain("Notification Log");
+    expect(labels("OWNER")).toContain("Notification Log");
+    expect(labels("OWNER")).not.toContain("Messages to Send");
+    expect(hrefs("MANAGER")).not.toContain("/app/messages");
   });
 
-  it("front desk: desk, members, renewals, bookings, social, leads, refunds and its drawer — no shop back office, no finance", () => {
+  // v4 §1.1 changed this (was: the members list, check-ins, kiosk and counter POS on the desk's menu, no dashboard):
+  // the desk's menu is its dashboard, drawer, refunds, check-in & search, new members, renewals, messages, check-in
+  // risk, courts, leads and its own pages (the exact list is tests/unit/v4-role-nav.test.ts).
+  it("front desk: dashboard, drawer, refunds, desk, new members, renewals, messages, check-in risk, courts and leads — no shop, no finance", () => {
     const d = hrefs("FRONT_DESK");
-    for (const p of [...DESK, ...COURTS, "/app/crm", "/app/refunds", "/app/drawer", "/app/shop"]) expect(d).toContain(p);
-    for (const p of [...SHOP_BACK_OFFICE, ...FINANCE, ...BAR, "/app", "/app/reports", "/app/pricing"]) expect(d).not.toContain(p);
+    for (const p of ["/app", "/app/desk", "/app/members/new", "/app/desk/expiring", "/app/messages", "/app/desk/risk", ...COURTS, "/app/crm", "/app/refunds", "/app/drawer", "/app/notifications"]) expect(d).toContain(p);
+    for (const p of [...SHOP_BACK_OFFICE, ...FINANCE, ...BAR, "/app/shop", "/app/members", "/app/desk/visits", "/kiosk", "/app/reports", "/app/pricing"]) expect(d).not.toContain(p);
   });
 
   it("shop: counter, orders, sales, products, stock and purchasing — no desk, courts, bar or finance", () => {
@@ -91,12 +98,15 @@ describe("role panels — staff menus", () => {
     for (const p of [...DESK, ...COURTS, "/app/shop", ...SHOP_BACK_OFFICE, ...BAR, "/app/crm"]) expect(a).not.toContain(p);
   });
 
-  it("owner and manager: the whole club, grouped; the manager without payroll, GST, ledger or admin", () => {
+  // v4 §1.1 changed this (was: Owner and Manager each had the whole club on the menu): the Owner's menu is the business
+  // (finance, staff, admin; every other page by URL, RN-2); the Manager's is the club's operations without payroll,
+  // GST, ledger, the price book (RN-3) or admin.
+  it("owner and manager: the v4 menus — the Owner runs the business, the Manager the operations", () => {
     const o = hrefs("OWNER");
-    for (const p of [...DESK, ...COURTS, "/app/shop", ...SHOP_BACK_OFFICE, ...BAR, ...FINANCE, "/app/pricing", "/app/staff/leave", "/app/refunds"]) expect(o).toContain(p);
+    for (const p of ["/app", "/app/employees", "/app/courts", ...FINANCE, "/app/staff/employees", "/app/staff/attendance", "/app/pricing", "/app/reports", "/app/messages"]) expect(o).toContain(p);
     const m = hrefs("MANAGER");
-    for (const p of [...DESK, ...COURTS, "/app/shop", ...SHOP_BACK_OFFICE, ...BAR, "/app/pricing", "/app/staff/leave", "/app/refunds", "/app/finance/cash"]) expect(m).toContain(p);
-    for (const p of ["/app/finance/payroll", "/app/finance/gst", "/app/finance/ledger"]) expect(m).not.toContain(p);
+    for (const p of ["/app", "/app/members", ...COURTS, "/app/shop/purchasing", "/app/shop/stock", "/app/shop/sales", "/app/bar/day", "/app/crm", "/app/finance/invoices", "/app/finance/clients", "/app/finance/expenses", "/app/finance/cash", "/app/staff/employees", "/app/staff/attendance", "/app/staff/roster", "/app/staff/leave", "/app/staff/activity"]) expect(m).toContain(p);
+    for (const p of ["/app/finance/payroll", "/app/finance/gst", "/app/finance/ledger", "/app/pricing", "/app/refunds", "/app/desk"]) expect(m).not.toContain(p);
   });
 
   it("every role has a menu; members have none", () => {
@@ -115,10 +125,12 @@ describe("role panels — what is waiting for each role", () => {
     expect(TODO_HOME).toEqual({ OWNER: "dashboard", MANAGER: "dashboard", SHOP_STAFF: "shop", BAR_STAFF: "bar", ACCOUNTANT: "finance" });
     const keys = async (role: StaffRole) => (await myTodo(w.actors[role])).items.map((i) => i.key);
     expect(await keys("OWNER")).toEqual(todoKeys("dashboard"));
-    expect(await keys("MANAGER")).toEqual(["refundsToApprove", "leaveToApprove", "priceRulesToApprove", "missingClockOuts"]);
+    // v4 changed this (was: refunds, leave, price rules and missing clock-outs): refunds, leave and missing clock-outs are
+    // decided in "Needs your approval" (RN-4) and price rules are the Owner's alone (RN-3).
+    expect(await keys("MANAGER")).toEqual([]);
     expect(await keys("SHOP_STAFF")).toEqual(todoKeys("shop"));
     expect(await keys("BAR_STAFF")).toEqual(["readyToServe", "refundsToPayOut"]);
-    expect(await keys("ACCOUNTANT")).toEqual(["drawersToBank", "supplierBills", "overdueInvoices", "payrollToPay"]);
+    expect(await keys("ACCOUNTANT")).toEqual(["drawersToBank", "safeToBank", "supplierBills", "overdueInvoices", "payrollToPay"]);
     // The desk's to-dos are its Today strip; the kitchen's is the kitchen display.
     expect(await keys("FRONT_DESK")).toEqual([]);
     expect(await keys("KITCHEN")).toEqual([]);
@@ -126,10 +138,11 @@ describe("role panels — what is waiting for each role", () => {
     for (const role of ROLES) for (const i of (await myTodo(w.actors[role])).items) expect(i.count).toBe(0);
   });
 
+  // v4 RN-4: the leave count moved from the to-do panel to the "Needs your approval" rows (same rule).
   it("a leave request waits for the Owner and Manager, never for the person who asked", async () => {
     await requestLeave(w.actors.MANAGER, { type: "CASUAL", startDate: "2026-10-20", endDate: "2026-10-21", reason: "family function" });
     await requestLeave(w.actors.FRONT_DESK, { type: "CASUAL", startDate: "2026-10-22", endDate: "2026-10-22", reason: "exam" });
-    const leave = async (role: StaffRole) => (await myTodo(w.actors[role])).items.find((i) => i.key === "leaveToApprove")?.count;
+    const leave = async (role: StaffRole) => (await listApprovals(w.actors[role])).filter((i) => i.kind === "LEAVE").length;
     expect(await leave("OWNER")).toBe(2);
     expect(await leave("MANAGER")).toBe(1); // not their own
   });

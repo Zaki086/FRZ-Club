@@ -73,7 +73,9 @@ describe("v3 §7.2 — club cancellations", () => {
     const part = await prisma.socialParticipant.findFirstOrThrow({ where: { sessionId } });
     expect(part.status).toBe("CANCELLED_BY_CLUB");
     const refund = await prisma.refundRequest.findFirstOrThrow({ where: { billId: part.billId! } });
-    expect([refund.reason, refund.autoApproved, refund.status]).toEqual(["CLUB_CANCELLATION", true, "COMPLETED"]);
+    // v4 RF-8/RF-9: the manager's drawer holds no cash, so the cash refund waits at the desk (ready to collect).
+    expect([refund.reason, refund.autoApproved, refund.status, refund.collectStatus]).toEqual(["CLUB_CANCELLATION", true, "APPROVED", "READY_TO_COLLECT"]);
+    expect(await prisma.payment.count({ where: { refundRequestId: refund.id, type: "REFUND", status: "PENDING" } })).toBe(1);
     // The member's play for that day no longer counts: they can book twice more on another court.
     await book(w, { court: "Court 2", time: "18:00", players: [{ memberId: m.memberId }] });
     await book(w, { court: "Court 2", time: "19:00", players: [{ memberId: m.memberId }] });

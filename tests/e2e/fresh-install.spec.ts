@@ -126,7 +126,8 @@ test("4. the Owner adds a front-desk user, who lands on Today and signs up the f
   const opener = page.getByTestId("drawer-opener");
   await expect(opener.or(page.getByText(/is registered as CC-\d{6}/))).toBeVisible();
   if (await opener.isVisible()) {
-    await opener.getByLabel("Opening float").fill("1000");
+    // v4 §2.3 changed this line (was: an "Opening float" total): the float is counted by denomination (₹1,000).
+    await opener.getByLabel("₹500 notes", { exact: true }).fill("2");
     await opener.getByRole("button", { name: "Open drawer" }).click();
     await page.getByTestId("signup-submit").click();
   }

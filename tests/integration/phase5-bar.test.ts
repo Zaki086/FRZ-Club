@@ -5,6 +5,7 @@ import {
 } from "@/server/services/bar";
 import { clockIn, clockOut } from "@/server/services/staff";
 import { makeWorld, type World, utr, CARD_PROOF } from "../helpers/world";
+import { withFloat } from "../helpers/drawer";
 import { makeMember } from "../helpers/members";
 import { makeBar } from "../helpers/bar";
 import { expectIntegrity } from "../helpers/integrity";
@@ -112,6 +113,7 @@ describe("Phase 5 — settle, carry, close the day, shifts (BR-8…BR-11, E-13�
     const part = await settleTab(w.actors.BAR_STAFF, t.tabId, { payments: [{ method: "CARD", ...CARD_PROOF, amount: 20000 }] });
     expect([part.status, part.due]).toEqual(["OPEN", 44000]);
     await expect(settleTab(w.actors.BAR_STAFF, t.tabId, { payments: [{ method: "CASH", amount: 50000 }] })).rejects.toMatchObject({ code: "OVERPAYMENT" });
+    await withFloat(w.actors.BAR_STAFF, 10000, "BAR"); // v4 CD-4: the change comes from cash already in the drawer
     const done = await settleTab(w.actors.BAR_STAFF, t.tabId, { payments: [{ method: "CASH", amount: 24000, tendered: 30000 }, { method: "UPI", reference: utr(), amount: 20000 }] });
     expect([done.status, done.due, done.changeGiven]).toEqual(["SETTLED", 0, 6000]);
     await expectIntegrity();
@@ -139,6 +141,7 @@ describe("Phase 5 — settle, carry, close the day, shifts (BR-8…BR-11, E-13�
   it("BR-10/E-15: bar payments carry received_by and shift; closing the drawer stores the variance", async () => {
     const bina = w.actors.BAR_STAFF;
     const shift = await clockIn(bina, { openingFloat: 200000 });
+    await withFloat(bina, 200000, "BAR"); // v4 CD-4: the drawer holds the same float, so it can give change
     const t = await openTab(bina, { guest: { name: "Cash Carl" } });
     await addLines(bina, t.tabId, { items: [{ menuItemId: bar.sandwich.id, qty: 1 }] });
     await settleTab(bina, t.tabId, { payments: [{ method: "CASH", amount: 32000, tendered: 50000 }] });

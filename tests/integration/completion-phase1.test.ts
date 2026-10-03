@@ -23,6 +23,7 @@ import { makeProduct } from "../helpers/shop";
 import { makeMember } from "../helpers/members";
 import { clock } from "@/lib/clock";
 import { makeWorld, type World, utr, CARD_PROOF, TEST_UPI_VPA } from "../helpers/world";
+import { withFloat } from "../helpers/drawer";
 import { expectIntegrity } from "../helpers/integrity";
 import { approvedRefund } from "../helpers/refunds";
 import { requestRefund } from "@/server/services/refunds";
@@ -151,6 +152,7 @@ describe("Completion §2.7 — refunds only through enabled methods", () => {
     const pending = await listPendingRefunds(w.actors.FRONT_DESK);
     expect(pending.map((p) => p.amount)).toEqual([15000]);
     await expect(completeRefund(w.actors.FRONT_DESK, pending[0].id, { method: "UPI" })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    await withFloat(w.actors.FRONT_DESK, 20000); // v4 RF-9: cash refunds are paid from cash in the drawer
     await completeRefund(w.actors.FRONT_DESK, pending[0].id, { method: "CASH" });
     expect((await prisma.ledgerEntry.findFirstOrThrow({ where: { billId: bill.id, amount: { lt: 0 } } })).amount).toBe(-15000);
     expect(await listPendingRefunds(w.actors.FRONT_DESK)).toEqual([]);

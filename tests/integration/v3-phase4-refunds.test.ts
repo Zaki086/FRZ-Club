@@ -36,7 +36,8 @@ describe("v3 §5.2 — refund requests", () => {
     await expect(requestRefund(w.actors.ACCOUNTANT, { billId: b.billId, amount: 100, reason: "OTHER", note: "not allowed" })).rejects.toMatchObject({ code: "FORBIDDEN" });
     const r = await requestRefund(w.actors.FRONT_DESK, { billId: b.billId, amount: 10000, reason: "SERVICE_ISSUE", note: "lights failed for 20 minutes" });
     expect([r.status, r.code]).toEqual(["REQUESTED", expect.stringMatching(/^RF-\d{6}$/)]);
-    expect(await prisma.notification.count({ where: { type: "REFUND_REQUESTED" } })).toBeGreaterThan(0);
+    // v4 §3.3/§4.1: approvers are told with the staff event REFUND_APPROVAL_NEEDED (in-app + push).
+    expect(await prisma.notification.count({ where: { type: "REFUND_APPROVAL_NEEDED" } })).toBeGreaterThan(0);
   });
 
   it("RF-2: amount ≤ what is still refundable (open requests count), partial allowed; a reason category and a note are required", async () => {
@@ -73,23 +74,25 @@ describe("v3 §5.2 — refund requests", () => {
     const upi = await paidBooking("UPI", "11:00");
     const r1 = await requestRefund(w.actors.FRONT_DESK, { billId: upi.billId, amount: 40000, reason: "SERVICE_ISSUE", note: "court closed" });
     expect((await approveRefund(w.actors.MANAGER, r1.id)).status).toBe("APPROVED"); // ready to pay out at the desk
-    await expect(payOutRefund(w.actors.FRONT_DESK, r1.id, { method: "UPI" })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
-    const done = await payOutRefund(w.actors.FRONT_DESK, r1.id, { method: "UPI", reference: utr() });
+    // v4 RF-9: every pay-out needs the identity tick; a guest also gives the original booking code.
+    const guestId1 = { identityChecked: true, originalCode: upi.bookingCode };
+    await expect(payOutRefund(w.actors.FRONT_DESK, r1.id, { method: "UPI", ...guestId1 })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    const done = await payOutRefund(w.actors.FRONT_DESK, r1.id, { method: "UPI", reference: utr(), ...guestId1 });
     expect([done.status, done.payments.map((p) => [p.method, p.status])]).toEqual(["COMPLETED", [["UPI", "SUCCEEDED"]]]);
 
     const card = await paidBooking("CARD", "12:00");
     const r2 = await requestRefund(w.actors.FRONT_DESK, { billId: card.billId, amount: 40000, reason: "DUPLICATE_CHARGE", note: "charged twice" });
     await approveRefund(w.actors.MANAGER, r2.id);
-    await expect(payOutRefund(w.actors.FRONT_DESK, r2.id, { method: "CARD" })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
-    expect((await payOutRefund(w.actors.FRONT_DESK, r2.id, { method: "CARD", approvalCode: "REV001" })).status).toBe("COMPLETED");
+    await expect(payOutRefund(w.actors.FRONT_DESK, r2.id, { method: "CARD", identityChecked: true, originalCode: card.bookingCode })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect((await payOutRefund(w.actors.FRONT_DESK, r2.id, { method: "CARD", approvalCode: "REV001", identityChecked: true, originalCode: card.bookingCode })).status).toBe("COMPLETED");
 
     const cash = await paidBooking("CASH", "13:00");
     const r3 = await requestRefund(w.actors.FRONT_DESK, { billId: cash.billId, amount: 40000, reason: "GOODWILL", note: "regular" });
     await approveRefund(w.actors.MANAGER, r3.id);
     await closeDrawer(w.actors.SHOP_STAFF, { cashCounted: 0 }); // the shop has no drawer open now
-    await expect(payOutRefund(w.actors.SHOP_STAFF, r3.id, { method: "CASH" })).rejects.toMatchObject({ code: "FORBIDDEN" }); // and can't pay a court bill anyway
+    await expect(payOutRefund(w.actors.SHOP_STAFF, r3.id, { method: "CASH", identityChecked: true, originalCode: cash.bookingCode })).rejects.toMatchObject({ code: "FORBIDDEN" }); // and can't pay a court bill anyway
     const before = (await myDrawer(w.actors.FRONT_DESK)).open!.cashExpected;
-    await payOutRefund(w.actors.FRONT_DESK, r3.id, { method: "CASH" });
+    await payOutRefund(w.actors.FRONT_DESK, r3.id, { method: "CASH", identityChecked: true, originalCode: cash.bookingCode });
     expect((await myDrawer(w.actors.FRONT_DESK)).open!.cashExpected).toBe(before - 40000);
     await expectIntegrity();
   });
@@ -114,7 +117,8 @@ describe("v3 §5.2 — refund requests", () => {
     expect([db.status, db.failureReason]).toEqual(["FAILED", expect.stringMatching(/bank unavailable/)]);
     expect(await prisma.payment.count({ where: { refundRequestId: rb.id } })).toBe(0);
     const again = await retryAtDesk(w.actors.MANAGER, rb.id);
-    expect((await payOutRefund(w.actors.FRONT_DESK, again.id, { method: "CASH" })).status).toBe("COMPLETED");
+    await paidBooking("CASH", "17:00"); // v4 RF-9: cash is paid out only from cash in the drawer (this was paid online)
+    expect((await payOutRefund(w.actors.FRONT_DESK, again.id, { method: "CASH", identityChecked: true, originalCode: b.bookingCode })).status).toBe("COMPLETED");
 
     const c = await onlineBill("16:00");
     setCapabilityOverridesForTests({ "payments.online": false, email: true });
@@ -129,7 +133,7 @@ describe("v3 §5.2 — refund requests", () => {
     const req = await requestRefund(w.actors.FRONT_DESK, { billId: m.billId!, amount: 50000, reason: "GOODWILL", note: "injury" });
     await approveRefund(w.actors.MANAGER, req.id);
     expect(await prisma.ledgerEntry.count({ where: { billId: m.billId!, amount: { lt: 0 } } })).toBe(0); // nothing moves before pay-out
-    await payOutRefund(w.actors.FRONT_DESK, req.id, { method: "UPI", reference: utr() });
+    await payOutRefund(w.actors.FRONT_DESK, req.id, { method: "UPI", reference: utr(), identityChecked: true });
     const neg = await prisma.ledgerEntry.findFirstOrThrow({ where: { billId: m.billId!, amount: { lt: 0 } } });
     const pay = await prisma.payment.findFirstOrThrow({ where: { refundRequestId: req.id } });
     expect([neg.amount, neg.paymentId, pay.status]).toEqual([-50000, pay.id, "SUCCEEDED"]);
@@ -138,7 +142,7 @@ describe("v3 §5.2 — refund requests", () => {
     await expectIntegrity();
   });
 
-  it("RF-1 (members): only eligible items, from their own bills; the request is a policy refund", async () => {
+  it("RF-1 (members): only eligible items, from their own bills; (v4 §3.2) the request waits for approval, then is collected at the desk", async () => {
     const m = await makeMember(w, { name: "Portal Pia", plan: "SILVER" });
     const other = await makeMember(w, { name: "Other Omar", plan: "SILVER" });
     // The member books for themselves and a guest; the guest's ₹400 is on the member's bill.
@@ -150,9 +154,11 @@ describe("v3 §5.2 — refund requests", () => {
     // A booking cancelled within policy whose money was not returned (e.g. recorded before this workflow).
     await prisma.booking.update({ where: { id: b.bookingId }, data: { status: "CANCELLED", cancelledAt: clock.now() } });
     const r = await requestRefundAsMember(m.actor, { billId: b.billId, note: "please refund" });
-    expect([r.status, r.amount]).toEqual(["APPROVED", b.total]);
+    // v4 §3.2/§3.6: a member's request waits for a manager (approvers are told), then is ready to collect at the desk.
+    expect([r.status, r.amount]).toEqual(["REQUESTED", b.total]);
     await expect(requestRefundAsMember(m.actor, { billId: b.billId })).rejects.toMatchObject({ code: "REFUND_NOT_ELIGIBLE" }); // nothing left
-    await payOutRefund(w.actors.FRONT_DESK, r.id, { method: "CASH" });
+    expect((await approveRefund(w.actors.MANAGER, r.id)).collectStatus).toBe("READY_TO_COLLECT");
+    await payOutRefund(w.actors.FRONT_DESK, r.id, { method: "CASH", identityChecked: true });
     expect((await prisma.refundRequest.findUniqueOrThrow({ where: { id: r.id } })).status).toBe("COMPLETED");
   });
 
@@ -164,7 +170,7 @@ describe("v3 §5.2 — refund requests", () => {
     await approveRefund(w.actors.MANAGER, rb.id);
     const rc = await requestRefund(w.actors.FRONT_DESK, { billId: b.billId, amount: 5000, reason: "GOODWILL", note: "third" });
     await approveRefund(w.actors.MANAGER, rc.id);
-    await payOutRefund(w.actors.FRONT_DESK, rc.id, { method: "CASH" });
+    await payOutRefund(w.actors.FRONT_DESK, rc.id, { method: "CASH", identityChecked: true, originalCode: b.bookingCode });
     const r = await listView(w.actors.MANAGER, "refunds", {});
     const s = Object.fromEntries(r.summary.map((x) => [x.key, x.value]));
     expect([s.awaiting, s.ready, s.today]).toEqual([1, 1, 5000]);
@@ -184,6 +190,7 @@ describe("v3 §5.2 — refund requests", () => {
     expect(log.map((l) => [l.action, l.actorId])).toEqual([
       ["refund_request.requested", w.actors.FRONT_DESK.userId],
       ["refund_request.approved", w.actors.MANAGER.userId],
+      ["refund_request.ready_to_collect", w.actors.MANAGER.userId], // v4 RF-8: waiting at the desk is a transition too
       ["refund_request.completed", w.actors.FRONT_DESK.userId],
     ]);
     await expectIntegrity();
