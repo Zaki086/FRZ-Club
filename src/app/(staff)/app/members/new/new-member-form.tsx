@@ -14,6 +14,7 @@ import { Money } from "@/components/money";
 import { cn } from "@/components/ui/cn";
 import { DrawerOpener, emptyTender, ProofFields, tenderProof, UpiQr, useTenderMethods, type TenderDraft } from "@/components/tender-fields";
 import { METHOD_LABEL } from "@/components/capabilities";
+import { WhatsAppOptIn } from "@/components/whatsapp-opt-in";
 
 /** True when the date of birth makes the person under 18 today (the server checks again). */
 function underEighteen(dob: string): boolean {
@@ -31,6 +32,7 @@ export function NewMemberForm({ prefill }: { prefill: { name: string; phone: str
   const plans = useApi<Plan[]>("/api/plans");
   const [f, setF] = useState({ name: prefill.name, phone: prefill.phone, email: prefill.email, dob: "", emergencyContactName: "", emergencyContactPhone: "", guardianName: "", guardianPhone: "" });
   const [consent, setConsent] = useState(false);
+  const [whatsappOptIn, setWhatsappOptIn] = useState(false);
   const [photo, setPhoto] = useState<string | null>(null);
   const [plan, setPlan] = useState<string>("SILVER");
   const [months, setMonths] = useState<1 | 3 | 12>(1);
@@ -94,6 +96,7 @@ export function NewMemberForm({ prefill }: { prefill: { name: string; phone: str
               guardianName: underEighteen(f.dob) ? f.guardianName : undefined,
               guardianPhone: underEighteen(f.dob) ? f.guardianPhone : undefined,
               consent,
+              whatsappOptIn,
               photoUrl: photo ?? undefined,
               leadId: prefill.leadId || undefined,
               plan: plan ? { code: plan, months, payment } : undefined,
@@ -197,7 +200,7 @@ export function NewMemberForm({ prefill }: { prefill: { name: string; phone: str
               </Field>
               {payNow && tender.method !== "CASH" ? (
                 <Field label={tender.method === "UPI" ? "UPI reference (UTR)" : "Card approval code and last 4"}>
-                  <ProofFields value={tender} onChange={(patch) => setTender({ ...tender, ...patch })} />
+                  <ProofFields value={tender} due={price || null} onChange={(patch) => setTender({ ...tender, ...patch })} />
                 </Field>
               ) : null}
               {payNow && tender.method === "UPI" ? <UpiQr amountPaise={price || null} note={`Membership ${f.name}`.slice(0, 40)} /> : null}
@@ -207,6 +210,7 @@ export function NewMemberForm({ prefill }: { prefill: { name: string; phone: str
             <input type="checkbox" className="mt-1" checked={consent} onChange={(e) => setConsent(e.target.checked)} required data-testid="member-consent" />
             The member agrees that the club stores these details to run their membership (<a className="underline" href="/privacy" target="_blank" rel="noreferrer">privacy notice</a>).
           </label>
+          <WhatsAppOptIn checked={whatsappOptIn} onChange={setWhatsappOptIn} hint={underEighteen(f.dob) ? "For a Junior, the guardian decides." : "Ask the member; leave unticked if they say no."} />
           {error?.code === "DRAWER_NOT_OPEN" ? <DrawerOpener onOpened={() => setError(null)} /> : <RejectionBanner error={error} />}
           <Button type="submit" size="lg" disabled={busy} data-testid="signup-submit">
             {busy ? "Signing up…" : "Sign up member"}

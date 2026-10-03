@@ -25,36 +25,14 @@ const LABEL: Record<string, string> = {
   "whatsapp.api": "WhatsApp (automatic, Cloud API)",
 };
 
-const EVENTS: Array<[string, string]> = [
-  ["MEMBERSHIP_WELCOME", "Welcome with login link"], ["MEMBERSHIP_RENEWED", "Membership confirmed"], ["MEMBERSHIP_EXPIRY", "Expiry reminder"],
-  ["DUES_REMINDER", "Dues reminder"], ["REFUND_COMPLETED", "Refund paid"], ["CREDENTIALS_REISSUED", "New login link"], ["BOOKING_CANCELLED_BY_CLUB", "Cancelled by the club"],
-];
-
-/** v3 §6.3: approved WhatsApp templates per message and a test message; without them WhatsApp stays manual. */
-function WhatsAppCard({ rows, saved }: { rows: SettingRow[]; saved: () => void }) {
-  const current = (rows.find((r) => r.key === "whatsapp_templates")?.value ?? {}) as Record<string, { name: string; language: string }>;
-  const [names, setNames] = useState<Record<string, string>>(Object.fromEntries(EVENTS.map(([k]) => [k, current[k]?.name ?? ""])));
-  const [lang, setLang] = useState(Object.values(current)[0]?.language ?? "en");
-  const [to, setTo] = useState("");
+/** v4 §5.1: WhatsApp has its own tab (connection, templates, test message). */
+function WhatsAppCard() {
   return (
     <Card>
       <CardHeader><CardTitle>WhatsApp messages</CardTitle></CardHeader>
-      <CardContent className="flex flex-col gap-3 text-sm">
-        <p className="text-muted-foreground">
-          Automatic WhatsApp needs WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_APP_SECRET in the server&apos;s .env, a template approved by Meta for each message, and a test message. Meta charges per message. Until then, messages wait under “Messages to send” for the desk to send from the club phone.
-        </p>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {EVENTS.map(([k, label]) => (
-            <Field key={k} label={label}><Input value={names[k]} onChange={(e) => setNames({ ...names, [k]: e.target.value })} placeholder="approved template name" /></Field>
-          ))}
-          <Field label="Template language code"><Input value={lang} onChange={(e) => setLang(e.target.value)} /></Field>
-        </div>
-        <SaveBar label="Save templates" onSave={async () => {
-          await putSetting("whatsapp_templates", Object.fromEntries(Object.entries(names).filter(([, v]) => v.trim()).map(([k, v]) => [k, { name: v.trim(), language: lang.trim() }])));
-          saved();
-        }} />
-        <Field label="Send a test message to (mobile)"><Input inputMode="tel" value={to} onChange={(e) => setTo(e.target.value)} placeholder="98765 43210" /></Field>
-        <SaveBar label="Send test WhatsApp" onSave={async () => { await api("/api/messages/test-whatsapp", { body: { to } }); saved(); }} />
+      <CardContent className="text-sm text-muted-foreground">
+        Automatic WhatsApp (Meta Cloud API) is set up in the WhatsApp tab: keys, templates and a test message. Until then, messages wait under
+        “Messages to send” for the desk to send from the club phone.
       </CardContent>
     </Card>
   );
@@ -123,7 +101,7 @@ export function PaymentsTab({ rows, onSaved }: { rows: SettingRow[]; onSaved: ()
             <SaveBar label="Send test email" onSave={async () => { await api("/api/messages/test-email", { body: { to: testTo || undefined } }); saved(); }} />
           </CardContent>
         </Card>
-        <WhatsAppCard rows={rows} saved={saved} />
+        <WhatsAppCard />
         <Card>
           <CardHeader><CardTitle>Shop delivery</CardTitle></CardHeader>
           <CardContent className="flex flex-col gap-3 text-sm">

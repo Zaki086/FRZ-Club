@@ -171,7 +171,7 @@ Phase 1 notes:
 | 14 | Leave date validation LV-1…LV-3 | 3 · §9.1 | `v3-phase3-staff` LV |
 | 15–16 | Dynamic pricing PR-10…PR-15 | 7 · §9.2 | `v3-phase7-pricing-products` PR; ui-flows 14 |
 | 17–19 | Product management (photos, prices/promotions, archive) | 7 · §9.3 | `v3-phase7-pricing-products` §9.3; ui-flows 15 |
-| — | HTTPS | 1 · §1 | Path B, tunnel running (below); phone-camera check not done |
+| — | HTTPS | 1 · §1 | Path B: Let's Encrypt certificate on a fixed sslip.io/nip.io address, port 3443 (below); phone-camera check not done |
 | — | Design port | 1, 8 · §2, §10 | contrast script; `docs/screenshots/before` and `after` |
 | — | FilterBar on every list | 2, 8 · §3 | `v3-phase2-lists`, `v3-phase8-*` |
 
@@ -205,19 +205,22 @@ champions.38.49.215.124.nip.io, champions.38.49.215.124.sslip.io {
 }
 ```
 
-**Meanwhile:** PM2 `champions-tunnel` (Cloudflare quick tunnel, `scripts/tunnel.mjs`, binary in `.bin/`, not in git).
-**Its URL changes whenever it restarts** (also after someone's `pm2 restart all`); the wrapper writes the current one to
-`.tunnel-url` and updates `APP_URL` automatically; when Cloudflare drops the tunnel ("Tunnel not found") it exits so PM2
-starts a new one (D-81). Evidence (2026-10-03): `https://gentleman-promise-lottery-muslim.trycloudflare.com`, later
-`https://tennessee-travelers-threaded-researcher.trycloudflare.com/login` → 200
-→ `HTTP/2 200`; login sets `cc_session=…; Secure; HttpOnly; SameSite=lax`; `curl -I http://…/login` → `308` to HTTPS;
-`strict-transport-security: max-age=31536000`; `/manifest.webmanifest`, `/sw.js`, `/icon` served over HTTPS (PWA
-installable). **Not verified here:** scanning a member card with an Android phone's camera and installing the PWA
-on a phone — both need a person with a phone on the HTTPS address above.
+**Now (2026-10-03): a fixed HTTPS address with a real certificate** — `https://champions.38-49-215-124.sslip.io:3443`
+(also `https://champions.38-49-215-124.nip.io:3443`). PM2 `champions-https` (`scripts/https.mjs`) holds a Let's Encrypt
+certificate for both names (issuer YE2, valid to 2027-01-01, renewed automatically 30 days before expiry, reloaded
+without a restart). Ports 80/443 stay with the other project's Caddy, so the certificate uses the DNS-01 challenge:
+sslip.io and nip.io delegate `_acme-challenge.<name>` to the IP inside the name, and the script answers those TXT
+queries on 38.49.215.124:53 only while lego (`.bin/lego`, not in git) issues or renews. HTTPS is served on port 3443
+and forwarded to the app on 127.0.0.1:3200 with `X-Forwarded-Proto: https`. Evidence: Let's Encrypt staging, then
+production validated both names; `/login` → 200 from outside (fetched from the internet) with a verified chain;
+`strict-transport-security: max-age=31536000`; `/manifest.webmanifest`, `/sw.js` served over HTTPS; plain HTTP to
+the public name redirects to the HTTPS address (`tests/unit/https-redirect.test.ts`). The Cloudflare quick tunnel
+(random addresses) is retired. Using port 443 without ":3443" still needs the Caddy owner's block above.
+**Not verified here:** scanning a member card with a phone camera and installing the PWA on a phone.
 
 | Item | Files | Tests / evidence |
 |---|---|---|
-| HTTPS tunnel, APP_URL sync | `scripts/tunnel.mjs`, `ecosystem.config.cjs` | curl evidence above |
+| HTTPS with a Let's Encrypt certificate on a fixed address | `scripts/https.mjs`, `scripts/acme-hook.mjs`, `ecosystem.config.cjs`, `src/proxy.ts` | evidence above; `https-redirect` unit test |
 | HTTP→HTTPS redirect, HSTS | `src/proxy.ts`, `next.config.ts` | curl evidence above; local `:3200` unaffected (e2e 32/32) |
 | Design inventory | `DESIGN_PORT.md` | — |
 | Tokens, fonts, contrast | `src/app/globals.css`, `src/app/layout.tsx`, `scripts/contrast.mjs` | `node scripts/contrast.mjs`: 22 pairs AA |
@@ -387,7 +390,7 @@ event/tournament pages (no such features here), its sample data, photos, demo PI
 | Request | Done | Where | Tests |
 |---|---|---|---|
 | "Session expires after a few minutes; the same password stops working" | Cause: the test gate reset the live database. Gates now use their own DB (`champions_e2e`) and app (:3201); the live club is never reset. Session windows already exceed 2–3 days (members 30 d, staff 7 d, sliding) | gate script, D-81 | `v3-session-credentials` (3) |
-| HTTPS for the camera and push | Trusted HTTPS via the Cloudflare tunnel, now self-recovering. A fixed address needs the Caddy owner's block (above) or the owner's go-ahead for a Let's Encrypt certificate on our own port | `scripts/tunnel.mjs` | curl evidence above |
+| HTTPS for the camera and push | Fixed address https://champions.38-49-215-124.sslip.io:3443 with a Let's Encrypt certificate (also the nip.io name), renewed automatically; the random-address tunnel is retired | `scripts/https.mjs` | evidence in phase 1 above |
 | Email + push + phone for cancellations, maintenance, dues, expiry, refunds | Every member event goes through `notifyMember` (in-app, email, push, WhatsApp API or the manual WhatsApp queue); maintenance over bookings takes the club-cancellation path; desk cancellations, reschedules, auto-refunds, refund requested/approved/rejected, invoice due/overdue added; guests get email too; the worker retries with backoff and logs failures | `channels.ts`, `closures.ts`, `booking.ts`, `social.ts`, `dues.ts`, `refunds.ts`, `worker.ts`, D-80 | `v3-notify-coverage` (10) |
 | Shop staff: photos, details, prices, dynamic discounts | New capability `shop.pricing` (Owner, Manager, Shop staff) for shop product prices (through the price book) and product/category/shop-wide discounts (time bands, days, dates; staff limit, larger ones go to a manager); the public shop shows the offer price | `price-book.ts`, `products.ts`, `shop.ts`, product editor, D-79 | `v3-shop-staff-pricing` (7) |
 | Each panel shows only that role's work, no repetition | One menu per role (`ROLE_NAV`), each screen once; each role's home leads with "Waiting for you" to-dos from the database; repeated dashboard tiles and quick links removed | `_nav.ts`, `todo.ts`, `/api/me/todo` | `v3-role-panels` (19) |
@@ -401,3 +404,158 @@ production build ✓ · Playwright **48/48** (demo, ui-cash incl. steps 13–15,
 `verify:integrity` **11/11** · `audit:dummy` clean (0 source violations, 0 HTTP errors, 0 console errors, 0 dummy text,
 0 too-wide pages) · `docs/screenshots/after` **50** images (360 + 1280 px). Not verified here: scanning a card with a
 phone camera and receiving push on a phone (needs a person with a phone on the HTTPS address).
+
+## v4 — Role navigation, Cash Drawer v2, Refunds v2, Push + WhatsApp
+
+The club runs cash only; card, UPI and online payment are unchanged and still work when switched on (D-109).
+Decisions D-82…D-109. Migrations (additive): `0014_v4_cash_drawers`, `0015_v4_push_queue`, `0016_v4_whatsapp`,
+`0017_v4_refunds` (no `0013`: the navigation needed no schema change). New rule IDs: RN-1…RN-6, CD-1…CD-8,
+RF-8…RF-11, NT-5…NT-15, WA-10…WA-44 (WhatsApp), WA-50…WA-56 (sending queue).
+
+### Definition of done (§7)
+
+| # | Item | Phase / section | Main tests |
+|---|---|---|---|
+| 1 | All sections implemented and mapped to files and tests | 1–5 · §1–§5 | the tables below |
+| 2 | All tests pass, including the new ones; `verify:integrity` all checks (13/13 — the spec's "12/12" did not count v3's #11, D-94); `audit:dummy` clean with the new navigation | 6 | Phase 6 below |
+| 3 | Cash only, a full day: drawers open → payments increment → refunds paid out decrement → drops → close → reconciliation balances | 2, 3 · §2, §3 | `v4-cash-drawer` CD-1, CD-1/RF-9, PAY_OUT/PAY_IN/CASH_DROP, CD-5/CD-6, CD-7/CD-8, reconciliation, integrity #12–#13; `v4-refunds` RF-9; e2e `v4-drawer` 1, `v4-refunds` 2; `seed:demo` 60 days of tills, drops, deposits and closes → 13/13 (D-89) |
+| 4 | WhatsApp keys present and templates approved: cancellation, reschedule and refund messages send automatically and their statuses follow the webhook. Keys absent: push, in-app, email and the manual queue | 4, 5 · §4, §5 | `v4-notifications` WA-50…WA-56; `v4-whatsapp` WA-14, WA-40…WA-42, the §5.2 emitter tests; e2e `v4-whatsapp` 1 (keys absent → Off). Meta is mocked in tests: no keys exist on this server |
+
+### Phase 1 — Role navigation (§1)
+
+| Item | Files | Tests |
+|---|---|---|
+| §1.1 exact sidebars (Owner 22, Manager 21, Front desk 16 items; Shop, Bar, Kitchen, Accountant unchanged) | `src/app/(staff)/app/_nav.ts`, staff `layout.tsx`, `_components/sidebar.tsx` (unchanged) | `v4-role-nav` §1.1 (exact lists, each item a real screen, unchanged menus); e2e `v4-nav` 4 |
+| §1.2 Employees (Owner) | `src/app/(staff)/app/employees/*`, `src/server/services/users.ts` (`updateStaff`, `forceLogout`), `PATCH /api/users/[id]/employment`, `POST /api/users/[id]/logout`, `filters/users.ts` | `v4-nav-dashboards` Employees ×2 |
+| §1.2 Check-in Risk (RN-6) | `src/server/services/checkin-risk.ts`, `/api/desk/risk`, `src/app/(staff)/app/desk/risk/*` | `v4-nav-dashboards` RN-6 ×2 |
+| §1.2 Notifications (front desk) | `src/app/(staff)/app/notifications/page.tsx` | `v4-role-nav` (screen exists); e2e `v4-nav` |
+| RN-1 / RN-2 page access + allow-list | `src/server/rbac/page-access.ts`, `src/server/auth/current.ts`, My Account link to `/app/staff/me` | `v4-role-nav` RN-1 ×5, RN-2; e2e `v4-nav` RN-1, RN-2 |
+| RN-3 capability matrix | `src/server/rbac/permissions.ts`, `price-book.ts`, `products.ts`, `todo.ts`, `pricing/price-book.tsx`, shop product texts | `v4-role-nav` RN-3 ×2; `v3-phase7-pricing-products`, `v3-shop-staff-pricing`; ui-flows 14 |
+| RN-4 Needs your approval | `src/server/services/approvals.ts`, `approval-links.ts`, `/api/approvals`, `/api/approvals/decide`, `_dashboard/approvals-panel.tsx`, `staff.ts` and `attendance.ts` notification links, `todo.ts` | `v4-nav-dashboards` RN-4 ×5; `v3-role-panels`; ui-flows 11; e2e `v4-nav` RN-4/RN-5 |
+| RN-5 dashboards per role | `src/server/services/dashboards.ts`, `/api/dashboards/*`, `_dashboard/{owner-cash,manager-today,front-desk}.tsx`, `_dashboard/dashboard.tsx` (Refunds payable tile), `app/page.tsx`, header `DrawerBadge` | `v4-nav-dashboards` RN-5 ×3; e2e `v4-nav` RN-4/RN-5 |
+| §1.4 `audit:dummy` crawls the navigation lists | `tests/audit/crawl.spec.ts`, `scripts/audit-dummy.ts`, `tests/audit/screenshots.spec.ts` | the audit itself (a sidebar that differs from its list is a problem) |
+
+### Phase 2 — Cash Drawer v2 (§2)
+
+| Item | Files | Tests |
+|---|---|---|
+| §2.1 model: tills, sessions v2, movements, safe, deposits | `prisma/migrations/0014_v4_cash_drawers/migration.sql`, `prisma/schema.prisma` (CashDrawer, DrawerMovement, SafeMovement, BankDeposit, session fields) | `v4-cash-drawer` "two staff can't share…", "legacy openDrawer…"; migration checked on a copy of the live data (13/13) |
+| CD-1/CD-2 live balance, `DRAWER_NOT_OPEN` | `src/server/services/drawers.ts`, `payments.ts` (`recordPaymentTx`, `refundTx`, `completeRefund`), `components/drawer-badge.tsx`, `/api/drawer/balance` | `v4-cash-drawer` CD-1, CD-2, CD-1/RF-9 |
+| CD-3/CD-4 tendered, change, `INSUFFICIENT_CHANGE` | `components/tender-fields.tsx` (CashTender, quick tenders), `payment-panel.tsx`, `pos.tsx`, `booking-dialog.tsx`, `new-member-form.tsx`, `payments.ts` | `v4-cash-drawer` CD-3/CD-4 |
+| §2.3 open by denomination, tills, settings | `drawers.ts` (`openDrawer`, tills), `lib/cash.ts`, `components/cash-count.tsx`, `DrawerOpener`, `/api/drawer/tills*`, Settings `cash-tab.tsx`, `settings.ts` (`cash_denominations`, `blind_close`, `drawer_variance_tolerance`) | `v4-cash-drawer` CD-5/CD-6 (denomination checks), legacy open |
+| PAY_IN / PAY_OUT (expense) / CASH_DROP | `drawers.ts`, `expenses.ts` (`payExpenseTx`), `/api/drawer/{pay-in,pay-out,drop}` | `v4-cash-drawer` "PAY_OUT creates an expense…" |
+| §2.4 My Cash Drawer | `src/app/(staff)/app/drawer/*`, `filters/drawers.ts` (`my-drawer-movements`), `components/drawer-movements.tsx` | e2e `v4-drawer` 1 |
+| CD-5…CD-8 close, variance approval, handover | `drawers.ts` (`closeDrawer`, reason, approve/reject, `listDrawerVarianceApprovals`), `/api/drawer/sessions/[id]/*`, `app/finance/drawers/[id]`, capability `cash.approve_variance` | `v4-cash-drawer` CD-5/CD-6, CD-7/CD-8 |
+| §2.6 safe, bank deposits, reconciliation, Cash Drawers page | `drawers.ts` (safe, `recordBankDeposit`, `dailyCashReconciliation`, `drawersOverview`, `cashSummary`), `/api/finance/safe`, `/api/finance/drawers`, `app/finance/drawers/*`, `app/finance/cash/*`, `uploads.ts` (kind `deposit`) | `v4-cash-drawer` reconciliation, RN-5 cash summary, safe test |
+| §2.7 integrity #12–#13 (13 checks, D-94) | `src/server/services/integrity.ts` | `v4-cash-drawer` "integrity #12 … #13 — 13 checks"; every existing `expectIntegrity()` |
+| Accountant to-do: "Cash in the safe to bank" (D-95) | `src/server/services/todo.ts` | `v3-role-panels` (accountant keys) |
+| Sample tills + 60-day cash routine | `prisma/seed/history.ts` | `v4-cash-drawer` "seed:demo — the sample tills" |
+
+### Phase 3 — Refunds v2 (§3)
+
+| Item | Files | Tests |
+|---|---|---|
+| RF-8 ready to collect + signed QR | `refund-records.ts` (`settleRequestIfPaid`, `notifyRefund`), `refund-qr.ts`, migration `0017_v4_refunds` | `v4-refunds` RF-8 ×3 |
+| RF-9 desk pay-out (find/scan → photo + identity tick → pay from the drawer → 80 mm receipt) | `refunds.ts` (`payOutRefund`, `findCollectableRefunds`, `collectableRefund`, `refundReceipt`, `payOutRefundPayment`), `payments.ts` (`completeRefund` outer transaction), `app/(staff)/app/refunds/payout.tsx`, `refunds-queue.tsx`, `refunds/[id]/*`, `print/refund/[id]/page.tsx`, `components/refund-receipt.tsx`, `/api/refunds/collect`, `/api/refunds/[id]/{collect,pay-out,complete}` | `v4-refunds` RF-9 ×3; ui-flows 11; e2e `v4-refunds` 2 |
+| RF-10 unclaimed: reminders, Refunds payable | `refunds.ts` (`runRefundReminders`, `refundsPayableSummary`), `jobs/index.ts`, `reports.ts`, `report-summary.tsx` | `v4-refunds` RF-10 ×2 |
+| RF-11 partial refunds | `refund-records.ts` (`refundableNow`), `refunds.ts` (`requestRefundAsMember` amount, `refundableLeft`), `components/refund-request.tsx` | `v4-refunds` RF-11 |
+| §3.2/§3.3 member requests, approvers told | `refunds.ts`, `refund-records.ts` (`createRequestedTx`, `notifyApprovers`) | `v4-refunds` §3.7; e2e `v4-refunds` 3 |
+| §3.4 portal Refunds and Payments tabs, banner, guardians | `app/(member)/portal/refunds/*`, `portal/payments/*`, `portal/receipts/[billId]`, `portal/_components/refund-qr.tsx`, `refund-banner.tsx`, `portal-nav.tsx`, `portal-home.tsx`, `components/refund-timeline.tsx`, `/api/portal/refunds`, `/api/portal/payments`, `/api/refunds/[id]/token` | `v4-refunds` §3.7 (full history), §3.4 (guardian) |
+| §3.5 front-desk Refunds page (tabs, FilterBar, summary strip) | `refunds-queue.tsx`, `refunds/page.tsx`, `filters/refunds.ts`, `filters/core.ts` (`summaryIgnores`), `list/filtered-list.tsx` (`summaryView`) | `v4-refunds` RF-10 (strip the same on every tab) |
+| §3.6 refund messages with WhatsApp values | `refund-records.ts` `notifyRefund` | `v4-refunds` §3.6 |
+| `/rq/<token>` collection page | `app/(public)/rq/[token]/page.tsx`, `publicRefundByToken`, `robots.ts` (disallow `/rq`) | `v4-refunds` RF-8 (`/rq`) |
+
+### Phase 4 — Event catalogue and Web Push (§4)
+
+| Item | Files | Tests |
+|---|---|---|
+| §4.1 event catalogue + dedupe | `src/server/services/channels.ts` (`EVENT_CATALOGUE`, `MEMBER_EVENTS`, `notifyMember`/`notifyGuest`) | `v4-notifications` NT-5 ×2 |
+| Booking confirmed / player added / order ready / restring ready | `booking.ts`, `shop.ts` | NT-15 |
+| Booking cancelled by the member: every channel (D-82) | `booking.ts` (`cancelBookingTx`) | `v3-notify-coverage` "a booking cancelled by the desk or by the member" |
+| Session reminder 2 h, social reminder 2 h, choice reminders day 3/6 | `src/server/services/reminders.ts`, `src/server/jobs/index.ts` (5-minute batch) | NT-11, NT-12, NT-13, "the 5-minute batch…" |
+| Staff events (lead assigned, refund awaiting approval, drawer variance, leave decided) | catalogue (in-app + push only), `staff.ts` (`decideLeave` → LEAVE_DECIDED) | NT-14 |
+| Optional templates (welcome, expiring, dues) | `membership.ts`, `dues.ts` (`wa`) | `v3-phase5-notifications`, `v3-notify-coverage` |
+| §4.2 capability, `npm run vapid:generate`, `.env.example` | `scripts/vapid-generate.mjs`, `package.json`, `.env.example`, `capabilities.ts` (unchanged: HTTPS APP_URL + both keys) | — |
+| Payload, TTL, urgency | `channels.ts` (`pushPayload`, `flushDeliveries`) | NT-6 |
+| Quiet hours 22:00–07:00 IST | `channels.ts` (`inQuietHours`, `quietHoursEnd`, `pushIsUrgent`, `pushNotBefore`, claim filter) | NT-7 |
+| 404/410 removal, retries max 3 | `channels.ts` `flushDeliveries` | NT-8, NT-9 |
+| Service worker `push` + `notificationclick` | `public/sw.js` | — (needs a real push service: phone check under "Needs the owner") |
+| Opt-in card, device list with Remove, iPhone note, `/api/push/subscriptions` | `components/push-opt-in.tsx`, `components/notification-settings.tsx`, `src/app/api/push/subscriptions/route.ts`, `…/[id]/route.ts`, `(member)/portal/page.tsx`, `(staff)/app/account/page.tsx` | NT-10; e2e `v4-push` 1, 2, 4 |
+
+### Phase 5 — WhatsApp automation (§5)
+
+| Item | Files | Tests |
+|---|---|---|
+| §5.1 env + capability `whatsapp.api` (WA-14) | `src/server/services/capabilities.ts`, `whatsapp/config.ts`, `.env.example`, README | `v4-whatsapp` WA-14 |
+| §5.1 Settings → WhatsApp: status, token check, mapping, Fetch templates, test message (WA-15…WA-19) | `whatsapp/setup.ts`, `/api/whatsapp/{status,token-check,templates,templates/fetch,test}`, `settings/_components/whatsapp-tab.tsx`, `settings-tabs.tsx`, `payments-tab.tsx`, `settings.ts` (`whatsapp_template_map`, `whatsapp_health`) | `v4-whatsapp` WA-14…WA-19, Owner only; e2e `v4-whatsapp` 1 |
+| §5.1 opt-in (WA-30…WA-32) | migration `0016_v4_whatsapp`, `schema.prisma`, `membership.ts`, `crm.ts`, `components/whatsapp-opt-in.tsx`, trial/enquiry/new-member forms, `whatsapp/opt-in.ts`, `/api/whatsapp/opt-in`, `components/whatsapp-consent-card.tsx`, portal notifications page | `v4-whatsapp` WA-30, WA-31, WA-32; e2e `v4-whatsapp` 2, 3 |
+| §5.2 templates doc, builders, sanitiser (WA-10) | `docs/whatsapp-templates.md`, `whatsapp/templates.ts` | unit `v4-whatsapp-templates` WA-10 |
+| §5.2 emitters (`wa`) | `closures.ts`, `booking.ts`, `social.ts`, `(member)/portal/bookings/[ref]/page.tsx` | `v4-whatsapp` §5.2 emitters ×4 (incl. WA-50), WA-21 |
+| §5.3 `/r/<token>` (WA-20…WA-24) | `signed-links.ts`, `whatsapp/resolution.ts`, `/api/r/[token]`, `(public)/r/[token]/{page,choice}.tsx`, `errors.ts` (`LINK_*`) | `v4-whatsapp` WA-20…WA-24; e2e `v4-whatsapp` 4, `v4-refunds` 2 |
+| §5.4 step 3 client + error classification (WA-11…WA-13) | `whatsapp/client.ts` | unit WA-11, WA-12, WA-13; `v4-whatsapp` WA-14 (#190) |
+| §5.4 queue: in the transaction, after commit, 30 s sweep, SKIP LOCKED, wamid → SENT, retries, permanent, rate-limit pause, fallback | `src/server/db.ts` (`afterCommit`, `settleAfterCommit`), `channels.ts` (`dispatchWhatsApp`, `sweepWhatsApp`, `whatsappFallback`, `channelPausedUntil`), `src/server/jobs/worker.ts` (every 30 s), migration `0015_v4_push_queue` | `v4-notifications` WA-50…WA-56 |
+| §5.4 step 6 webhook (WA-40…WA-44) | `whatsapp/webhook.ts`, `/api/whatsapp/webhook`, `/api/webhooks/whatsapp` (alias), migration `0016_v4_whatsapp` (`wa_*` columns, `whatsapp_inbound`) | `v4-whatsapp` WA-40…WA-44; `v3-phase5-notifications` WhatsApp API test |
+| §5.4 step 8 Message Log and Notification Log | `filters/messages.ts` (`whatsapp-log`: event/template/status/date, masked number, timeline, error, tries), `filters/index.ts`, `filters/notifications.ts`, `settings/messages/page.tsx`, `settings/messages/whatsapp/*`, `messages/messages-list.tsx` (`DeliveryTimeline`) | `v4-notifications` WA-53; e2e `v4-push` 3 |
+
+### Lead items
+
+| Item | Files | Tests |
+|---|---|---|
+| HTTPS on a fixed address (D-107) | `scripts/https.mjs`, `scripts/acme-hook.mjs`, `ecosystem.config.cjs`, `src/proxy.ts`, `.env.example` (`HTTPS_*`); `scripts/tunnel.mjs` removed | `tests/unit/https-redirect.test.ts` |
+| Playwright project `v4` (D-108) | `playwright.config.ts`; `openDrawerUi` in `v4-refunds.spec.ts` and `v4-whatsapp.spec.ts` | the five `v4-*.spec.ts` files |
+| Sample club keeps card (and UPI during its history); live club cash only (D-109) | `prisma/seed/base.ts` (unchanged) | demo spec, `ui-card-upi` |
+
+### New tests
+
+| File | Tests | Covers |
+|---|---|---|
+| `tests/unit/v4-role-nav.test.ts` | 22 | §1.1 lists, §1.2 screens, RN-1, RN-2, RN-3 |
+| `tests/unit/v4-whatsapp-templates.test.ts` | 24 | WA-10 builders and sanitiser, WA-11 request, WA-12 classification, WA-13 numbers |
+| `tests/unit/https-redirect.test.ts` | 3 | plain HTTP on the public name → 308; IP and localhost untouched |
+| `tests/integration/v4-nav-dashboards.test.ts` | 12 | RN-4, RN-5, RN-6, Employees |
+| `tests/integration/v4-cash-drawer.test.ts` | 13 | CD-1…CD-8, pay-in/out, drops, safe, reconciliation, integrity #12–#13, seed tills |
+| `tests/integration/v4-refunds.test.ts` | 12 | RF-8…RF-11, member request → collected, guardian, §3.6 values |
+| `tests/integration/v4-notifications.test.ts` | 20 | NT-5…NT-15, WA-50…WA-56 |
+| `tests/integration/v4-whatsapp.test.ts` | 19 | WA-14…WA-19, WA-20…WA-24, WA-30…WA-32, WA-40…WA-44, emitters |
+| `tests/e2e/v4-nav.spec.ts` | 4 | step 4 (sidebars), RN-1, RN-2, RN-4/RN-5 |
+| `tests/e2e/v4-drawer.spec.ts` | 1 | step 1 (open with float → ₹550 cash → +₹550 → blind close) |
+| `tests/e2e/v4-refunds.spec.ts` | 2 | step 2 (wet court → `/r` refund → desk pay-out → Collected), step 3 (member request → dashboard approval → Ready to collect) |
+| `tests/e2e/v4-push.spec.ts` | 4 | opt-in card, device list, WhatsApp log, staff My Account |
+| `tests/e2e/v4-whatsapp.spec.ts` | 4 | Settings → WhatsApp, opt-in ticks, portal toggle, `/r/<token>` |
+
+Helper: `tests/helpers/drawer.ts` (`withFloat`). The e2e files run in the Playwright project `v4`, after `ui-card-upi`.
+
+### Existing tests changed (the requirement changed; no assertion weakened)
+
+| File | Change | Decision |
+|---|---|---|
+| `tests/unit/v3-role-panels.test.ts` | v4 menus; Manager to-do `[]`, leave read from the approvals list; accountant keys + `safeToBank` | D-83, D-86, D-95 |
+| `tests/integration/v3-phase7-pricing-products.test.ts` | price book, simulator, variant prices by the Owner; Manager FORBIDDEN; PR-11 approvals by the Owner | D-85 |
+| `tests/integration/v3-shop-staff-pricing.test.ts` | court band by the Owner; shop-staff discount approved by the Owner, Manager FORBIDDEN | D-85 |
+| `tests/integration/phase1-pricing-payments.test.ts` | PY-4: float before the ₹500 tender; identity tick on pay-out | D-90, D-97 |
+| `tests/integration/phase5-bar.test.ts` | BR-8, BR-10/E-15: bar float before change | D-90 |
+| `tests/integration/completion-phase1.test.ts` | ₹200 in the desk drawer before a ₹150 cash refund | D-91 |
+| `tests/integration/v3-phase6-closures-leads.test.ts` | CC-2: the closure's social refund waits at the desk (APPROVED, READY_TO_COLLECT, one PENDING payment) | D-91 |
+| `tests/integration/v3-phase4-refunds.test.ts` | identity tick; RF-4 online: cash in the drawer first; RF-1 approvers' type; member request REQUESTED → approved; RF-7 one more transition | D-91, D-96, D-97, D-98 |
+| `tests/integration/phase2-membership.test.ts` | MB-13: identity tick | D-97 |
+| `tests/integration/v3-notify-coverage.test.ts` | member's own cancellation on every channel; READY_TO_COLLECT / COLLECTED events; identity tick | D-82, D-97, D-98 |
+| `tests/integration/v3-phase5-notifications.test.ts` | WhatsApp API test on the v4 env names, template map, opt-in, after-commit send and webhook | D-103 |
+| `tests/e2e/ui-flows.spec.ts` | steps 2b and 9 by the Manager; step 8 blind count; step 11 inline approval, identity tick, "Cash refunds"; step 14 by the Owner; `openDrawerUi` till + denominations | D-84, D-85, D-86, D-92, D-97 |
+| `tests/e2e/fresh-install.spec.ts` | step 4: float by denomination | D-92 |
+| `tests/audit/crawl.spec.ts`, `scripts/audit-dummy.ts`, `tests/audit/screenshots.spec.ts` | crawl each role's navigation list; sidebar check; desk screenshot set | D-84 |
+
+### Phase 6 — full regression
+
+On a snapshot, against the separate test club (`champions_e2e`, 127.0.0.1:3201) — never the live club: lint ✓ · `tsc` ✓ · unit/integration **418/418** · production build ✓ · Playwright **63/63** (demo, ui-cash, ui-card-upi, fresh-install, and the v4 steps: drawer, refunds, navigation, push, WhatsApp) · `verify:integrity` **13/13** · `audit:dummy` clean (0 source violations, 0 HTTP errors, 0 console errors, 0 dummy text, 0 too-wide pages, 0 sidebar mismatches) · `docs/screenshots/after` **54** images (360 + 1280 px). Found and fixed by the gate: the v4 drawer e2e looked for a slot beyond the member's booking window; two portal pages were too wide on a phone (long links in notification bodies, the payment totals).
+
+### Needs the owner
+
+- **WhatsApp:** the six `WHATSAPP_*` values in `.env` (README → WhatsApp), the webhook set in the Meta app, and the
+  templates in `docs/whatsapp-templates.md` submitted and approved in WhatsApp Manager; then Settings → WhatsApp:
+  Check access token, map the templates, Fetch templates, Send test message. Until then WhatsApp messages wait in
+  Messages to Send.
+- **Cash only:** switch the live club to cash only in Settings → Payments & services (Counter payments).
+- **Email:** the email capability needs SMTP in `.env` and a test email sent by the Owner from Settings →
+  Payments & services; until then nothing is promised by email.
+- **On a phone:** scan a member card with the camera and turn on push alerts at
+  https://champions.38-49-215-124.sslip.io:3443 (not verifiable without a person and a phone).
