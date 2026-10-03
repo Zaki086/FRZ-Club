@@ -8,6 +8,7 @@ import { TaxTab } from "./tax-tab";
 import { ClubTab } from "./club-tab";
 import { CourtsTab } from "./courts-tab";
 import { UsersTab } from "./users-tab";
+import { PaymentsTab } from "./payments-tab";
 import type { SettingRow } from "./shared";
 
 export function SettingsTabs({ selfUserId }: { selfUserId: string }) {
@@ -20,6 +21,7 @@ export function SettingsTabs({ selfUserId }: { selfUserId: string }) {
         <TabsTrigger value="policies">Hours & policies</TabsTrigger>
         <TabsTrigger value="tax">Tax rates{taxUnverified ? " ⚠" : ""}</TabsTrigger>
         <TabsTrigger value="club">Club details</TabsTrigger>
+        <TabsTrigger value="payments">Payments & services</TabsTrigger>
         <TabsTrigger value="courts">Courts</TabsTrigger>
         <TabsTrigger value="users">Users & roles</TabsTrigger>
       </TabsList>
@@ -35,6 +37,9 @@ export function SettingsTabs({ selfUserId }: { selfUserId: string }) {
         </TabsContent>
         <TabsContent value="club">
           <DataState state={settings}>{(rows) => <ClubTab rows={rows} onSaved={() => void settings.reload()} />}</DataState>
+        </TabsContent>
+        <TabsContent value="payments">
+          <DataState state={settings}>{(rows) => <PaymentsTab rows={rows} onSaved={() => void settings.reload()} />}</DataState>
         </TabsContent>
         <TabsContent value="courts">
           <CourtsTab />

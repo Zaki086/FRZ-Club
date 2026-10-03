@@ -22,7 +22,6 @@ const GROUPS: Array<{ title: string; fields: Scalar[] }> = [
   {
     title: "Shop",
     fields: [
-      { key: "delivery_fee", label: "Delivery fee (₹)", kind: "rupees", hint: "Never discounted (PR-5)" },
       { key: "online_hold_minutes", label: "Online payment hold (min)", kind: "int", hint: "SH-5" },
       { key: "pickup_hold_hours", label: "Pay-at-pickup hold (hours)", kind: "int", hint: "SH-5" },
       { key: "default_reorder_level", label: "Default reorder level", kind: "int" },

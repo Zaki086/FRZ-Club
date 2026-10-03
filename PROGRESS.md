@@ -123,8 +123,28 @@ Latest full run (2026-10-03):
 ## Known limitations (honest list)
 
 - E-24 waitlist not built (P2).
-- Razorpay test mode is implemented on the same verification path but could not be exercised without keys; the
-  built-in Test Gateway was used for every test and the seed.
+- Live Razorpay could not be exercised without live keys; its paths (callback, FAIL confirmation, webhook, status
+  check) are covered with mocked Razorpay responses, and online payment stays off until live keys are verified.
+- i18n (translations, P2) was not built in the completion pass.
 - UI screens were verified by role-gated HTTP checks (200/403 per role), API flows with the exact request shapes the
   screens send, and the Playwright demo (logins, sign-up form, member card, portal, KDS, availability, quote page,
   dashboard, 403 page in a real browser); not every dialog was clicked through manually.
+
+## Completion pass ("real or absent" + every login complete)
+
+| Phase | Scope | Status | Evidence |
+|---|---|---|---|
+| 1 Capabilities & payments | capability service + `/api/capabilities` (+ owner status), Test Gateway test-only, live-Razorpay hardening (webhook, status check before failing, FAIL confirmation), payment proof (UTR / approval code + last 4 / bank reference), cash drawers + daily reconciliation, pending refunds + pay-out, checkout fallbacks (pay at pickup / pay on delivery), GST categories (GOODS_5 / GOODS_18 / OUTSIDE_GST) and GSTIN check digit, KITCHEN role, `seed:demo` + `demo:reset`, passwords out of the code and README, APP_SECRET boot check | ✅ | typecheck ✓ · lint ✓ · 137/137 tests (11 new in `completion-phase1.test.ts`) · `seed:demo` 10/10 integrity · Playwright demo 11/11 |
+| 2 First run & communication | empty identity + `create-owner` + `/setup` wizard gating `/app`; sample-data banner; email only when verified (test email in Settings), delivery/failure logged; WhatsApp `wa.me` links from booking/member/order/invoice/lead, logged as OPENED; Owner message log; seed advisory lock | ✅ | typecheck ✓ · lint ✓ · 145/145 tests (8 new in `completion-phase2.test.ts`) · `demo:reset` 10/10 integrity · Playwright demo 11/11 · `create-owner` checked on an empty DB (second Owner refused) |
+| 3 Accounts & per-role checklists | login lockout + in-house rate limits, role landing pages, account page (details, last login, change password, log out everywhere) for staff and members, forgot password + staff-issued reset links, desk "Today", bar move item between tabs, KDS sound toggle, menu & price management, staff activity, expense bill uploads, nightly backups + Owner page, public consent/honeypot, robots/sitemap/product metadata, partners by mobile | ✅ | typecheck ✓ · lint ✓ · 158/158 tests (13 new in `completion-phase3.test.ts`) · `demo:reset` 10/10 integrity · Playwright demo 11/11 · a real backup (2.1 MB, PGDMP) taken through the service |
+| 4 Carried-over fixes | click-through UI e2e in two payment set-ups; GST: alcohol outside GST, GSTR-1 (B2B/B2CS/HSN) + Tally CSV, GST page honest when GST is off, GOODS_5 default for sports goods; product photos (upload, category-icon fallback); facilities badge from maintenance; honest public copy; rate limits; docs | ✅ | typecheck ✓ · lint ✓ · 163/163 tests (5 new in `completion-phase4.test.ts`) · `demo:reset` 10/10 integrity · Playwright 27/27 (demo 11, ui-cash 8, ui-card-upi 8) · build with 0 warnings |
+| 5 Extras (P1/P2) | P1: guardians + Portal → Family; DPDP (consent, privacy notice, data download, erasure requests + Owner decisions); purchase orders + stock take; 80 mm receipts; `.ics`; PWA. P2: barcodes at the till (scanner/camera), self check-in kiosk. Not built: i18n | ✅ (i18n ✗) | typecheck ✓ · lint ✓ · 169/169 tests (6 new in `completion-phase5.test.ts`) · `demo:reset` 10/10 integrity · Playwright 27/27 · build 0 warnings |
+| 6 Audit & fresh install | `npm run audit:dummy` (source scan + crawl of every role × page on desktop and 360 px) → AUDIT.md; `fresh-install.spec.ts` (empty DB → create-owner → wizard → first member); fixes from both | ✅ | AUDIT.md: 0 source violations, 0 HTTP/console errors, 0 dummy text, 0 too-wide pages over 150 role × page combinations · typecheck ✓ · lint ✓ · 169/169 tests · 10/10 integrity · Playwright 32/32 (demo 11, ui-cash 8, ui-card-upi 8, fresh-install 5) |
+
+Phase 1 notes:
+- The live instance was rebuilt with `seed:demo` after a backup (`backups/pre-completion-pass-*.dump`, not in git):
+  the old data contained Test-Gateway "online" payments, which are no longer real.
+- Payment screens (payment panel, booking dialog, sign-up, POS, bar settle, social join, refunds, portal booking,
+  social and cart checkout) render only enabled methods and ask for each method's proof; a `DRAWER_NOT_OPEN`
+  rejection opens the drawer inline. New staff pages: `/app/drawer`, `/app/refunds`, `/app/finance/cash`,
+  Settings → Payments & services.

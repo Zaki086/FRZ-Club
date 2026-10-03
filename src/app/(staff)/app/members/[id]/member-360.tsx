@@ -15,9 +15,12 @@ import { MemberCard } from "@/components/member-card";
 import { Money } from "@/components/money";
 import { StatusBadge, TierBadge } from "@/components/badges";
 import { PaymentPanel } from "@/components/payment-panel";
+import { emptyRefund, RefundFields, refundBody, type RefundDraft } from "@/components/tender-fields";
 import { ConfirmButton } from "@/components/confirm";
 import { fmtDate, fmtDateTime, fmtRange } from "@/lib/time";
 import { formatINR, parseRupees } from "@/lib/money";
+import { WhatsAppButton } from "@/components/whatsapp-button";
+import { ResetLinkButton } from "@/components/reset-link-button";
 
 type P360 = {
   member: { id: string; memberCode: string; name: string; phone: string; email: string | null; dob: string; photoUrl: string | null; emergencyContactName: string | null; emergencyContactPhone: string | null };
@@ -40,7 +43,7 @@ type P360 = {
   totals: { bookings: number; courtSpend: number; shopSpend: number; barSpend: number; membershipSpend: number; discountsSaved: number; visits: number; dueTotal: number };
 };
 
-type Perms = { manage: boolean; cancel: boolean; checkin: boolean; book: boolean };
+type Perms = { manage: boolean; cancel: boolean; checkin: boolean; book: boolean; passwordLinks: boolean };
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -134,7 +137,7 @@ function PlanChangeDialog({ memberId, mode, onDone }: { memberId: string; mode: 
 
 function CancelMembership({ membershipId, onDone }: { membershipId: string; onDone: () => void }) {
   const [refund, setRefund] = useState("");
-  const [method, setMethod] = useState("UPI");
+  const [how, setHow] = useState<RefundDraft>(emptyRefund);
   return (
     <ConfirmButton
       trigger="Cancel membership"
@@ -144,14 +147,14 @@ function CancelMembership({ membershipId, onDone }: { membershipId: string; onDo
       confirmLabel="Cancel membership"
       onConfirm={async (reason) => {
         const amount = refund ? parseRupees(refund) : null;
-        await api("/api/memberships/cancel", { body: { membershipId, reason, refundAmount: amount ?? undefined, refundMethod: amount ? method : undefined } });
+        await api("/api/memberships/cancel", { body: { membershipId, reason, refundAmount: amount ?? undefined, ...(amount ? refundBody(how) : {}) } });
         onDone();
       }}
     >
       <div className="grid grid-cols-2 gap-2">
         <Field label="Refund (₹, optional)"><Input value={refund} onChange={(e) => setRefund(e.target.value)} inputMode="decimal" /></Field>
         <Field label="Refund method">
-          <Select value={method} onChange={(e) => setMethod(e.target.value)}><option>UPI</option><option>CASH</option><option>CARD</option></Select>
+          <RefundFields value={how} onChange={setHow} />
         </Field>
       </div>
     </ConfirmButton>
@@ -218,6 +221,8 @@ export function Member360({ memberId, perms }: { memberId: string; perms: Perms 
                   </>
                 ) : null}
                 {perms.cancel && (current || pending) ? <CancelMembership membershipId={(current ?? pending)!.id} onDone={reload} /> : null}
+                <WhatsAppButton target={{ template: "MEMBERSHIP", memberId: p.member.id }} label="WhatsApp membership status" />
+                {perms.passwordLinks ? <ResetLinkButton url={`/api/members/${p.member.id}/reset-link`} /> : null}
               </div>
             </div>
 

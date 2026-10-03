@@ -12,7 +12,7 @@ import { PeriodLabel, PeriodPicker, periodQuery, periodReady, type PeriodState }
 import { label } from "../_components/fmt";
 
 type Row = { rate: number; category: string; taxable: number; tax: number; cgst: number; sgst: number; igst: number };
-type Data = { period: { label: string; from: string; to: string }; ratesVerified: boolean; rows: Row[]; totals: Omit<Row, "rate" | "category">; inputGst: number; note: string };
+type Data = { period: { label: string; from: string; to: string }; ratesVerified: boolean; rows: Row[]; totals: Omit<Row, "rate" | "category">; outsideGst: number; inputGst: number; note: string };
 
 export function GstReport() {
   const [p, setP] = useState<PeriodState>({ period: "MONTH", from: "", to: "" });
@@ -22,9 +22,19 @@ export function GstReport() {
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <PeriodPicker value={p} onChange={setP} />
-        <Button asChild variant="outline" size="sm" disabled={!periodReady(p)}>
-          <a href={`/api/reports/csv?report=gst&${q}`}><Download className="h-4 w-4" /> CSV</a>
-        </Button>
+        <div className="flex flex-wrap gap-1">
+          {[
+            ["gst", "Summary CSV"],
+            ["gstr1_b2b", "GSTR-1 B2B"],
+            ["gstr1_b2cs", "GSTR-1 B2CS"],
+            ["gstr1_hsn", "GSTR-1 HSN"],
+            ["tally", "Tally day book"],
+          ].map(([r, l]) => (
+            <Button key={r} asChild variant="outline" size="sm" disabled={!periodReady(p)}>
+              <a href={`/api/reports/csv?report=${r}&${q}`}><Download className="h-4 w-4" /> {l}</a>
+            </Button>
+          ))}
+        </div>
       </div>
       {!periodReady(p) ? <p className="text-sm text-muted-foreground">Pick both dates for a custom period.</p> : null}
       <DataState state={state}>
@@ -33,7 +43,7 @@ export function GstReport() {
             <PeriodLabel period={d.period} />
             {!d.ratesVerified ? (
               <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
-                <AlertTriangle className="h-4 w-4" /> GST rates are seeded placeholders and have not been verified by the owner.{" "}
+                <AlertTriangle className="h-4 w-4" /> GST rates have not been confirmed by the owner yet.{" "}
                 <Link href="/app/settings" className="font-semibold underline">Verify rates in Settings</Link>
               </div>
             ) : null}
@@ -67,7 +77,12 @@ export function GstReport() {
                 </Table>
               )}
             </Card>
-            <Card><CardContent className="pt-4 text-sm">Input GST on supplier bills paid in this period: <Money paise={d.inputGst} className="font-semibold" /></CardContent></Card>
+            <Card>
+              <CardContent className="flex flex-col gap-1 pt-4 text-sm">
+                <p>Outside GST (alcohol — state excise, not in the totals above): <Money paise={d.outsideGst} className="font-semibold" /></p>
+                <p>Input GST on supplier bills paid in this period: <Money paise={d.inputGst} className="font-semibold" /></p>
+              </CardContent>
+            </Card>
             <p className="text-xs text-muted-foreground">{d.note}</p>
           </>
         )}

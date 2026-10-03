@@ -13,16 +13,33 @@ Requirements: Node 22+, Docker with the compose plugin.
 
 ```bash
 docker compose up -d            # Postgres 16 with btree_gist (+ a champions_test database for the test suite)
-npm i                           # also creates .env from .env.example (DB on port 5442, app on 3200)
+npm i                           # also creates .env from .env.example in development (DB on port 5442, app on 3200)
 npm run db:migrate              # prisma migrate deploy (incl. raw SQL constraints) + prisma generate
-npm run seed                    # 60 days of history through the real services (~3 min), ends with verify:integrity
+npm run seed:demo               # OPTIONAL sample club: 60 days of history through the real services (~3 min)
 npm run dev                     # http://localhost:3200   — and in a second terminal:  npm run worker
 ```
 
 `npm run worker` runs the scheduled jobs (every 5 minutes: no-shows/completions, order holds, overdue leads,
 stale gateway payments, email outbox; daily 00:05 IST: membership expiry + reminders, overdue invoices, low-stock digest).
 
-To start over: `npm run db:reset && npm run seed`.
+### A real club (first run)
+
+```bash
+npm run db:migrate
+npm run create-owner -- --name "Owner Name" --phone 98XXXXXXXX --email owner@yourclub.in   # asks for the password
+npm run build && pm2 start ecosystem.config.cjs
+```
+
+The Owner logs in and the **setup wizard** (`/setup`) opens first: club details (and GSTIN, if registered), GST
+rates, how the club takes payments, courts and plan prices. The staff app stays closed until it is finished. Other
+staff are then added in Settings → Users & roles.
+
+### Sample club (optional)
+
+`seed:demo` needs `SEED_STAFF_PASSWORD` and `SEED_MEMBER_PASSWORD` (8+ characters) in `.env`; those are the
+passwords of the sample logins. It only runs on an empty database, marks it `SAMPLE_DATA` (every page shows a
+banner), and refuses to touch a database with real club data. To rebuild the sample club:
+`ALLOW_DEMO_RESET=1 npm run demo:reset`.
 
 ### Run it 24/7 with PM2
 
@@ -36,20 +53,22 @@ Set `APP_URL` in `.env` to the address people use (e.g. `http://<server-ip>:3200
 Postgres runs with `restart: unless-stopped`. Over plain HTTP the session cookie is not marked `Secure` (browsers
 would drop it); behind HTTPS it is. Dev tools (time travel) are disabled in production by design.
 
-## Logins
+## Sample logins (only after `npm run seed:demo`)
 
-All staff passwords: **`champions123`** · all member passwords: **`member123`** · login at `/login` with phone or email.
+Passwords are the `SEED_STAFF_PASSWORD` / `SEED_MEMBER_PASSWORD` values from your `.env` — they are not written
+anywhere in the code or the docs. Log in at `/login` with phone or email. All identities are fictitious.
 
 | Role | Name | Email | Phone |
 |---|---|---|---|
-| OWNER | Vikram Rao | owner@championsclub.test | 9000000001 |
-| MANAGER | Meera Iyer | manager@championsclub.test | 9000000002 |
-| FRONT_DESK | Farah Khan | desk@championsclub.test | 9000000003 |
-| FRONT_DESK | Dev Patel | desk2@championsclub.test | 9000000004 |
-| SHOP_STAFF | Sameer Joshi | shop@championsclub.test | 9000000005 |
-| BAR_STAFF | Bina Thomas | bar@championsclub.test | 9000000006 |
-| BAR_STAFF | Raju Nair | bar2@championsclub.test | 9000000007 |
-| ACCOUNTANT | Anita Desai | accounts@championsclub.test | 9000000008 |
+| OWNER | Vikram Rao | owner@championsclub.example | 9000000001 |
+| MANAGER | Meera Iyer | manager@championsclub.example | 9000000002 |
+| FRONT_DESK | Farah Khan | desk@championsclub.example | 9000000003 |
+| FRONT_DESK | Dev Patel | desk2@championsclub.example | 9000000004 |
+| SHOP_STAFF | Sameer Joshi | shop@championsclub.example | 9000000005 |
+| BAR_STAFF | Bina Thomas | bar@championsclub.example | 9000000006 |
+| BAR_STAFF | Raju Nair | bar2@championsclub.example | 9000000007 |
+| ACCOUNTANT | Anita Desai | accounts@championsclub.example | 9000000008 |
+| KITCHEN | Suresh Kumar | kitchen@championsclub.example | 9000000009 |
 
 ### Demo personas (members)
 
@@ -62,7 +81,27 @@ All staff passwords: **`champions123`** · all member passwords: **`member123`**
 The seed also leaves: one racket with exactly 1 unit (**Pro Staff 97 v14**), a few items below reorder level,
 members expiring within 7 days and already expired, a Junior turning 18 this week, a weekly **Friday Social**
 series (Courts 3–4, 19:00–22:00), leads in every status (some overdue), three business clients (one invoice paid,
-one part-paid, one overdue), a completed payroll run and Court 1 free this evening for the demo.
+one part-paid, one overdue), a completed payroll run, daily cash-drawer sessions (a few with a variance) and Court 1
+free this evening for the demo. The sample club takes cash and card; UPI is off (its sample UPI ID receives no money)
+until the Owner enters and confirms a real one in Settings → Payments & services.
+
+## Real or absent
+
+The app only offers what the club can really do (Settings → Payments & services shows each capability and why):
+
+| Capability | On when |
+|---|---|
+| Cash | always |
+| Card | the Owner ticks "the club has a working card machine" — each payment records the approval code + last 4 |
+| UPI | a valid club UPI ID is entered **and** confirmed by the Owner — each payment records the 12-character UTR |
+| Online payment | **live** Razorpay keys (`rzp_live_…`) + `RAZORPAY_WEBHOOK_SECRET`, verified with Razorpay. Otherwise members pay at the desk, shop orders are pay-at-pickup or pay-on-delivery |
+| Email | `SMTP_HOST` + `SMTP_FROM` set and a test email sent from Settings |
+| Delivery | switched on with at least one PIN code |
+| GST | a GSTIN with a valid check digit **and** tax rates confirmed by the Owner; otherwise no GST is charged |
+
+Counter payments and refunds need the staff member's **cash drawer** to be open (`/app/drawer`); the accountant
+reconciles each day at `/app/finance/cash`. A refund that can't go back the way it came is queued at `/app/refunds`
+for the desk to pay out.
 
 ## Where things are
 
@@ -71,7 +110,7 @@ one part-paid, one overdue), a completed payroll run and Court 1 free this eveni
 | Public website | `/`, `/plans`, `/availability`, `/shop`, `/trial`, `/enquire`, `/quote/[token]` |
 | Member portal | `/portal` (card QR, book, social, bookings, orders, tab, invoices, membership) |
 | Staff app | `/app` (role-scoped dashboard) — front desk `/app/desk`, courts `/app/courts`, shop `/app/shop`, bar `/app/bar`, KDS `/app/bar/kds`, CRM `/app/crm`, finance `/app/finance/*`, staff `/app/staff/*`, reports `/app/reports`, settings `/app/settings` |
-| Test payments | `/pay/test/[paymentId]` — the built-in **TEST MODE** gateway (Razorpay test mode is used instead when `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` are set) |
+| Razorpay webhook | `POST /api/payments/razorpay/webhook` (set the same secret as `RAZORPAY_WEBHOOK_SECRET`) |
 | Dev tools | `/app/settings/dev` — time travel and "Run all jobs now" (disabled in production) |
 
 ## Tests and checks
@@ -82,12 +121,25 @@ npm run lint
 npm test                    # Vitest: rule tests + concurrency tests on the real champions_test database
 npm run verify:integrity    # the §9 checklist against the dev database
 npm run demo:race           # with the app running: 20 simultaneous bookings → exactly 1 success, 19 SLOT_TAKEN
-npm run test:e2e            # Playwright: the §12 demo script (needs `npx playwright install chromium` once)
+npm run test:e2e            # Playwright (needs `npx playwright install chromium` once): the §12 demo, the
+                            # click-through UI flows twice (cash only; card + UPI), and a fresh install on its own
+                            # port and database. Run on fresh sample data: ALLOW_DEMO_RESET=1 npm run demo:reset
+npm run audit:dummy         # is anything fake left? source scan + every role × page on desktop and 360 px → AUDIT.md
 ```
 
 The rule tests are named after the rule they prove (e.g. `BK-4: a partner who already has 2 plays is rejected…`).
 Concurrency tests (`tests/concurrency/`) cover the 20-way court race, the daily-limit race, the last-racket race
 across counter and online, and the last social spot.
+
+## Finance exports, files and backups
+
+- **GST report** (`/app/finance/gst`, only when GST is on): tax by rate and category, CGST/SGST vs IGST; alcohol is
+  listed separately as outside GST. Downloads: summary CSV, **GSTR-1** working tables (B2B, B2CS, HSN summary) and a
+  **Tally day book** (also on the Ledger page). Report support only — check with your tax advisor before filing.
+- **Files** are stored on the server under `UPLOAD_DIR` (default `uploads/`): product photos (public) and expense bills
+  (finance only), at most 2 MB, type checked from the file itself. Products without a photo show their category icon.
+- **Backups** run every night at 02:30 IST into `BACKUP_DIR` (default `backups/`), kept 14 days; the Owner can run one
+  and download any from Settings → Backups. Copy them off the server regularly.
 
 ## How correctness is guaranteed
 

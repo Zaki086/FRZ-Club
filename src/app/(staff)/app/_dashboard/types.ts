@@ -34,12 +34,12 @@ export type Dashboard = {
 };
 
 export const SOURCES = ["COURTS", "SOCIAL", "SHOP", "BAR", "MEMBERSHIP", "INVOICE"] as const;
-export const METHODS = ["CASH", "CARD", "UPI", "ONLINE"] as const;
+export const METHODS = ["CASH", "CARD", "UPI", "BANK_TRANSFER", "ONLINE"] as const;
 
 export const SOURCE_LABEL: Record<string, string> = {
   COURTS: "Courts", SOCIAL: "Social play", SHOP: "Shop", BAR: "Bar & cafe", MEMBERSHIP: "Memberships", INVOICE: "Invoices",
 };
-export const METHOD_LABEL: Record<string, string> = { CASH: "Cash", CARD: "Card", UPI: "UPI", ONLINE: "Online" };
+export const METHOD_LABEL: Record<string, string> = { CASH: "Cash", CARD: "Card", UPI: "UPI", BANK_TRANSFER: "Bank transfer", ONLINE: "Online" };
 
 /** Categorical palette for sources (also used by the stacked daily chart). */
 export const SOURCE_COLOR: Record<string, string> = {

@@ -11,18 +11,31 @@ import { MemberCard } from "@/components/member-card";
 import { PaymentPanel } from "@/components/payment-panel";
 import { Money } from "@/components/money";
 import { cn } from "@/components/ui/cn";
+import { DrawerOpener, emptyTender, ProofFields, tenderProof, UpiQr, useTenderMethods, type TenderDraft } from "@/components/tender-fields";
+import { METHOD_LABEL } from "@/components/capabilities";
+
+/** True when the date of birth makes the person under 18 today (the server checks again). */
+function underEighteen(dob: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) return false;
+  const d = new Date(`${dob}T00:00:00`);
+  const now = new Date();
+  const eighteen = new Date(d.getFullYear() + 18, d.getMonth(), d.getDate());
+  return eighteen > now;
+}
 
 type Plan = { id: string; code: string; name: string; description: string; price1m: number; price3m: number; price12m: number; shopDiscountPct: number; barDiscountPct: number; advanceBookingDays: number; courtFees: { sport: string; fee: number }[] };
 type Result = { memberId: string; memberCode: string; membershipStatus: string | null; billId: string | null; billStatus: string | null; setPasswordToken: string | null };
 
 export function NewMemberForm({ prefill }: { prefill: { name: string; phone: string; email: string; leadId: string } }) {
   const plans = useApi<Plan[]>("/api/plans");
-  const [f, setF] = useState({ name: prefill.name, phone: prefill.phone, email: prefill.email, dob: "", emergencyContactName: "", emergencyContactPhone: "", password: "" });
+  const [f, setF] = useState({ name: prefill.name, phone: prefill.phone, email: prefill.email, dob: "", emergencyContactName: "", emergencyContactPhone: "", password: "", guardianName: "", guardianPhone: "" });
+  const [consent, setConsent] = useState(false);
   const [photo, setPhoto] = useState<string | null>(null);
   const [plan, setPlan] = useState<string>("SILVER");
   const [months, setMonths] = useState<1 | 3 | 12>(1);
-  const [method, setMethod] = useState<"" | "CASH" | "CARD" | "UPI">("UPI");
-  const [reference, setReference] = useState("");
+  const methods = useTenderMethods() ?? ["CASH"];
+  const [payNow, setPayNow] = useState(true);
+  const [tender, setTender] = useState<TenderDraft>(emptyTender("CASH"));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   const [result, setResult] = useState<Result | null>(null);
@@ -77,12 +90,16 @@ export function NewMemberForm({ prefill }: { prefill: { name: string; phone: str
         setBusy(true);
         setError(null);
         try {
+          const payment = plan && payNow ? tenderProof(tender) : undefined;
           const r = await api<Result>("/api/members", {
             body: {
               ...f,
+              guardianName: underEighteen(f.dob) ? f.guardianName : undefined,
+              guardianPhone: underEighteen(f.dob) ? f.guardianPhone : undefined,
+              consent,
               photoUrl: photo ?? undefined,
               leadId: prefill.leadId || undefined,
-              plan: plan ? { code: plan, months, payment: method ? { method, reference: reference || undefined } : undefined } : undefined,
+              plan: plan ? { code: plan, months, payment } : undefined,
             },
             idempotencyKey: key,
           });
@@ -122,6 +139,13 @@ export function NewMemberForm({ prefill }: { prefill: { name: string; phone: str
               <Input name="emergencyContactPhone" value={f.emergencyContactPhone} onChange={set("emergencyContactPhone")} />
             </Field>
           </div>
+          {underEighteen(f.dob) ? (
+            <div className="grid grid-cols-2 gap-3 rounded-md border border-blue-200 bg-blue-50 p-2">
+              <p className="col-span-2 text-xs text-blue-900">Under 18: a parent or guardian is required. If they are a member, they will see this member in their portal.</p>
+              <Field label="Guardian's name *"><Input name="guardianName" value={f.guardianName} onChange={set("guardianName")} required /></Field>
+              <Field label="Guardian's mobile *"><Input name="guardianPhone" inputMode="tel" value={f.guardianPhone} onChange={set("guardianPhone")} required /></Field>
+            </div>
+          ) : null}
           <Field label="Portal password" hint="Optional. Leave empty to generate a one-time set-password link.">
             <Input name="password" type="password" value={f.password} onChange={set("password")} autoComplete="new-password" />
           </Field>
@@ -162,21 +186,34 @@ export function NewMemberForm({ prefill }: { prefill: { name: string; phone: str
                 Plan price: <Money paise={price} className="font-semibold" /> <span className="text-muted-foreground">(GST inclusive; Junior requires age under 18)</span>
               </p>
               <Field label="Payment now">
-                <Select name="method" value={method} onChange={(e) => setMethod(e.target.value as typeof method)}>
-                  <option value="UPI">UPI</option>
-                  <option value="CARD">Card</option>
-                  <option value="CASH">Cash</option>
+                <Select
+                  name="method"
+                  value={payNow ? tender.method : ""}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setPayNow(!!v);
+                    if (v) setTender({ ...tender, method: v as TenderDraft["method"] });
+                  }}
+                >
+                  {methods.map((m) => (
+                    <option key={m} value={m}>{METHOD_LABEL[m]}</option>
+                  ))}
                   <option value="">Not now — membership stays pending</option>
                 </Select>
               </Field>
-              {method && method !== "CASH" ? (
-                <Field label={method === "UPI" ? "UPI reference (UTR)" : "Card last 4"}>
-                  <Input name="reference" value={reference} onChange={(e) => setReference(e.target.value)} />
+              {payNow && tender.method !== "CASH" ? (
+                <Field label={tender.method === "UPI" ? "UPI reference (UTR)" : "Card approval code and last 4"}>
+                  <ProofFields value={tender} onChange={(patch) => setTender({ ...tender, ...patch })} />
                 </Field>
               ) : null}
+              {payNow && tender.method === "UPI" ? <UpiQr amountPaise={price || null} note={`Membership ${f.name}`.slice(0, 40)} /> : null}
             </>
           ) : null}
-          <RejectionBanner error={error} />
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-1" checked={consent} onChange={(e) => setConsent(e.target.checked)} required data-testid="member-consent" />
+            The member agrees that the club stores these details to run their membership (<a className="underline" href="/privacy" target="_blank" rel="noreferrer">privacy notice</a>).
+          </label>
+          {error?.code === "DRAWER_NOT_OPEN" ? <DrawerOpener onOpened={() => setError(null)} /> : <RejectionBanner error={error} />}
           <Button type="submit" size="lg" disabled={busy} data-testid="signup-submit">
             {busy ? "Signing up…" : "Sign up member"}
           </Button>

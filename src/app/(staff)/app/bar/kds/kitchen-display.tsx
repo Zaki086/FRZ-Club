@@ -1,7 +1,7 @@
 "use client";
 // E-11 / BR-6: kitchen display. Polls every 4 s. Shows table and who ordered, so the kitchen never has to ask.
-import { useState } from "react";
-import { Maximize2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Bell, BellOff, Maximize2 } from "lucide-react";
 import { api, useApi } from "@/components/api";
 import { RejectionBanner } from "@/components/states";
 import { Button } from "@/components/ui/button";
@@ -14,8 +14,48 @@ type Ticket = {
   lines: Array<{ id: string; name: string; qty: number; note: string | null; status: "NEW" | "PREPARING" | "READY" }>;
 };
 
+/** Completion pass §7 (kitchen): a short two-tone beep for every new ticket, when sound is on. */
+function beep(ctx: AudioContext) {
+  for (const [i, freq] of [880, 1320].entries()) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.25, ctx.currentTime + i * 0.18);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.18 + 0.16);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(ctx.currentTime + i * 0.18);
+    osc.stop(ctx.currentTime + i * 0.18 + 0.17);
+  }
+}
+
+function useTicketSound(tickets: Ticket[] | undefined) {
+  // Sound always starts off: browsers block audio until the kitchen taps the button on this screen.
+  const [on, setOn] = useState(false);
+  const seen = useRef<Set<string> | null>(null);
+  const ctx = useRef<AudioContext | null>(null);
+  useEffect(() => {
+    if (!tickets) return;
+    const ids = new Set(tickets.map((t) => t.ticketId));
+    const fresh = seen.current ? [...ids].some((id) => !seen.current!.has(id)) : false;
+    seen.current = ids;
+    if (fresh && on && ctx.current) beep(ctx.current);
+  }, [tickets, on]);
+  const toggle = () => {
+    const next = !on;
+    if (next) {
+      // Browsers only allow sound after a tap: create/resume the audio context here.
+      ctx.current ??= new AudioContext();
+      void ctx.current.resume();
+      beep(ctx.current);
+    }
+    setOn(next);
+  };
+  return { on, toggle };
+}
+
 export function KitchenDisplay() {
   const state = useApi<Ticket[]>("/api/bar/kds", { pollMs: 4000 });
+  const sound = useTicketSound(state.data);
   const [error, setError] = useState<Rejection>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const advance = async (lineId: string, status: "PREPARING" | "READY") => {
@@ -36,6 +76,9 @@ export function KitchenDisplay() {
         <h1 className="text-2xl font-black tracking-tight">Kitchen display</h1>
         <div className="flex items-center gap-3 text-sm text-slate-400">
           {state.error ? <span className="text-red-400">Connection problem: {state.error.message}</span> : <span>Live · refreshes every 4 s</span>}
+          <Button size="sm" variant="secondary" onClick={sound.toggle} aria-pressed={sound.on} data-testid="kds-sound">
+            {sound.on ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />} {sound.on ? "Sound on" : "Sound off"}
+          </Button>
           <Button size="sm" variant="secondary" onClick={() => document.documentElement.requestFullscreen?.().catch(() => setError({ message: "Full screen is not available in this browser." }))}>
             <Maximize2 className="h-4 w-4" /> Full screen
           </Button>

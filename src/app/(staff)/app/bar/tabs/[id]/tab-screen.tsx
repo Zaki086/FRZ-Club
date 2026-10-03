@@ -22,8 +22,11 @@ type Pending = { menuItemId: string; name: string; isAlcoholic: boolean; qty: nu
 const CATS: Array<MenuItem["category"]> = ["FOOD", "BEVERAGE", "ALCOHOL"];
 const CAT_LABEL: Record<MenuItem["category"], string> = { FOOD: "Food", BEVERAGE: "Drinks", ALCOHOL: "Alcohol" };
 
-function LineRow({ line, perms, onDone }: { line: TabLine; perms: { manager: boolean }; onDone: () => void }) {
+type OpenTab = { id: string; code?: string; payer: string; status: string; table?: number | null };
+
+function LineRow({ line, perms, onDone, otherTabs }: { line: TabLine; perms: { manager: boolean }; onDone: () => void; otherTabs: OpenTab[] }) {
   const [error, setError] = useState<Rejection>(null);
+  const [moveTo, setMoveTo] = useState("");
   const voidable = line.status !== "VOID" && line.status !== "SERVED";
   const needsManager = line.status !== "NEW";
   return (
@@ -69,6 +72,28 @@ function LineRow({ line, perms, onDone }: { line: TabLine; perms: { manager: boo
           />
         ) : null}
         {voidable && needsManager && !perms.manager ? <span className="text-xs text-muted-foreground">Manager needed to void</span> : null}
+        {line.status !== "VOID" && otherTabs.length ? (
+          <span className="inline-flex gap-1">
+            <Select className="h-8 w-40 text-xs" value={moveTo} onChange={(e) => setMoveTo(e.target.value)} aria-label="Move item to tab">
+              <option value="">Move to tab…</option>
+              {otherTabs.map((t) => (
+                <option key={t.id} value={t.id}>{t.payer}{t.table ? ` · T${t.table}` : ""}</option>
+              ))}
+            </Select>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!moveTo}
+              onClick={async () => {
+                setError(null);
+                try { await api(`/api/bar/lines/${line.id}/transfer`, { body: { toTabId: moveTo } }); setMoveTo(""); onDone(); }
+                catch (e) { setError(toRejection(e)); }
+              }}
+            >
+              Move
+            </Button>
+          </span>
+        ) : null}
       </div>
       <RejectionBanner error={error} />
     </div>
@@ -78,6 +103,7 @@ function LineRow({ line, perms, onDone }: { line: TabLine; perms: { manager: boo
 export function TabScreen({ tabId, perms }: { tabId: string; perms: { manager: boolean } }) {
   const tab = useApi<TabView>(`/api/bar/tabs/${tabId}`, { pollMs: 10000 });
   const menu = useApi<MenuItem[]>("/api/bar/menu");
+  const openTabs = useApi<OpenTab[]>("/api/bar/tabs");
   const tables = useApi<TablesData>("/api/bar/tables");
   const [cat, setCat] = useState<MenuItem["category"]>("BEVERAGE");
   const [pending, setPending] = useState<Pending[]>([]);
@@ -215,7 +241,7 @@ export function TabScreen({ tabId, perms }: { tabId: string; perms: { manager: b
                 <CardHeader><CardTitle>Tab lines</CardTitle></CardHeader>
                 <CardContent className="flex flex-col gap-3">
                   {t.lines.length === 0 ? <p className="text-sm text-muted-foreground">Nothing ordered yet — tap items on the left.</p> : (
-                    <div className="divide-y">{t.lines.map((l) => <LineRow key={l.id} line={l} perms={perms} onDone={reload} />)}</div>
+                    <div className="divide-y">{t.lines.map((l) => <LineRow key={l.id} line={l} perms={perms} onDone={reload} otherTabs={(openTabs.data ?? []).filter((o) => o.id !== t.id && o.status === "OPEN")} />)}</div>
                   )}
                   {editable ? (
                     <Button size="lg" variant="outline" disabled={busy || unsent === 0} onClick={() => run(() => api(`/api/bar/tabs/${t.id}/send`, { body: {} }))} data-testid="send-kitchen">
@@ -231,6 +257,7 @@ export function TabScreen({ tabId, perms }: { tabId: string; perms: { manager: b
                   {t.status === "OPEN" || t.status === "CARRIED" ? (
                     <div className="flex flex-col gap-2">
                       <SettleDialog tabId={t.id} tabCode={t.code} due={t.due} onDone={reload} />
+                      <Button asChild variant="outline"><a href={`/print/bill/${t.billId}`} target="_blank" rel="noreferrer">Print bill</a></Button>
                       {t.due === 0 ? (
                         <Button size="lg" variant="outline" disabled={busy} onClick={() => run(() => api(`/api/bar/tabs/${t.id}/close`, { body: {} }))}>Close tab</Button>
                       ) : null}
