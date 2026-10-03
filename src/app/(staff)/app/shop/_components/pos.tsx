@@ -313,7 +313,7 @@ export function CounterPos() {
                       </Button>
                     ))}
                   </div>
-                  <ProofFields className="col-span-3" value={single} onChange={(patch) => setSingle({ ...single, ...patch })} />
+                  <ProofFields className="col-span-3" value={single} due={quote?.total ?? null} onChange={(patch) => setSingle({ ...single, ...patch })} />
                   {single.method === "UPI" ? <div className="col-span-3"><UpiQr amountPaise={quote?.total ?? null} note="Shop sale" /></div> : null}
                 </div>
               ) : (

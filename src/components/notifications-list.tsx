@@ -35,10 +35,10 @@ export function NotificationsList() {
             {d.items.map((n) => (
               <div key={n.id} className={cn("flex flex-col gap-0.5 p-3", !n.readAt && "bg-accent/50")}>
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">{n.title}</span>
-                  <span className="text-xs text-muted-foreground">{fmtDateTime(n.createdAt)}</span>
+                  <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{n.title}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{fmtDateTime(n.createdAt)}</span>
                 </div>
-                <p className="text-sm text-muted-foreground">{n.body}</p>
+                <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">{n.body}</p>
                 {n.link ? (
                   <Link className="text-sm text-primary underline" href={n.link}>
                     Open

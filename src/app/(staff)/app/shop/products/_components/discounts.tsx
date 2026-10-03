@@ -117,7 +117,7 @@ export function DiscountForm({ endpoint, withCategories, staffLimitPct, onDone }
           <span className="text-xs text-muted-foreground">(none = the whole shop)</span>
         </fieldset>
       ) : null}
-      <p className="text-xs text-muted-foreground">Up to {staffLimitPct}% starts at once; above that it waits for a manager or the owner. Customers get the single best of their plan discount and any discount — never both.</p>
+      <p className="text-xs text-muted-foreground">Up to {staffLimitPct}% starts at once; above that it waits for the owner&apos;s approval. Customers get the single best of their plan discount and any discount — never both.</p>
       <Button type="submit" size="sm" variant="outline" className="self-start">Add discount</Button>
       {msg ? <p className="text-sm text-success-text">{msg}</p> : null}
       <RejectionBanner error={error} />

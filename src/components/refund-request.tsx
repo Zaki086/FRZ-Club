@@ -1,6 +1,7 @@
 "use client";
 // v3 RF-1/RF-2/RF-6: staff ask for a refund on a bill — amount (partial allowed, at most what is refundable), a reason
 // category and a note. It goes to the refunds queue for approval; nothing is paid out here.
+// v4 RF-11: a bill can have several (partial) refunds; what is still refundable is always shown next to the button.
 import { useState } from "react";
 import Link from "next/link";
 import { api, ApiError, newIdempotencyKey, useApi } from "./api";
@@ -37,7 +38,12 @@ export function RefundRequestForm({ billId, refundable, onDone }: { billId: stri
   }
   if (refundable <= 0) return null; // nothing left to ask for (the confirmation above stays once sent)
   if (!open) {
-    return <Button variant="outline" size="sm" className="self-start" onClick={() => setOpen(true)}>Request a refund</Button>;
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" size="sm" onClick={() => setOpen(true)}>Request a refund</Button>
+        <span className="text-xs text-muted-foreground" data-testid="refundable-left">{formatINR(refundable)} still refundable on this bill</span>
+      </div>
+    );
   }
   return (
     <form
@@ -88,7 +94,7 @@ export function BillRefundRequest({ billId }: { billId: string }) {
   return (
     <div className="flex flex-col gap-2">
       {b.openRefunds.length ? (
-        <p className="text-xs text-muted-foreground">{b.openRefunds.map((r) => `${r.code} ${formatINR(r.amount)} ${r.status === "REQUESTED" ? "awaiting approval" : "ready to pay out"}`).join(" · ")}</p>
+        <p className="text-xs text-muted-foreground">{b.openRefunds.map((r) => `${r.code} ${formatINR(r.amount)} ${r.status === "REQUESTED" ? "awaiting approval" : "ready to collect at the desk"}`).join(" · ")}</p>
       ) : null}
       <RefundRequestForm billId={b.id} refundable={b.refundable} onDone={() => void state.reload()} />
     </div>
