@@ -1,19 +1,21 @@
-// Online payment gateways behind one interface (plan §1, PY-3, PY-7).
-// Razorpay test mode is used when keys exist; otherwise the built-in Test Gateway. Both are verified server-side
-// through the same verifyOnlinePayment() code path in payments.ts.
+// Online payment gateways behind one interface (plan §1, PY-3; completion pass §2).
+// Production: Razorpay with LIVE keys only (capability payments.online). The built-in Test Gateway exists only
+// under NODE_ENV=test so the test suite can exercise the same server-side verification path.
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { DomainError } from "../errors";
 
 export type GatewayOrder = { gatewayOrderId: string; redirectUrl: string };
+export type GatewayOutcome = { ok: true; gatewayPaymentId: string; outcome: "SUCCESS" | "FAIL" } | { ok: false };
 
 export interface PaymentGateway {
   readonly name: "TEST" | "RAZORPAY";
   createOrder(p: { paymentId: string; amount: number; description: string; returnUrl: string }): Promise<GatewayOrder>;
-  /** Verify a callback's signature. Returns the gateway payment id and outcome when authentic. */
-  verifyCallback(payload: Record<string, string>, ctx: { gatewayOrderId: string | null; paymentId: string }):
-    | { ok: true; gatewayPaymentId: string; outcome: "SUCCESS" | "FAIL" }
-    | { ok: false };
+  /** Verify a browser callback's signature. */
+  verifyCallback(payload: Record<string, string>, ctx: { gatewayOrderId: string | null; paymentId: string }): GatewayOutcome;
   refund(p: { gatewayPaymentId: string; amount: number }): Promise<{ gatewayRefundId: string }>;
 }
+
+export const isTestEnv = () => process.env.NODE_ENV === "test" || !!process.env.VITEST;
 
 function secret(): string {
   const s = process.env.APP_SECRET;
@@ -27,17 +29,14 @@ function safeEqual(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-/** PY-7: clearly labelled test gateway. Its page signs the outcome like a real gateway would. */
+/** Tests only: signs the outcome like a real gateway would. Never selectable outside NODE_ENV=test. */
 export const testGateway: PaymentGateway & {
   sign(paymentId: string, gatewayPaymentId: string, outcome: "SUCCESS" | "FAIL"): string;
   newGatewayPaymentId(): string;
 } = {
   name: "TEST",
   async createOrder({ paymentId, returnUrl }) {
-    return {
-      gatewayOrderId: `test_order_${paymentId}`,
-      redirectUrl: `/pay/test/${paymentId}?return=${encodeURIComponent(returnUrl)}`,
-    };
+    return { gatewayOrderId: `test_order_${paymentId}`, redirectUrl: `/pay/test/${paymentId}?return=${encodeURIComponent(returnUrl)}` };
   },
   sign(paymentId, gatewayPaymentId, outcome) {
     return createHmac("sha256", secret()).update(`TEST|${paymentId}|${gatewayPaymentId}|${outcome}`).digest("hex");
@@ -48,8 +47,7 @@ export const testGateway: PaymentGateway & {
   verifyCallback(payload, ctx) {
     const { gatewayPaymentId, outcome, signature } = payload;
     if (!gatewayPaymentId || !signature || (outcome !== "SUCCESS" && outcome !== "FAIL")) return { ok: false };
-    const expected = this.sign(ctx.paymentId, gatewayPaymentId, outcome);
-    if (!safeEqual(expected, signature)) return { ok: false };
+    if (!safeEqual(this.sign(ctx.paymentId, gatewayPaymentId, outcome), signature)) return { ok: false };
     return { ok: true, gatewayPaymentId, outcome };
   },
   async refund() {
@@ -57,62 +55,77 @@ export const testGateway: PaymentGateway & {
   },
 };
 
-/** Razorpay test mode (used only when RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are set). */
-export const razorpayGateway: PaymentGateway = {
+// ───────── Razorpay (live) ─────────
+
+const RZP = "https://api.razorpay.com/v1";
+const rzpAuth = () => "Basic " + Buffer.from(`${process.env.RAZORPAY_KEY_ID}:${process.env.RAZORPAY_KEY_SECRET}`).toString("base64");
+
+async function rzp<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+  const res = await fetch(`${RZP}${path}`, {
+    method: init.method ?? "GET",
+    headers: { Authorization: rzpAuth(), "Content-Type": "application/json" },
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Razorpay ${init.method ?? "GET"} ${path} failed: ${res.status} ${await res.text()}`);
+  return (await res.json()) as T;
+}
+
+export type RazorpayPayment = { id: string; order_id: string; status: "created" | "authorized" | "captured" | "refunded" | "failed"; amount: number };
+
+export const razorpayGateway: PaymentGateway & {
+  fetchPayment(id: string): Promise<RazorpayPayment>;
+  fetchOrderPayments(orderId: string): Promise<RazorpayPayment[]>;
+  verifyWebhook(rawBody: string, signature: string | null): boolean;
+} = {
   name: "RAZORPAY",
   async createOrder({ paymentId, amount, description, returnUrl }) {
-    const res = await fetch("https://api.razorpay.com/v1/orders", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Basic " + Buffer.from(`${process.env.RAZORPAY_KEY_ID}:${process.env.RAZORPAY_KEY_SECRET}`).toString("base64"),
-      },
-      body: JSON.stringify({ amount, currency: "INR", receipt: paymentId, notes: { description } }),
-    });
-    if (!res.ok) throw new Error(`Razorpay order failed: ${res.status} ${await res.text()}`);
-    const order = (await res.json()) as { id: string };
-    return {
-      gatewayOrderId: order.id,
-      redirectUrl: `/pay/razorpay/${paymentId}?return=${encodeURIComponent(returnUrl)}`,
-    };
+    const order = await rzp<{ id: string }>("/orders", { method: "POST", body: { amount, currency: "INR", receipt: paymentId, notes: { description } } });
+    return { gatewayOrderId: order.id, redirectUrl: `/pay/razorpay/${paymentId}?return=${encodeURIComponent(returnUrl)}` };
   },
   verifyCallback(payload, ctx) {
     const { razorpay_payment_id, razorpay_order_id, razorpay_signature } = payload;
-    if (payload.outcome === "FAIL" && razorpay_payment_id) {
-      // Failure callbacks from checkout.js carry no signature; we only ever mark FAILED from them.
+    if (payload.outcome === "FAIL") {
+      // Checkout's failure event is unsigned: only the order id is checked here; the payment's real status is
+      // confirmed with Razorpay before anything is marked FAILED (see verifyOnlinePayment).
+      if (!razorpay_payment_id || !razorpay_order_id || razorpay_order_id !== ctx.gatewayOrderId) return { ok: false };
       return { ok: true, gatewayPaymentId: razorpay_payment_id, outcome: "FAIL" };
     }
     if (!razorpay_payment_id || !razorpay_order_id || !razorpay_signature) return { ok: false };
     if (ctx.gatewayOrderId && razorpay_order_id !== ctx.gatewayOrderId) return { ok: false };
-    const expected = createHmac("sha256", process.env.RAZORPAY_KEY_SECRET ?? "")
-      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-      .digest("hex");
+    const expected = createHmac("sha256", process.env.RAZORPAY_KEY_SECRET ?? "").update(`${razorpay_order_id}|${razorpay_payment_id}`).digest("hex");
     if (!safeEqual(expected, razorpay_signature)) return { ok: false };
     return { ok: true, gatewayPaymentId: razorpay_payment_id, outcome: "SUCCESS" };
   },
   async refund({ gatewayPaymentId, amount }) {
-    const res = await fetch(`https://api.razorpay.com/v1/payments/${gatewayPaymentId}/refund`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Basic " + Buffer.from(`${process.env.RAZORPAY_KEY_ID}:${process.env.RAZORPAY_KEY_SECRET}`).toString("base64"),
-      },
-      body: JSON.stringify({ amount }),
-    });
-    if (!res.ok) throw new Error(`Razorpay refund failed: ${res.status} ${await res.text()}`);
-    const r = (await res.json()) as { id: string };
+    const r = await rzp<{ id: string }>(`/payments/${gatewayPaymentId}/refund`, { method: "POST", body: { amount } });
     return { gatewayRefundId: r.id };
+  },
+  fetchPayment(id) {
+    return rzp<RazorpayPayment>(`/payments/${id}`);
+  },
+  async fetchOrderPayments(orderId) {
+    return (await rzp<{ items: RazorpayPayment[] }>(`/orders/${orderId}/payments`)).items;
+  },
+  /** X-Razorpay-Signature = HMAC-SHA256(raw body, webhook secret). */
+  verifyWebhook(rawBody, signature) {
+    const s = process.env.RAZORPAY_WEBHOOK_SECRET;
+    if (!s || !signature) return false;
+    return safeEqual(createHmac("sha256", s).update(rawBody).digest("hex"), signature);
   },
 };
 
-export function razorpayConfigured(): boolean {
-  return !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
-}
-
+/** The gateway for new online payments: Razorpay (live) in production, the Test Gateway only in tests. */
 export function activeGateway(): PaymentGateway {
-  return razorpayConfigured() ? razorpayGateway : testGateway;
+  if (isTestEnv() && !(process.env.RAZORPAY_KEY_ID ?? "").startsWith("rzp_live_")) return testGateway;
+  return razorpayGateway;
 }
 
 export function gatewayByName(name: string | null): PaymentGateway {
-  return name === "RAZORPAY" ? razorpayGateway : testGateway;
+  if (name === "RAZORPAY") return razorpayGateway;
+  if (name === "TEST") {
+    if (!isTestEnv()) throw new DomainError("NOT_FOUND", "This payment method is not available.");
+    return testGateway;
+  }
+  throw new DomainError("NOT_FOUND", "Unknown payment gateway.");
 }

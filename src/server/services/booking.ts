@@ -30,13 +30,22 @@ const STAFF_CHANNELS: BookingChannel[] = ["FRONT_DESK", "PHONE", "MESSAGE", "WAL
 export const playerInputSchema = z.union([
   z.object({ memberId: z.string().min(1) }),
   z.object({ memberCode: z.string().min(3) }),
+  // Completion pass §7 (member): add a partner by their mobile number as well as by member code.
+  z.object({ memberPhone: z.string().min(10).max(20) }),
   z.object({ guestId: z.string().min(1) }),
   z.object({ guest: z.object({ name: z.string().trim().min(2).max(100), phone: z.string().optional(), email: z.string().email().optional() }) }),
 ]);
 export type PlayerInput = z.infer<typeof playerInputSchema>;
 
 export const paymentChoiceSchema = z.union([
-  z.object({ kind: z.literal("COUNTER"), method: z.enum(["CASH", "CARD", "UPI"]), reference: z.string().max(100).optional(), tendered: z.number().int().positive().optional() }),
+  z.object({
+    kind: z.literal("COUNTER"),
+    method: z.enum(["CASH", "CARD", "UPI"]),
+    reference: z.string().max(100).optional(),
+    tendered: z.number().int().positive().optional(),
+    cardLast4: z.string().max(4).optional(),
+    approvalCode: z.string().max(20).optional(),
+  }),
   z.object({ kind: z.literal("ONLINE"), returnUrl: z.string().max(300).optional() }),
   z.object({ kind: z.literal("LATER") }),
 ]);
@@ -81,14 +90,25 @@ export function assertValidSlot(court: { name: string }, date: string, startTime
   void date;
 }
 
+/** A member given by id, member code or mobile number. */
+export async function findMemberRef(db: Tx | typeof prisma, p: { memberId: string } | { memberCode: string } | { memberPhone: string }) {
+  if ("memberId" in p) return db.member.findUnique({ where: { id: p.memberId } });
+  if ("memberCode" in p) {
+    const m = await db.member.findUnique({ where: { memberCode: p.memberCode.trim().toUpperCase() } });
+    if (!m) throw new DomainError("PLAYERS_INVALID", `Member ${p.memberCode} was not found.`);
+    return m;
+  }
+  const m = await db.member.findUnique({ where: { phone: normalisePhone(p.memberPhone) } });
+  if (!m) throw new DomainError("PLAYERS_INVALID", `No member has the mobile number ${p.memberPhone}. Add them as a guest instead.`);
+  return m;
+}
+
 async function resolvePlayers(tx: Tx, inputs: PlayerInput[]): Promise<ResolvedPlayer[]> {
   const out: ResolvedPlayer[] = [];
   for (const p of inputs) {
-    if ("memberId" in p || "memberCode" in p) {
-      const m = "memberId" in p
-        ? await tx.member.findUnique({ where: { id: p.memberId } })
-        : await tx.member.findUnique({ where: { memberCode: p.memberCode.trim().toUpperCase() } });
-      if (!m) throw new DomainError("PLAYERS_INVALID", `Member ${"memberCode" in p ? p.memberCode : ""} was not found.`);
+    if ("memberId" in p || "memberCode" in p || "memberPhone" in p) {
+      const m = await findMemberRef(tx, p);
+      if (!m) throw new DomainError("PLAYERS_INVALID", "Member was not found.");
       out.push({ memberId: m.id, guestId: null, name: m.name });
     } else if ("guestId" in p) {
       const g = await tx.guest.findUnique({ where: { id: p.guestId } });
@@ -356,7 +376,7 @@ export async function createBookingTx(tx: Tx, actor: Actor, raw: CreateBookingIn
     if (!STAFF_CHANNELS.includes(input.channel) && !can(actor, "bookings.any")) {
       throw new DomainError("FORBIDDEN", "Counter payments are recorded by staff.");
     }
-    await recordPaymentTx(tx, actor, { billId: bill.id, method: input.payment.method, amount: billDue(billNow), reference: input.payment.reference ?? null, tendered: input.payment.tendered ?? null });
+    await recordPaymentTx(tx, actor, { ...input.payment, billId: bill.id, amount: billDue(billNow) });
     billNow = await tx.bill.findUniqueOrThrow({ where: { id: bill.id } });
   } else if (input.payment.kind === "ONLINE" && billDue(billNow) > 0) {
     const p = await startOnlinePaymentTx(tx, actor, bill.id, { returnUrl: input.payment.returnUrl ?? "/portal/bookings", internal: true });
@@ -401,9 +421,8 @@ export async function quoteBooking(actor: Actor, raw: { courtId: string; date: s
     if ("memberId" in p) {
       const m = await prisma.member.findUnique({ where: { id: p.memberId } });
       if (m) refs.push({ memberId: m.id, name: m.name });
-    } else if ("memberCode" in p) {
-      const m = await prisma.member.findUnique({ where: { memberCode: p.memberCode.trim().toUpperCase() } });
-      if (!m) throw new DomainError("PLAYERS_INVALID", `Member ${p.memberCode} was not found.`);
+    } else if ("memberCode" in p || "memberPhone" in p) {
+      const m = (await findMemberRef(prisma, p))!;
       refs.push({ memberId: m.id, name: m.name });
     } else if ("guestId" in p) {
       const g = await prisma.guest.findUnique({ where: { id: p.guestId } });
@@ -421,6 +440,7 @@ export async function quoteBooking(actor: Actor, raw: { courtId: string; date: s
 
 export const cancelBookingSchema = z.object({
   refundMethod: z.enum(["CASH", "CARD", "UPI"]).optional(),
+  refundReference: z.string().trim().max(100).optional(),
   reason: z.string().max(300).optional(),
 });
 
@@ -449,13 +469,15 @@ export async function cancelBookingTx(tx: Tx, actor: Actor, bookingId: string, r
   const hoursBefore = (b.reservation.startAt.getTime() - now.getTime()) / HOUR;
   const fullRefund = hoursBefore >= s.cancel_full_refund_hours;
   let refunded = 0;
+  let refundPending = 0;
   if (b.billId) {
     const bill = await tx.bill.findUniqueOrThrow({ where: { id: b.billId } });
     if (fullRefund) {
       const paid = netPaid(bill);
       if (paid > 0) {
-        await refundTx(tx, actor, bill.id, paid, { method: input.refundMethod, reason: `Booking ${b.bookingCode} cancelled ${hoursBefore.toFixed(1)}h before start` });
-        refunded = paid;
+        const r = await refundTx(tx, actor, bill.id, paid, { method: input.refundMethod, reference: input.refundReference, approvalCode: input.refundReference, reason: `Booking ${b.bookingCode} cancelled ${hoursBefore.toFixed(1)}h before start` });
+        refunded = r.refunded;
+        refundPending = r.pending;
       }
       await closeBill(tx, bill.id, `Booking ${b.bookingCode} cancelled in time — nothing due`, now);
     }
@@ -476,12 +498,12 @@ export async function cancelBookingTx(tx: Tx, actor: Actor, bookingId: string, r
     userIds: memberUsers.map((m) => m.userId).filter((x): x is string => !!x),
     type: "BOOKING_CANCELLED",
     title: `Cancelled: ${b.reservation.court.name} ${fmtDate(istDate(b.reservation.startAt))} ${fmtRange(b.reservation.startAt, b.reservation.endAt)}`,
-    body: `${b.bookingCode} was cancelled. ${refunded ? `${formatINR(refunded)} refunded.` : fullRefund ? "Nothing was charged." : `Cancelled less than ${s.cancel_full_refund_hours}h before start — no refund.`}`,
+    body: `${b.bookingCode} was cancelled. ${refunded ? `${formatINR(refunded)} refunded.` : ""}${refundPending ? ` ${formatINR(refundPending)} will be refunded at the front desk.` : ""}${!refunded && !refundPending ? (fullRefund ? "Nothing was charged." : `Cancelled less than ${s.cancel_full_refund_hours}h before start — no refund.`) : ""}`,
     link: "/portal/bookings",
     dedupeKey: `booking-cancelled:${b.id}`,
     email: true,
   });
-  return { bookingId: b.id, bookingCode: b.bookingCode, status: "CANCELLED" as const, refunded, fullRefund };
+  return { bookingId: b.id, bookingCode: b.bookingCode, status: "CANCELLED" as const, refunded, refundPending, fullRefund };
 }
 
 export async function cancelBooking(actor: Actor, bookingId: string, raw: z.infer<typeof cancelBookingSchema> = {}, outer?: Tx) {
@@ -493,6 +515,7 @@ export async function cancelBooking(actor: Actor, bookingId: string, raw: z.infe
 export const changePlayersSchema = z.object({
   players: z.array(playerInputSchema).min(1).max(20),
   refundMethod: z.enum(["CASH", "CARD", "UPI"]).optional(),
+  refundReference: z.string().trim().max(100).optional(),
 });
 
 export async function changePlayers(actor: Actor, bookingId: string, raw: z.infer<typeof changePlayersSchema>) {
@@ -542,15 +565,17 @@ export async function changePlayers(actor: Actor, bookingId: string, raw: z.infe
     const bill = await tx.bill.findUniqueOrThrow({ where: { id: billId } });
     const over = netPaid(bill) - totals[0].total;
     let refunded = 0;
+    let refundPending = 0;
     if (over > 0) {
-      await refundTx(tx, actor, billId, over, { method: input.refundMethod, reason: `Players changed on ${b.bookingCode}` });
-      refunded = over;
+      const r = await refundTx(tx, actor, billId, over, { method: input.refundMethod, reference: input.refundReference, approvalCode: input.refundReference, reason: `Players changed on ${b.bookingCode}` });
+      refunded = r.refunded;
+      refundPending = r.pending;
     }
     const after = await refreshBill(tx, billId);
     billId = after.id;
     await audit(tx, actor, "booking.change_players", "booking", b.id, {
       before: { players: current.map((p) => p.memberId ?? p.guestId) },
-      after: { added: added.map((p) => p.name), removed: removed.map((p) => p.memberId ?? p.guestId), refunded, total: after.total },
+      after: { added: added.map((p) => p.name), removed: removed.map((p) => p.memberId ?? p.guestId), refunded, refundPending, total: after.total },
     });
     const users = await tx.member.findMany({ where: { id: { in: added.map((p) => p.memberId).filter((x): x is string => !!x) } }, select: { userId: true } });
     await notify(tx, {
@@ -562,7 +587,7 @@ export async function changePlayers(actor: Actor, bookingId: string, raw: z.infe
       dedupeKey: `booking-player-added:${b.id}:${added.map((a) => a.memberId ?? a.guestId).join(",")}`,
       email: true,
     });
-    return { bookingId: b.id, added: added.length, removed: removed.length, refunded, due: billDue(after) };
+    return { bookingId: b.id, added: added.length, removed: removed.length, refunded, refundPending, due: billDue(after) };
   });
 }
 

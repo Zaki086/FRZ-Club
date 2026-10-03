@@ -46,8 +46,8 @@ export async function issueMembershipInvoice(tx: Tx, actor: Actor, bill: Bill, m
   if (member?.email) {
     await queueEmail(tx, {
       to: member.email,
-      subject: `Tax invoice ${inv.number} — The Champions Club`,
-      body: `Dear ${member.name},\n\nThank you for your membership payment of ${formatINR(bill.total)}. Your tax invoice ${inv.number} is available in the member portal.`,
+      subject: `${s.gstEnabled ? "Tax invoice" : "Receipt"} ${inv.number} — ${s.club.name}`,
+      body: `Dear ${member.name},\n\nThank you for your membership payment of ${formatINR(bill.total)}. Your ${s.gstEnabled ? "tax invoice" : "receipt"} ${inv.number} is available in the member portal.`,
       dedupeKey: `invoice-issued:${inv.id}`,
     });
   }
@@ -124,7 +124,7 @@ const lineSchema = z.object({
   qty: z.number().int().positive(),
   unitPrice: z.number().int().min(0).optional(),
   variantId: z.string().optional(),
-  taxCategory: z.enum(["COURT", "MEMBERSHIP", "GOODS", "SERVICE", "RESTAURANT", "DELIVERY", "BUSINESS_SERVICE"]).optional(),
+  taxCategory: z.enum(["COURT", "MEMBERSHIP", "GOODS_5", "GOODS_18", "SERVICE", "RESTAURANT", "DELIVERY", "BUSINESS_SERVICE"]).optional(),
 });
 
 export const invoiceDraftSchema = z.object({
@@ -233,7 +233,7 @@ export async function issueInvoice(actor: Actor, invoiceId: string, outer?: Tx) 
     if (email) {
       await queueEmail(tx, {
         to: email,
-        subject: `Invoice ${n.number} from The Champions Club`,
+        subject: `Invoice ${n.number} from ${(await getSettings(tx)).club.name}`,
         body: `Dear ${name},\n\nPlease find invoice ${n.number} for ${formatINR(bill.total)}, due on ${addDays(today, terms)}.`,
         dedupeKey: `invoice-issued:${inv.id}`,
       });
@@ -388,6 +388,8 @@ export async function getInvoice(actor: Actor, invoiceId: string) {
   return {
     invoice: inv,
     club: s.club,
+    // §1 gst: without GST registration the document is a plain receipt with no tax lines.
+    gst: s.gstEnabled,
     taxRatesVerified: (await prisma.setting.findUnique({ where: { key: "tax_rates" } }))?.verified ?? false,
     client,
     member,

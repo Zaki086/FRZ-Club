@@ -9,7 +9,10 @@ const FD: Role = "FRONT_DESK";
 const SS: Role = "SHOP_STAFF";
 const BS: Role = "BAR_STAFF";
 const AC: Role = "ACCOUNTANT";
+const K: Role = "KITCHEN";
 const STAFF: Role[] = [O, M, FD, SS, BS, AC];
+/** Everyone employed by the club, including the kitchen (which only uses the KDS and its own shifts/leave). */
+const EMPLOYEES: Role[] = [...STAFF, K];
 
 export const CAPABILITIES = {
   "members.manage": [O, M, FD],
@@ -26,7 +29,7 @@ export const CAPABILITIES = {
   "shop.fulfil": [O, M, SS],
   "shop.view": [O, M, FD, SS],
   "bar.operate": [O, M, BS],
-  "bar.kds": [O, M, BS],
+  "bar.kds": [O, M, BS, K],
   "bar.void_after_prep": [O, M],
   "bar.close_day": [O, M],
   "bar.report": [O, M, BS],
@@ -37,8 +40,11 @@ export const CAPABILITIES = {
   "expenses.manage": [O, AC],
   "expenses.view": [O, M, AC],
   "roster.manage": [O, M],
-  "roster.view_own": STAFF,
-  "staff.self": STAFF,
+  "roster.view_own": EMPLOYEES,
+  "staff.self": EMPLOYEES,
+  "cash.reconcile": [O, M, AC],
+  "users.manage": [O],
+  "password.links": [O, M, FD],
   "leave.approve": [O, M],
   "payroll": [O, AC],
   "finance.reports": [O, AC],
@@ -53,7 +59,14 @@ export const CAPABILITIES = {
   "audit": [O],
   "share_links": [O],
   "dev_tools": [O],
-  "notifications.staff": STAFF,
+  "notifications.staff": EMPLOYEES,
+  // Completion pass §3: WhatsApp links from staff screens; the Owner reads every message sent.
+  "messages.send": STAFF,
+  "messages.log": [O],
+  // Completion pass P1 (DPDP): data export / erasure requests are decided by the Owner.
+  "privacy.manage": [O],
+  // Completion pass §7 (manager): what each staff member did, by day.
+  "staff.activity": [O, M],
 } as const satisfies Record<string, Role[]>;
 
 export type Capability = keyof typeof CAPABILITIES;

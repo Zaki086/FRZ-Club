@@ -74,7 +74,7 @@ export async function approvePayrollRun(actor: Actor, runId: string, outer?: Tx)
   }, outer);
 }
 
-export const payRunSchema = z.object({ method: z.enum(["CASH", "CARD", "UPI", "ONLINE"]).default("ONLINE") });
+export const payRunSchema = z.object({ method: z.enum(["CASH", "UPI", "BANK_TRANSFER"]).default("BANK_TRANSFER") });
 
 /** APPROVED → PAID: one PAYROLL OUT ledger entry per payslip, same transaction. */
 export async function payPayrollRun(actor: Actor, runId: string, raw: z.input<typeof payRunSchema> = {}, outer?: Tx) {

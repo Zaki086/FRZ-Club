@@ -140,7 +140,8 @@ export function priceLine(
   const discountPct = input.discountPct ?? 0;
   const discountAmount = Math.min(gross, input.discountAmount ?? percentOf(gross, discountPct));
   const netAmount = gross - discountAmount;
-  const taxRate = settings.tax_rates[input.taxCategory];
+  // §1 gst capability: without a valid GSTIN and confirmed rates the club issues plain receipts — no tax at all.
+  const taxRate = settings.gstEnabled ? settings.tax_rates[input.taxCategory] : 0;
   return {
     description: input.description,
     qty: input.qty,
@@ -373,7 +374,7 @@ export function quoteManual(
 }
 
 export function asTaxCategory(c: string): TaxCategory {
-  const known: TaxCategory[] = ["COURT", "MEMBERSHIP", "GOODS", "SERVICE", "RESTAURANT", "ALCOHOL", "DELIVERY", "BUSINESS_SERVICE"];
+  const known: TaxCategory[] = ["COURT", "MEMBERSHIP", "GOODS_5", "GOODS_18", "SERVICE", "RESTAURANT", "OUTSIDE_GST", "DELIVERY", "BUSINESS_SERVICE"];
   if ((known as string[]).includes(c)) return c as TaxCategory;
   throw new DomainError("VALIDATION_FAILED", `Unknown tax category ${c}.`);
 }

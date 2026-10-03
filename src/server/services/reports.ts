@@ -16,9 +16,11 @@ import { audit } from "./audit";
 import { billDue } from "./bills";
 import { splitTax } from "./invoices";
 import { getSettings } from "./settings";
+import { INDIAN_STATES } from "@/lib/states";
+import { assertCapability } from "./capabilities";
 
 export const INCOME_SOURCES: LedgerSource[] = ["COURTS", "SOCIAL", "SHOP", "BAR", "MEMBERSHIP", "INVOICE"];
-export const METHODS: PaymentMethod[] = ["CASH", "CARD", "UPI", "ONLINE"];
+export const METHODS: PaymentMethod[] = ["CASH", "CARD", "UPI", "BANK_TRANSFER", "ONLINE"];
 
 // ───────────── periods (DB-1) ─────────────
 
@@ -334,6 +336,7 @@ export async function drillDown(actor: Actor, metric: string, raw: PeriodInput) 
  */
 export async function gstReport(actor: Actor, raw: PeriodInput) {
   assertCan(actor, "gst");
+  await assertCapability("gst");
   const p = resolvePeriod(raw);
   const s = await getSettings();
   const verified = (await prisma.setting.findUnique({ where: { key: "tax_rates" } }))?.verified ?? false;
@@ -365,10 +368,122 @@ export async function gstReport(actor: Actor, raw: PeriodInput) {
       buckets.set(key, cur);
     }
   }
-  const rows = [...buckets.values()].sort((x, y) => y.rate - x.rate || x.category.localeCompare(y.category));
+  // Alcohol is outside GST (state excise): listed separately, never in the GST totals (completion pass §9).
+  const all = [...buckets.values()];
+  const outside = all.filter((r) => r.category === "OUTSIDE_GST");
+  const rows = all.filter((r) => r.category !== "OUTSIDE_GST").sort((x, y) => y.rate - x.rate || x.category.localeCompare(y.category));
+  const outsideGst = outside.reduce((t, r) => t + r.taxable + r.tax, 0);
   const totals = rows.reduce((t, r) => ({ taxable: t.taxable + r.taxable, tax: t.tax + r.tax, cgst: t.cgst + r.cgst, sgst: t.sgst + r.sgst, igst: t.igst + r.igst }), { taxable: 0, tax: 0, cgst: 0, sgst: 0, igst: 0 });
   const inputGst = await prisma.expenseBill.aggregate({ where: { status: "PAID", paidAt: { gte: a, lt: b } }, _sum: { inputGst: true } });
-  return { period: p, ratesVerified: verified, rows, totals, inputGst: inputGst._sum.inputGst ?? 0, note: "Report support only — verify rates and figures with your tax advisor before filing." };
+  return { period: p, ratesVerified: verified, rows, totals, outsideGst, inputGst: inputGst._sum.inputGst ?? 0, note: "Report support only — verify rates and figures with your tax advisor before filing." };
+}
+
+// ───────────── GSTR-1 support and Tally export (completion pass §9) ─────────────
+
+const fmtGstDate = (d: Date) => {
+  const [y, m, day] = istDate(d).split("-");
+  return `${day}-${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(m) - 1]}-${y}`;
+};
+
+/**
+ * GSTR-1 working tables for a period, by date of supply (invoice issue date / line date): B2B invoices to
+ * registered clients (per invoice and rate), B2CS (everything else, per rate and place of supply), the HSN/SAC
+ * summary, and non-GST supplies (alcohol). Returns create no credit notes: a return simply lowers the sales.
+ */
+export async function gstr1(actor: Actor, raw: PeriodInput) {
+  assertCan(actor, "gst");
+  await assertCapability("gst");
+  const p = resolvePeriod(raw);
+  const s = await getSettings();
+  const [a, b] = bounds(p.from, p.to);
+  // GSTR-1 writes the place of supply as "24-Gujarat".
+  const stateName = (code: string) => `${code}-${INDIAN_STATES.find((x) => x.code === code)?.name ?? ""}`;
+  // B2B: issued invoices to clients with a GSTIN.
+  const invoices = await prisma.invoice.findMany({
+    where: { number: { not: null }, status: { not: "CANCELLED" }, businessClientId: { not: null }, issueDate: { gte: new Date(`${p.from}T00:00:00Z`), lte: new Date(`${p.to}T00:00:00Z`) } },
+    orderBy: { number: "asc" },
+  });
+  const clients = await prisma.businessClient.findMany({ where: { id: { in: invoices.map((i) => i.businessClientId!) } } });
+  const b2bBillIds = new Set<string>();
+  const b2b: Array<{ gstin: string; name: string; number: string; date: string; value: number; pos: string; rate: number; taxable: number; igst: number; cgst: number; sgst: number }> = [];
+  for (const inv of invoices) {
+    const c = clients.find((x) => x.id === inv.businessClientId);
+    if (!c?.gstin) continue;
+    b2bBillIds.add(inv.billId);
+    const bill = await prisma.bill.findUniqueOrThrow({ where: { id: inv.billId }, include: { lines: { where: { voidedAt: null } } } });
+    const byRate = new Map<number, { taxable: number; tax: number }>();
+    for (const l of bill.lines) {
+      if (l.taxCategory === "OUTSIDE_GST") continue;
+      const cur = byRate.get(l.taxRate) ?? { taxable: 0, tax: 0 };
+      cur.taxable += l.netAmount - l.taxAmount;
+      cur.tax += l.taxAmount;
+      byRate.set(l.taxRate, cur);
+    }
+    for (const [rate, v] of [...byRate.entries()].sort((x, y) => x[0] - y[0])) {
+      const split = splitTax(v.tax, inv.placeOfSupply, s.club.state_code);
+      b2b.push({ gstin: c.gstin, name: c.name, number: inv.number!, date: fmtGstDate(inv.issueDate!), value: bill.total, pos: stateName(inv.placeOfSupply), rate, taxable: v.taxable, ...split });
+    }
+  }
+  // Every other supply in the period (non-void lines on bills that are not B2B invoices).
+  const lines = await prisma.billLine.findMany({ where: { voidedAt: null, createdAt: { gte: a, lt: b }, NOT: { billId: { in: [...b2bBillIds] } } } });
+  const b2bLines = b2bBillIds.size ? await prisma.billLine.findMany({ where: { voidedAt: null, billId: { in: [...b2bBillIds] } } }) : [];
+  const b2cs = new Map<number, { rate: number; pos: string; taxable: number; cgst: number; sgst: number }>();
+  let nonGst = 0;
+  for (const l of lines) {
+    if (l.taxCategory === "OUTSIDE_GST") {
+      nonGst += l.netAmount;
+      continue;
+    }
+    const cur = b2cs.get(l.taxRate) ?? { rate: l.taxRate, pos: stateName(s.club.state_code), taxable: 0, cgst: 0, sgst: 0 };
+    const split = splitTax(l.taxAmount, s.club.state_code, s.club.state_code);
+    cur.taxable += l.netAmount - l.taxAmount;
+    cur.cgst += split.cgst;
+    cur.sgst += split.sgst;
+    b2cs.set(l.taxRate, cur);
+  }
+  const hsn = new Map<string, { hsn: string; rate: number; qty: number; value: number; taxable: number; tax: number }>();
+  for (const l of [...lines, ...b2bLines]) {
+    if (l.taxCategory === "OUTSIDE_GST") continue;
+    const key = `${l.hsnSac}|${l.taxRate}`;
+    const cur = hsn.get(key) ?? { hsn: l.hsnSac, rate: l.taxRate, qty: 0, value: 0, taxable: 0, tax: 0 };
+    cur.qty += l.qty;
+    cur.value += l.netAmount;
+    cur.taxable += l.netAmount - l.taxAmount;
+    cur.tax += l.taxAmount;
+    hsn.set(key, cur);
+  }
+  return {
+    period: p, gstin: s.club.gstin, b2b,
+    b2cs: [...b2cs.values()].sort((x, y) => x.rate - y.rate),
+    hsn: [...hsn.values()].sort((x, y) => x.hsn.localeCompare(y.hsn) || x.rate - y.rate),
+    nonGst,
+    note: "Working tables for GSTR-1 (by date of supply). Check them with your tax advisor before filing.",
+  };
+}
+
+const TALLY_LEDGER: Record<LedgerSource, string> = {
+  COURTS: "Court Fees", SOCIAL: "Social Play Fees", SHOP: "Shop Sales", BAR: "Bar & Cafe Sales", MEMBERSHIP: "Membership Fees",
+  INVOICE: "Corporate Invoices", EXPENSE: "Expenses", PAYROLL: "Salaries",
+};
+const TALLY_CASH_BANK: Record<PaymentMethod, string> = { CASH: "Cash", CARD: "Card Settlements (Bank)", UPI: "UPI Collections (Bank)", BANK_TRANSFER: "Bank Account", ONLINE: "Razorpay Settlements (Bank)" };
+
+/** Day book for Tally import: one row per ledger entry, receipts and payments with their cash/bank ledger. */
+export async function tallyRows(actor: Actor, raw: PeriodInput) {
+  assertCan(actor, "finance.reports");
+  const l = await listLedger(actor, raw);
+  return [...l.rows].reverse().map((r) => {
+    const receipt = r.amount >= 0 && r.direction === "IN";
+    return {
+      date: istDate(r.occurredAt).split("-").reverse().join("-"),
+      voucherType: receipt ? "Receipt" : "Payment",
+      voucherNo: (r.paymentId ?? r.id).slice(-10).toUpperCase(),
+      ledger: TALLY_LEDGER[r.source],
+      cashBank: TALLY_CASH_BANK[r.method],
+      amount: rupees(Math.abs(r.amount)),
+      drCr: receipt ? "Cr" : "Dr",
+      narration: r.description,
+    };
+  });
 }
 
 // ───────────── ledger explorer & CSV (DB-5) ─────────────
@@ -408,7 +523,31 @@ export async function exportCsv(actor: Actor, report: string, raw: PeriodInput &
   }
   if (report === "gst") {
     const g = await gstReport(actor, raw);
-    return toCsv(["Rate %", "Category", "Taxable (₹)", "Tax (₹)", "CGST (₹)", "SGST (₹)", "IGST (₹)"], [...g.rows.map((r) => [r.rate, r.category, rupees(r.taxable), rupees(r.tax), rupees(r.cgst), rupees(r.sgst), rupees(r.igst)]), ["", "TOTAL", rupees(g.totals.taxable), rupees(g.totals.tax), rupees(g.totals.cgst), rupees(g.totals.sgst), rupees(g.totals.igst)]]);
+    return toCsv(["Rate %", "Category", "Taxable (₹)", "Tax (₹)", "CGST (₹)", "SGST (₹)", "IGST (₹)"], [
+      ...g.rows.map((r) => [r.rate, r.category, rupees(r.taxable), rupees(r.tax), rupees(r.cgst), rupees(r.sgst), rupees(r.igst)]),
+      ["", "TOTAL", rupees(g.totals.taxable), rupees(g.totals.tax), rupees(g.totals.cgst), rupees(g.totals.sgst), rupees(g.totals.igst)],
+      ["", "OUTSIDE GST (alcohol, state excise)", rupees(g.outsideGst), "", "", "", ""],
+    ]);
+  }
+  if (report === "gstr1_b2b") {
+    const g = await gstr1(actor, raw);
+    return toCsv(["GSTIN/UIN of Recipient", "Receiver Name", "Invoice Number", "Invoice date", "Invoice Value", "Place Of Supply", "Reverse Charge", "Invoice Type", "Rate", "Taxable Value", "Integrated Tax", "Central Tax", "State/UT Tax"],
+      g.b2b.map((r) => [r.gstin, r.name, r.number, r.date, rupees(r.value), r.pos, "N", "Regular", r.rate, rupees(r.taxable), rupees(r.igst), rupees(r.cgst), rupees(r.sgst)]));
+  }
+  if (report === "gstr1_b2cs") {
+    const g = await gstr1(actor, raw);
+    return toCsv(["Type", "Place Of Supply", "Rate", "Taxable Value", "Central Tax", "State/UT Tax"], [
+      ...g.b2cs.map((r) => ["OE", r.pos, r.rate, rupees(r.taxable), rupees(r.cgst), rupees(r.sgst)]),
+      ["NON-GST", "", "", rupees(g.nonGst), "", ""],
+    ]);
+  }
+  if (report === "gstr1_hsn") {
+    const g = await gstr1(actor, raw);
+    return toCsv(["HSN/SAC", "Rate", "Total Quantity", "Total Value", "Taxable Value", "Total Tax"], g.hsn.map((r) => [r.hsn, r.rate, r.qty, rupees(r.value), rupees(r.taxable), rupees(r.tax)]));
+  }
+  if (report === "tally") {
+    const rows = await tallyRows(actor, raw);
+    return toCsv(["Date", "Voucher Type", "Voucher No", "Ledger", "Cash/Bank Ledger", "Amount", "Dr/Cr", "Narration"], rows.map((r) => [r.date, r.voucherType, r.voucherNo, r.ledger, r.cashBank, r.amount, r.drCr, r.narration]));
   }
   if (report === "dashboard") {
     const d = (await dashboard(actor, raw)) as { period: Period; money: Record<string, unknown> };

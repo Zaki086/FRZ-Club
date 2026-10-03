@@ -21,4 +21,4 @@ export async function requireUser(roles?: Role[], next?: string): Promise<UserAc
   return actor;
 }
 
-export const STAFF_ROLES: Role[] = ["OWNER", "MANAGER", "FRONT_DESK", "SHOP_STAFF", "BAR_STAFF", "ACCOUNTANT"];
+export const STAFF_ROLES: Role[] = ["OWNER", "MANAGER", "FRONT_DESK", "SHOP_STAFF", "BAR_STAFF", "ACCOUNTANT", "KITCHEN"];

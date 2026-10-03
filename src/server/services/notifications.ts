@@ -6,6 +6,8 @@ import { clock } from "@/lib/clock";
 import { prisma, type Tx } from "../db";
 import type { Actor } from "../rbac/actor";
 import { assertUser } from "../rbac/permissions";
+import { isEnabled } from "./capabilities";
+import { logMessage } from "./messages";
 
 export type NotifyInput = {
   type: string;
@@ -47,18 +49,35 @@ function cryptoId(): string {
 }
 
 function smtpConfigured(): boolean {
-  return !!process.env.SMTP_HOST;
+  return !!(process.env.SMTP_HOST && process.env.SMTP_FROM);
 }
 
-/** Queue an email in the outbox (sent by the worker after commit). Never throws for missing SMTP. */
+type MailTransport = { sendMail(m: { from?: string; to: string; subject: string; text: string }): Promise<unknown> };
+let testTransport: MailTransport | null = null;
+/** Tests only: capture mail instead of talking to an SMTP server. */
+export function setMailTransportForTests(t: MailTransport | null) {
+  if (process.env.NODE_ENV !== "test" && !process.env.VITEST) throw new Error("mail transport override is only available in tests");
+  testTransport = t;
+}
+export function mailTransport(): MailTransport {
+  if (testTransport) return testTransport;
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT ?? 587),
+    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
+  });
+}
+
+/**
+ * Queue an email in the outbox (sent by the worker after commit). Completion pass §3: only when email is really
+ * available (SMTP set up and verified by a test email); otherwise nothing is queued and nothing is promised.
+ */
 export async function queueEmail(tx: Tx, e: { to: string; subject: string; body: string; dedupeKey?: string }) {
+  if (!(await isEnabled("email"))) return false;
   const rows = await tx.$queryRaw<{ id: string }[]>`
     INSERT INTO email_outbox (id, "to", subject, body, dedupe_key, updated_at)
     VALUES (${"eml_" + cryptoId()}, ${e.to}, ${e.subject}, ${e.body}, ${e.dedupeKey ?? null}, now())
     ON CONFLICT (dedupe_key) DO NOTHING RETURNING id`;
-  if (rows.length && !smtpConfigured() && process.env.NODE_ENV !== "test" && !process.env.VITEST && !process.env.SEEDING) {
-    console.log(`[email→outbox] to=${e.to} subject="${e.subject}"`);
-  }
   return rows.length > 0;
 }
 
@@ -70,31 +89,26 @@ export async function flushEmailOutbox(limit = 50): Promise<{ sent: number; skip
     take: limit,
   });
   if (!pending.length) return { sent: 0, skipped: 0, failed: 0 };
-  if (!smtpConfigured()) {
-    await prisma.emailOutbox.updateMany({
-      where: { id: { in: pending.map((p) => p.id) } },
-      data: { error: "SMTP not configured — kept in outbox and logged to console" },
-    });
+  if (!(await isEnabled("email")) || (!smtpConfigured() && !testTransport)) {
+    // Email was switched off after these were queued: they are not sent, and the log says so.
+    await prisma.emailOutbox.updateMany({ where: { id: { in: pending.map((p) => p.id) } }, data: { error: "Email is not available (SMTP not set up or not verified)" } });
+    for (const m of pending) await logMessage(prisma, { channel: "EMAIL", to: m.to, subject: m.subject, body: m.body, status: "FAILED", error: "Email is not available" });
     return { sent: 0, skipped: pending.length, failed: 0 };
   }
-  const transport = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT ?? 587),
-    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
-  });
+  const transport = mailTransport();
   let sent = 0;
   let failed = 0;
   for (const m of pending) {
     try {
       await transport.sendMail({ from: process.env.SMTP_FROM, to: m.to, subject: m.subject, text: m.body });
       await prisma.emailOutbox.update({ where: { id: m.id }, data: { sentAt: clock.now() } });
+      await logMessage(prisma, { channel: "EMAIL", to: m.to, subject: m.subject, body: m.body, status: "SENT" });
       sent++;
     } catch (err) {
       failed++;
-      await prisma.emailOutbox.update({
-        where: { id: m.id },
-        data: { error: err instanceof Error ? err.message.slice(0, 500) : String(err) },
-      });
+      const error = err instanceof Error ? err.message.slice(0, 500) : String(err);
+      await prisma.emailOutbox.update({ where: { id: m.id }, data: { error } });
+      await logMessage(prisma, { channel: "EMAIL", to: m.to, subject: m.subject, body: m.body, status: "FAILED", error });
     }
   }
   return { sent, skipped: 0, failed };

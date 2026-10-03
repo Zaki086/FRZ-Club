@@ -47,8 +47,17 @@ export async function lookupByCard(actor: Actor, payload: string) {
   return { memberId: m.id };
 }
 
-export async function memberCard(actor: Actor, memberId: string) {
+/** Staff, the member, or (completion pass P1) the member's guardian. */
+async function assertStaffSelfOrGuardian(actor: Actor, memberId: string) {
+  if (actor.kind === "USER" && actor.role === "MEMBER" && actor.memberId && actor.memberId !== memberId) {
+    const junior = await prisma.member.findUnique({ where: { id: memberId }, select: { guardianMemberId: true } });
+    if (junior?.guardianMemberId === actor.memberId) return;
+  }
   assertStaffOrSelf(actor, "members.view", memberId);
+}
+
+export async function memberCard(actor: Actor, memberId: string) {
+  await assertStaffSelfOrGuardian(actor, memberId);
   const m = await prisma.member.findUnique({ where: { id: memberId } });
   if (!m) throw new DomainError("NOT_FOUND", "Member was not found.");
   const payload = memberCardPayload(m.id);

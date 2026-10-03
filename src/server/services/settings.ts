@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import type { Sport } from "@prisma/client";
 import { clock } from "@/lib/clock";
+import { isValidGstin } from "@/lib/codes";
 import { prisma, withTx, type Tx } from "../db";
 import type { Actor } from "../rbac/actor";
 import { assertCan } from "../rbac/permissions";
@@ -32,7 +33,21 @@ export const SETTINGS_SCHEMA = {
   }),
   social_default_capacity: z.number().int().min(1).max(100),
   trial_fee: z.number().int().min(0),
-  delivery_fee: z.number().int().min(0),
+  // §1 capability inputs (Owner-configured; nothing is enabled by default)
+  payment_methods: z.object({
+    card_enabled: z.boolean(),
+    upi_vpa: z.string().max(256),
+    upi_confirmed: z.boolean(),
+  }),
+  delivery: z.object({
+    enabled: z.boolean(),
+    pincodes: z.array(z.string().regex(/^[1-9][0-9]{5}$/, "PIN codes are 6 digits")).max(200),
+    fee: z.number().int().min(0),
+  }),
+  email_verified_at: z.string().nullable(),
+  instance_mode: z.enum(["NORMAL", "SAMPLE_DATA"]),
+  setup_completed_at: z.string().nullable(),
+  last_backup: z.object({ at: z.string(), file: z.string(), bytes: z.number().int(), ok: z.boolean().default(true), error: z.string().nullable().default(null) }).nullable(),
   online_hold_minutes: z.number().int().min(1).max(1440),
   pickup_hold_hours: z.number().int().min(1).max(720),
   default_reorder_level: z.number().int().min(0),
@@ -45,23 +60,25 @@ export const SETTINGS_SCHEMA = {
   share_link_days: z.number().int().min(1).max(90),
   expiring_soon_days: z.number().int().min(1).max(60),
   club: z.object({
-    name: z.string(),
-    legal_name: z.string(),
-    address: z.string(),
-    state: z.string(),
-    state_code: z.string().regex(/^\d{2}$/),
-    gstin: z.string(),
-    phone: z.string(),
-    email: z.string(),
-    upi_vpa: z.string(),
+    name: z.string().max(120),
+    legal_name: z.string().max(160),
+    address: z.string().max(400),
+    state: z.string().max(60),
+    state_code: z.string().regex(/^(\d{2})?$/, "State code is 2 digits"),
+    gstin: z.string().max(15),
+    phone: z.string().max(20),
+    email: z.string().max(160),
+    logo_url: z.string().max(300),
   }),
   tax_rates: z.object({
     COURT: z.number().int().min(0).max(40),
     MEMBERSHIP: z.number().int().min(0).max(40),
-    GOODS: z.number().int().min(0).max(40),
+    GOODS_5: z.number().int().min(0).max(40),
+    GOODS_18: z.number().int().min(0).max(40),
     SERVICE: z.number().int().min(0).max(40),
     RESTAURANT: z.number().int().min(0).max(40),
-    ALCOHOL: z.number().int().min(0).max(40),
+    // Alcohol for human consumption is outside GST (state excise/VAT, not modelled); always 0 and listed separately.
+    OUTSIDE_GST: z.literal(0),
     DELIVERY: z.number().int().min(0).max(40),
     BUSINESS_SERVICE: z.number().int().min(0).max(40),
   }),
@@ -75,13 +92,18 @@ export const SETTINGS_SCHEMA = {
 } as const;
 
 export type SettingKey = keyof typeof SETTINGS_SCHEMA;
-export type Settings = { [K in SettingKey]: z.infer<(typeof SETTINGS_SCHEMA)[K]> };
-export type TaxCategory = keyof Settings["tax_rates"];
+export type StoredSettings = { [K in SettingKey]: z.infer<(typeof SETTINGS_SCHEMA)[K]> };
+/** Settings as services see them: stored values plus derived flags. */
+export type Settings = StoredSettings & {
+  /** §1 `gst` capability: a valid GSTIN (format + check digit) and tax rates confirmed by the Owner. */
+  gstEnabled: boolean;
+};
+export type TaxCategory = keyof StoredSettings["tax_rates"];
 
 const R = (rupees: number) => rupees * 100;
 
 /** §11.1 defaults. */
-export const DEFAULT_SETTINGS: Settings = {
+export const DEFAULT_SETTINGS: StoredSettings = {
   opening_hours: { open: "06:00", close: "22:00" },
   max_plays_per_day: 2,
   cancel_full_refund_hours: 2,
@@ -96,7 +118,12 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   social_default_capacity: 12,
   trial_fee: 0,
-  delivery_fee: R(99),
+  payment_methods: { card_enabled: false, upi_vpa: "", upi_confirmed: false },
+  delivery: { enabled: false, pincodes: [], fee: R(99) },
+  email_verified_at: null,
+  instance_mode: "NORMAL",
+  setup_completed_at: null,
+  last_backup: null,
   online_hold_minutes: 15,
   pickup_hold_hours: 48,
   default_reorder_level: 3,
@@ -108,25 +135,18 @@ export const DEFAULT_SETTINGS: Settings = {
   quote_valid_days: 7,
   share_link_days: 7,
   expiring_soon_days: 7,
-  club: {
-    name: "The Champions Club",
-    legal_name: "Champions Sports Club Pvt Ltd",
-    address: "12 Riverside Sports Complex, Ahmedabad, Gujarat 380015",
-    state: "Gujarat",
-    state_code: "24",
-    gstin: "24AABCC1234F1Z5",
-    phone: "+91 79 4000 1234",
-    email: "desk@championsclub.test",
-    upi_vpa: "championsclub@testupi",
-  },
-  // Placeholders — verified=false until the Owner confirms current GST rates (IN-6, §11.1).
+  // No made-up identity: the Owner fills these in the setup wizard (§4). The club is in Gujarat per plan.md.
+  // Completion pass §4: a fresh install has no identity until the Owner enters it in the setup wizard.
+  club: { name: "", legal_name: "", address: "", state: "", state_code: "", gstin: "", phone: "", email: "", logo_url: "" },
+  // Placeholders — verified=false until the Owner confirms current GST rates (IN-6, §11.1, §9.2).
   tax_rates: {
     COURT: 18,
     MEMBERSHIP: 18,
-    GOODS: 12,
+    GOODS_5: 5,
+    GOODS_18: 18,
     SERVICE: 18,
     RESTAURANT: 5,
-    ALCOHOL: 0,
+    OUTSIDE_GST: 0,
     DELIVERY: 18,
     BUSINESS_SERVICE: 18,
   },
@@ -165,7 +185,9 @@ export async function getSettings(tx?: Tx): Promise<Settings> {
     const parsed = schema.safeParse(row.value);
     if (parsed.success) out[key] = parsed.data;
   }
-  return out as Settings;
+  const stored = out as StoredSettings;
+  const taxVerified = rows.find((r) => r.key === "tax_rates")?.verified ?? false;
+  return { ...stored, gstEnabled: taxVerified && isValidGstin(stored.club.gstin) };
 }
 
 export async function getSettingRows(actor: Actor) {
@@ -191,6 +213,8 @@ export async function updateSetting(actor: Actor, key: string, value: unknown, o
       update: { value: parsed.data as Prisma.InputJsonValue, verified: opts.verified ?? before?.verified ?? true },
     });
     await audit(tx, actor, "settings.update", "setting", key, { before: before?.value, after: row.value });
+    const { invalidateCapabilities } = await import("./capabilities");
+    invalidateCapabilities();
     return row;
   });
 }
@@ -200,11 +224,28 @@ export async function verifySetting(actor: Actor, key: string) {
   return withTx(async (tx) => {
     const row = await tx.setting.update({ where: { key }, data: { verified: true } });
     await audit(tx, actor, "settings.verify", "setting", key, { after: { verified: true } });
+    const { invalidateCapabilities } = await import("./capabilities");
+    invalidateCapabilities();
     return row;
   });
 }
 
 // ───────── dev clock offset (E-25) ─────────
+
+/** Settings written by the system itself (setup wizard steps, test email, backups) — same validation and audit. */
+export async function writeSettingTx(tx: Tx, actor: Actor, key: SettingKey, value: unknown, verified = true) {
+  const parsed = SETTINGS_SCHEMA[key].safeParse(value);
+  if (!parsed.success) throw new DomainError("VALIDATION_FAILED", `Invalid value for ${key}: ${parsed.error.issues[0]?.message ?? "invalid"}`);
+  const before = await tx.setting.findUnique({ where: { key } });
+  await tx.setting.upsert({
+    where: { key },
+    create: { key, value: parsed.data as Prisma.InputJsonValue, verified },
+    update: { value: parsed.data as Prisma.InputJsonValue, verified },
+  });
+  await audit(tx, actor, "settings.update", "setting", key, { before: before?.value, after: parsed.data });
+  const { invalidateCapabilities } = await import("./capabilities");
+  invalidateCapabilities();
+}
 
 let lastSync = 0;
 /** Refresh the in-memory clock offset from settings (cached 2 s). Never used when the clock is pinned. */

@@ -22,6 +22,7 @@ export const expenseSchema = z.object({
   dueInDays: z.number().int().min(0).max(365).optional(),
   refType: z.string().optional(),
   refId: z.string().optional(),
+  attachmentUrl: z.string().regex(/^\/api\/uploads\/expense\/[a-z0-9]{24}\.(png|jpg|webp|pdf)$/, "Upload the bill first.").optional(),
 });
 
 /** Internal: used by goods receipts (SH-9) as well as the finance screen. */
@@ -35,6 +36,7 @@ export async function createExpenseTx(tx: Tx, actor: Actor, raw: z.input<typeof 
     data: {
       vendor: input.vendor, category: input.category as ExpenseCategory, description: input.description, amount: input.amount,
       inputGst: input.inputGst, billDate: dbDate(billDate), dueDate: dbDate(dueDate), refType: input.refType ?? null, refId: input.refId ?? null,
+      attachmentUrl: input.attachmentUrl ?? null,
       createdBy: actorId(actor),
     },
   });
@@ -47,7 +49,18 @@ export async function createExpense(actor: Actor, raw: z.input<typeof expenseSch
   return withTx((tx) => createExpenseTx(tx, actor, raw), outer);
 }
 
-export const payExpenseSchema = z.object({ method: z.enum(["CASH", "CARD", "UPI", "ONLINE"]), reference: z.string().max(100).optional() });
+/** Completion pass §7 (accountant): attach (or replace) the scanned bill of an expense. */
+export async function setExpenseAttachment(actor: Actor, expenseId: string, url: string) {
+  assertCan(actor, "expenses.manage");
+  const parsed = expenseSchema.shape.attachmentUrl.parse(url);
+  const e = await prisma.expenseBill.findUnique({ where: { id: expenseId } });
+  if (!e) throw new DomainError("NOT_FOUND", "Expense bill was not found.");
+  const updated = await prisma.expenseBill.update({ where: { id: e.id }, data: { attachmentUrl: parsed ?? null } });
+  await audit(prisma, actor, "expense.attach", "expense_bill", e.id, { before: { attachmentUrl: e.attachmentUrl }, after: { attachmentUrl: parsed } });
+  return updated;
+}
+
+export const payExpenseSchema = z.object({ method: z.enum(["CASH", "CARD", "UPI", "BANK_TRANSFER"]), reference: z.string().max(100).optional() });
 
 /** EX-1: UNPAID → PAID with an OUT ledger entry (EXPENSE), in one transaction. */
 export async function payExpense(actor: Actor, expenseId: string, raw: z.infer<typeof payExpenseSchema>, outer?: Tx) {

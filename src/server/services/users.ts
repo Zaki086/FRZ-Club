@@ -14,7 +14,7 @@ export const createStaffSchema = z.object({
   name: z.string().trim().min(2).max(100),
   phone: z.string().transform(normalisePhone).refine(isIndianMobile, "must be a 10-digit Indian mobile number"),
   email: z.string().trim().toLowerCase().email().optional().or(z.literal("").transform(() => undefined)),
-  role: z.enum(["OWNER", "MANAGER", "FRONT_DESK", "SHOP_STAFF", "BAR_STAFF", "ACCOUNTANT"]),
+  role: z.enum(["OWNER", "MANAGER", "FRONT_DESK", "SHOP_STAFF", "BAR_STAFF", "ACCOUNTANT", "KITCHEN"]),
   password: z.string().min(8).max(100),
   monthlySalary: z.number().int().min(0),
   joinDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -54,9 +54,10 @@ export async function createStaff(actor: Actor, raw: CreateStaffInput, outer?: T
 
 export async function listUsers(actor: Actor) {
   assertCan(actor, "settings");
+  // Never send password hashes or lockout internals to the browser.
   return prisma.user.findMany({
     where: { role: { not: "MEMBER" } },
-    include: { employee: true },
+    select: { id: true, name: true, phone: true, email: true, role: true, active: true, lastLoginAt: true, lockedUntil: true, createdAt: true, employee: true },
     orderBy: [{ role: "asc" }, { name: "asc" }],
   });
 }

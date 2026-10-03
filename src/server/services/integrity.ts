@@ -10,6 +10,7 @@ const TRANSACTIONAL_TABLES = [
   "shop_order_lines", "shop_order_events", "service_tickets", "tabs", "tab_lines", "kitchen_tickets",
   "bills", "payments", "invoices", "leads", "lead_activities", "quotes", "shifts", "attendance",
   "leave_requests", "payroll_runs", "payslips", "expense_bills",
+  "cash_drawer_sessions", "data_requests", "purchase_orders", "purchase_order_lines", "stock_takes", "stock_take_lines",
 ];
 
 type Row = Record<string, unknown>;
@@ -99,17 +100,19 @@ export async function runIntegrityChecks(): Promise<Check[]> {
     });
   }
 
-  // 6. Every bill: amount_paid − amount_refunded = sum of its ledger entries; paid/refunded = payments.
+  // 6. Every bill: amount_paid − amount_refunded = sum of its ledger entries + refunds still owed (PENDING);
+  //    paid/refunded = payments.
   {
     const rows = await q(`
-      SELECT b.id, b.amount_paid - b.amount_refunded AS net, coalesce(l.s, 0) AS ledger,
+      SELECT b.id, b.amount_paid - b.amount_refunded AS net, coalesce(l.s, 0) AS ledger, coalesce(p.owed, 0) AS owed,
              coalesce(p.paid, 0) AS paid, coalesce(p.refunded, 0) AS refunded, b.amount_paid, b.amount_refunded
         FROM bills b
         LEFT JOIN (SELECT bill_id, sum(amount) AS s FROM ledger_entries WHERE bill_id IS NOT NULL GROUP BY 1) l ON l.bill_id = b.id
-        LEFT JOIN (SELECT bill_id, sum(amount) FILTER (WHERE type = 'PAYMENT') AS paid,
-                          sum(amount) FILTER (WHERE type = 'REFUND') AS refunded
-                     FROM payments WHERE status = 'SUCCEEDED' GROUP BY 1) p ON p.bill_id = b.id
-       WHERE b.amount_paid - b.amount_refunded <> coalesce(l.s, 0)
+        LEFT JOIN (SELECT bill_id, sum(amount) FILTER (WHERE type = 'PAYMENT' AND status = 'SUCCEEDED') AS paid,
+                          sum(amount) FILTER (WHERE type = 'REFUND' AND status IN ('SUCCEEDED', 'PENDING')) AS refunded,
+                          sum(amount) FILTER (WHERE type = 'REFUND' AND status = 'PENDING') AS owed
+                     FROM payments GROUP BY 1) p ON p.bill_id = b.id
+       WHERE b.amount_paid - b.amount_refunded <> coalesce(l.s, 0) - coalesce(p.owed, 0)
           OR b.amount_paid <> coalesce(p.paid, 0) OR b.amount_refunded <> coalesce(p.refunded, 0)
        LIMIT 5`);
     const count = await q(`SELECT count(*) AS c FROM bills`);

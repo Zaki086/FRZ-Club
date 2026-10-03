@@ -10,7 +10,7 @@ import { actorId, actorKey, type Actor } from "../rbac/actor";
 import { assertCan, can } from "../rbac/permissions";
 import { audit } from "./audit";
 import { billDue, closeBill, createBill, netPaid } from "./bills";
-import { assertDailyLimit, assertNoTimeConflict, insertReservation, paymentChoiceSchema, playerInputSchema, type PlayerInput } from "./booking";
+import { assertDailyLimit, assertNoTimeConflict, findMemberRef, insertReservation, paymentChoiceSchema, playerInputSchema, type PlayerInput } from "./booking";
 import { findOrCreateGuest } from "./guests";
 import { idempotent } from "./idempotency";
 import { notify } from "./notifications";
@@ -115,8 +115,8 @@ export const joinSchema = z.object({
 });
 
 async function resolveOne(tx: Tx, p: PlayerInput) {
-  if ("memberId" in p || "memberCode" in p) {
-    const m = "memberId" in p ? await tx.member.findUnique({ where: { id: p.memberId } }) : await tx.member.findUnique({ where: { memberCode: p.memberCode.toUpperCase() } });
+  if ("memberId" in p || "memberCode" in p || "memberPhone" in p) {
+    const m = await findMemberRef(tx, p);
     if (!m) throw new DomainError("PLAYERS_INVALID", "Member was not found.");
     return { memberId: m.id, guestId: null, name: m.name };
   }
@@ -175,7 +175,7 @@ export async function joinSessionTx(tx: Tx, actor: Actor, raw: z.input<typeof jo
   let payment: { redirectUrl: string; paymentId: string } | null = null;
   if (input.payment.kind === "COUNTER" && billDue(bill) > 0) {
     if (!staff) throw new DomainError("FORBIDDEN", "Counter payments are recorded by staff.");
-    await recordPaymentTx(tx, actor, { billId: bill.id, method: input.payment.method, amount: billDue(bill), reference: input.payment.reference ?? null, tendered: input.payment.tendered ?? null });
+    await recordPaymentTx(tx, actor, { ...input.payment, billId: bill.id, amount: billDue(bill) });
     bill = await tx.bill.findUniqueOrThrow({ where: { id: bill.id } });
   } else if (input.payment.kind === "ONLINE" && billDue(bill) > 0) {
     const p = await startOnlinePaymentTx(tx, actor, bill.id, { returnUrl: input.payment.returnUrl ?? "/portal/social", internal: true });
@@ -205,7 +205,7 @@ export async function joinSession(actor: Actor, raw: z.input<typeof joinSchema>,
 }
 
 /** Leaving follows the BK-7 refund rule. */
-export async function leaveSession(actor: Actor, participantId: string, refundMethod?: "CASH" | "CARD" | "UPI") {
+export async function leaveSession(actor: Actor, participantId: string, refundMethod?: "CASH" | "CARD" | "UPI", refundReference?: string) {
   return withTx(async (tx) => {
     const s = await getSettings(tx);
     const now = clock.now();
@@ -217,17 +217,19 @@ export async function leaveSession(actor: Actor, participantId: string, refundMe
     if (p.session.startAt.getTime() <= now.getTime()) throw new DomainError("CANCEL_NOT_ALLOWED", "The session has already started.");
     const hoursBefore = (p.session.startAt.getTime() - now.getTime()) / HOUR;
     let refunded = 0;
+    let refundPending = 0;
     if (p.billId && hoursBefore >= s.cancel_full_refund_hours) {
       const bill = await tx.bill.findUniqueOrThrow({ where: { id: p.billId } });
       if (netPaid(bill) > 0) {
-        refunded = netPaid(bill);
-        await refundTx(tx, actor, bill.id, refunded, { method: refundMethod, reason: `Left social play “${p.session.title}”` });
+        const rr = await refundTx(tx, actor, bill.id, netPaid(bill), { method: refundMethod, reference: refundReference, approvalCode: refundReference, reason: `Left social play “${p.session.title}”` });
+        refunded = rr.refunded;
+        refundPending = rr.pending;
       }
       await closeBill(tx, bill.id, "Left social play in time", now);
     }
     await tx.socialParticipant.update({ where: { id: p.id }, data: { status: "LEFT", leftAt: now } });
-    await audit(tx, actor, "social.leave", "social_participant", p.id, { before: { status: "JOINED" }, after: { status: "LEFT", refunded } });
-    return { participantId: p.id, refunded };
+    await audit(tx, actor, "social.leave", "social_participant", p.id, { before: { status: "JOINED" }, after: { status: "LEFT", refunded, refundPending } });
+    return { participantId: p.id, refunded, refundPending };
   });
 }
 

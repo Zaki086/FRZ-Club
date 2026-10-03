@@ -163,7 +163,7 @@ export const adjustSchema = z.object({
 });
 
 /** Stock count correction (damage, loss, recount). Never takes on_hand below what is reserved. */
-export async function adjustStock(actor: Actor, raw: z.infer<typeof adjustSchema>) {
+export async function adjustStock(actor: Actor, raw: z.infer<typeof adjustSchema>, outer?: Tx) {
   assertCan(actor, "shop.stock");
   const input = adjustSchema.parse(raw);
   return withTx(async (tx) => {
@@ -176,7 +176,7 @@ export async function adjustStock(actor: Actor, raw: z.infer<typeof adjustSchema
     await movement(tx, actor, { variantId: input.variantId, onHand: input.delta, reserved: 0, reason: "ADJUSTMENT", refType: "adjustment", note: input.reason });
     await audit(tx, actor, "stock.adjust", "product_variant", input.variantId, { before: { onHand: v.on_hand }, after: { onHand: v.on_hand + input.delta }, reason: input.reason });
     return { variantId: input.variantId, onHand: v.on_hand + input.delta };
-  });
+  }, outer);
 }
 
 // ───────────── read side ─────────────
@@ -189,7 +189,7 @@ export async function listStock(actor: Actor, opts: { lowOnly?: boolean; q?: str
     orderBy: [{ product: { category: "asc" } }, { product: { name: "asc" } }, { label: "asc" }],
   });
   const rows = variants.map((v) => ({
-    variantId: v.id, sku: v.sku, product: v.product.name, productId: v.productId, label: v.label, category: v.product.category,
+    variantId: v.id, sku: v.sku, barcode: v.barcode, product: v.product.name, productId: v.productId, imageUrl: v.product.imageUrl, label: v.label, category: v.product.category,
     price: v.price, onHand: v.onHand, reserved: v.reserved, available: v.onHand - v.reserved, reorderLevel: v.reorderLevel,
     trackStock: v.product.trackStock, low: v.product.trackStock && v.onHand - v.reserved <= v.reorderLevel,
   }));

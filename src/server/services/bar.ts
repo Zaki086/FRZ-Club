@@ -236,6 +236,51 @@ export async function voidLine(actor: Actor, lineId: string, reason: string) {
   });
 }
 
+/**
+ * Completion pass §7 (bar): move one item to another open tab (e.g. a friend pays for it). The original bill line is
+ * voided and the item is re-priced for the new payer (their discount, their alcohol rule); the kitchen status stays.
+ * Not allowed once the source tab has taken a payment (settle or carry that first).
+ */
+export async function transferLine(actor: Actor, lineId: string, toTabId: string) {
+  assertCan(actor, "bar.operate");
+  return withTx(async (tx) => {
+    const line = await tx.tabLine.findUnique({ where: { id: lineId } });
+    if (!line) throw new DomainError("NOT_FOUND", "Item was not found.");
+    if (line.tabId === toTabId) throw new DomainError("VALIDATION_FAILED", "The item is already on this tab.");
+    for (const id of [line.tabId, toTabId].sort()) await lockTab(tx, id); // fixed order: no deadlocks
+    const from = await tx.tab.findUniqueOrThrow({ where: { id: line.tabId } });
+    const to = await tx.tab.findUniqueOrThrow({ where: { id: toTabId } });
+    const current = await tx.tabLine.findUniqueOrThrow({ where: { id: lineId } });
+    if (current.status === "VOID") throw new DomainError("ORDER_STATE_INVALID", "This item is void.");
+    if (from.status !== "OPEN" || to.status !== "OPEN") throw new DomainError("ORDER_STATE_INVALID", "Both tabs must be open to move an item.");
+    const fromBill = await tx.bill.findUniqueOrThrow({ where: { id: from.billId } });
+    if (fromBill.amountPaid > 0) throw new DomainError("ORDER_STATE_INVALID", `Tab ${from.code} already has a payment; settle it before moving items.`);
+    const item = await tx.menuItem.findUniqueOrThrow({ where: { id: current.menuItemId } });
+    if (item.isAlcoholic) await assertAlcoholAllowed(tx, to, item.name);
+    const quote = await quoteBar(tx, {
+      memberId: to.memberId,
+      date: istDate(clock.now()),
+      items: [{ menuItemId: item.id, qty: current.qty, name: item.name, price: current.unitPrice, taxCategory: item.taxCategory, hsnSac: item.hsnSac, note: current.note ?? undefined }],
+    });
+    const now = clock.now();
+    await tx.tabLine.update({ where: { id: current.id }, data: { status: "VOID", voidedBy: actorId(actor), voidReason: `Moved to ${to.code}`, voidedAt: now } });
+    await voidBillLines(tx, [current.billLineId], now);
+    const [billLineId] = await addBillLines(tx, to.billId, quote.lines);
+    const l = quote.lines[0];
+    const moved = await tx.tabLine.create({
+      data: {
+        tabId: to.id, menuItemId: item.id, billLineId, qty: l.qty, unitPrice: l.unitPrice, discountPct: l.discountPct, discountAmount: l.discountAmount, netAmount: l.netAmount,
+        note: current.note, status: current.status, kitchenTicketId: current.kitchenTicketId, preparingAt: current.preparingAt, readyAt: current.readyAt, servedAt: current.servedAt,
+        addedBy: actorId(actor) ?? "system",
+      },
+    });
+    const fromAfter = await refreshBill(tx, from.billId);
+    const toAfter = await refreshBill(tx, to.billId);
+    await audit(tx, actor, "tab.transfer_line", "tab_line", current.id, { before: { tab: from.code, netAmount: current.netAmount }, after: { tab: to.code, lineId: moved.id, netAmount: l.netAmount } });
+    return { lineId: moved.id, from: { tabId: from.id, total: fromAfter.total }, to: { tabId: to.id, total: toAfter.total } };
+  });
+}
+
 // ───────────── settle / carry (BR-8, BR-9, E-13, E-14) ─────────────
 
 export const settleSchema = z.object({
@@ -244,6 +289,8 @@ export const settleSchema = z.object({
     amount: z.number().int().positive(),
     reference: z.string().max(100).optional(),
     tendered: z.number().int().positive().optional(),
+    cardLast4: z.string().max(4).optional(),
+    approvalCode: z.string().max(20).optional(),
   })).min(1).max(4),
 });
 
@@ -255,7 +302,7 @@ export async function settleTab(actor: Actor, tabId: string, raw: z.infer<typeof
     idempotent(tx, { key: idempotencyKey, actorKey: actorKey(actor), endpoint: "bar.settle", body: { tabId, ...input } }, async () => {
       const tab = await lockTab(tx, tabId);
       if (tab.status !== "OPEN" && tab.status !== "CARRIED") throw new DomainError("ORDER_STATE_INVALID", `Tab ${tab.code} is already ${tab.status.toLowerCase()}.`);
-      const r = await recordSplitPaymentsTx(tx, actor, tab.billId, input.payments.map((p) => ({ method: p.method, amount: p.amount, reference: p.reference ?? null, tendered: p.tendered ?? null })));
+      const r = await recordSplitPaymentsTx(tx, actor, tab.billId, input.payments);
       const due = billDue(r.bill);
       if (due === 0) {
         await tx.tab.update({ where: { id: tab.id }, data: { status: "SETTLED", settledAt: clock.now() } });
@@ -525,7 +572,7 @@ export async function createMenuItem(actor: Actor, raw: z.input<typeof menuItemS
   return withTx(async (tx) => {
     const alcoholic = input.isAlcoholic ?? input.category === "ALCOHOL";
     const item = await tx.menuItem.create({
-      data: { name: input.name, category: input.category, price: input.price, isAlcoholic: alcoholic, taxCategory: alcoholic ? "ALCOHOL" : "RESTAURANT", hsnSac: input.hsnSac, sortOrder: input.sortOrder },
+      data: { name: input.name, category: input.category, price: input.price, isAlcoholic: alcoholic, taxCategory: alcoholic ? "OUTSIDE_GST" : "RESTAURANT", hsnSac: input.hsnSac, sortOrder: input.sortOrder },
     });
     await audit(tx, actor, "menu.create", "menu_item", item.id, { after: item });
     return item;

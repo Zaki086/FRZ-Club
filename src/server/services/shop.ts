@@ -7,7 +7,7 @@ import { clock } from "@/lib/clock";
 import { CODE_SEQUENCE, formatCode, isIndianMobile, normalisePhone } from "@/lib/codes";
 import { formatINR } from "@/lib/money";
 import { DAY, fmtDateTime, HOUR, istDate, MINUTE } from "@/lib/time";
-import { nextSeq, prisma, withTx, type Tx } from "../db";
+import { nextSeq, pgErrorCode, prisma, withTx, type Tx } from "../db";
 import { DomainError } from "../errors";
 import { actorId, actorKey, type Actor } from "../rbac/actor";
 import { assertCan, can } from "../rbac/permissions";
@@ -19,6 +19,7 @@ import { counterDecrement, fulfil, release, reserve, restock } from "./inventory
 import { notify, queueEmail } from "./notifications";
 import { recordSplitPaymentsTx, refundTx, startOnlinePaymentTx } from "./payments";
 import { asTaxCategory, priceLine, quoteShop, type ShopItem } from "./pricing";
+import { assertCapability, isEnabled } from "./capabilities";
 import { getSettings } from "./settings";
 
 const itemSchema = z.object({ variantId: z.string().min(1), qty: z.number().int().positive().max(50) });
@@ -60,7 +61,7 @@ export async function listCatalogue(opts: { category?: string; q?: string } = {}
       variants: p.variants.map((v) => {
         const available = p.trackStock ? v.onHand - v.reserved : null;
         return {
-          id: v.id, sku: v.sku, label: v.label, price: v.price, available,
+          id: v.id, sku: v.sku, barcode: v.barcode, label: v.label, price: v.price, available,
           stockLabel: available === null ? "Service" : available <= 0 ? "Out of stock" : available <= s.public_low_stock_threshold ? `Only ${available} left` : "In stock",
           inStock: available === null || available > 0,
         };
@@ -74,7 +75,7 @@ export async function quoteCart(actor: Actor, raw: { memberId?: string | null; i
   let memberId = raw.memberId ?? null;
   if (actor.kind === "USER" && actor.role === "MEMBER") memberId = actor.memberId;
   const items = await loadItems(prisma, raw.items);
-  return quoteShop(prisma, { memberId, date: istDate(clock.now()), items, deliveryFee: raw.fulfilment === "DELIVERY" ? s.delivery_fee : 0 }, s);
+  return quoteShop(prisma, { memberId, date: istDate(clock.now()), items, deliveryFee: raw.fulfilment === "DELIVERY" ? s.delivery.fee : 0 }, s);
 }
 
 // ───────────── counter sale (SH-4, R-19, E-10) ─────────────
@@ -89,6 +90,8 @@ export const counterSaleSchema = z.object({
     amount: z.number().int().positive().optional(),
     reference: z.string().max(100).optional(),
     tendered: z.number().int().positive().optional(),
+    cardLast4: z.string().max(4).optional(),
+    approvalCode: z.string().max(20).optional(),
   })).min(1).max(4),
   restring: z.object({ racket: z.string().trim().min(2).max(120), notes: z.string().max(300).default("") }).optional(),
 });
@@ -133,7 +136,7 @@ export async function counterSaleTx(tx: Tx, actor: Actor, raw: z.input<typeof co
   }
   let changeGiven = 0;
   if (quote.total > 0) {
-    const r = await recordSplitPaymentsTx(tx, actor, bill.id, parts.map((p) => ({ method: p.method, amount: p.amount!, reference: p.reference ?? null, tendered: p.tendered ?? null })));
+    const r = await recordSplitPaymentsTx(tx, actor, bill.id, parts.map((p) => ({ ...p, amount: p.amount! })));
     changeGiven = r.changeGiven;
   }
   const tickets: string[] = [];
@@ -169,7 +172,8 @@ export const checkoutSchema = z.object({
   items: z.array(itemSchema).min(1).max(40),
   fulfilment: z.enum(["PICKUP", "DELIVERY"]),
   address: z.string().trim().max(400).optional(),
-  paymentOption: z.enum(["ONLINE", "PAY_AT_PICKUP"]),
+  pincode: z.string().trim().optional(),
+  paymentOption: z.enum(["ONLINE", "PAY_AT_PICKUP", "PAY_ON_DELIVERY"]),
   guest: z.object({
     name: z.string().trim().min(2).max(100),
     phone: z.string().transform(normalisePhone).refine(isIndianMobile, "must be a 10-digit Indian mobile number"),
@@ -184,11 +188,23 @@ export async function checkoutTx(tx: Tx, actor: Actor, raw: z.input<typeof check
   const now = clock.now();
   const isMember = actor.kind === "USER" && actor.role === "MEMBER" && !!actor.memberId;
   if (actor.kind === "USER" && !isMember) throw new DomainError("FORBIDDEN", "Staff sell at the counter; online checkout is for members and visitors.");
-  if (input.fulfilment === "DELIVERY" && (!input.address || input.address.length < 10)) {
-    throw new DomainError("VALIDATION_FAILED", "A full delivery address is required for delivery (SH-11).");
+  // §1/§2.5: only real options — delivery and online payment exist only when their capabilities are on.
+  const onlineOn = await isEnabled("payments.online");
+  if (input.fulfilment === "DELIVERY") {
+    await assertCapability("delivery");
+    if (!input.address || input.address.length < 10) throw new DomainError("VALIDATION_FAILED", "A full delivery address is required for delivery (SH-11).");
+    if (!input.pincode || !s.delivery.pincodes.includes(input.pincode)) {
+      throw new DomainError("VALIDATION_FAILED", `We don't deliver to PIN code ${input.pincode || "(none given)"} yet. Choose pickup at the club instead.`);
+    }
   }
-  if (input.paymentOption === "PAY_AT_PICKUP" && (!isMember || input.fulfilment !== "PICKUP")) {
-    throw new DomainError("VALIDATION_FAILED", "Pay at pickup is available to logged-in members collecting at the club.");
+  if (input.paymentOption === "ONLINE") await assertCapability("payments.online");
+  if (input.paymentOption === "PAY_AT_PICKUP") {
+    if (input.fulfilment !== "PICKUP") throw new DomainError("VALIDATION_FAILED", "Pay at pickup is only for orders collected at the club.");
+    if (!isMember && onlineOn) throw new DomainError("VALIDATION_FAILED", "Pay at pickup is available to logged-in members; please pay online.");
+  }
+  if (input.paymentOption === "PAY_ON_DELIVERY") {
+    if (input.fulfilment !== "DELIVERY") throw new DomainError("VALIDATION_FAILED", "Pay on delivery is only for delivered orders.");
+    if (onlineOn) throw new DomainError("VALIDATION_FAILED", "Delivered orders are paid online.");
   }
   let memberId: string | null = null;
   let guestId: string | null = null;
@@ -208,16 +224,17 @@ export async function checkoutTx(tx: Tx, actor: Actor, raw: z.input<typeof check
   }
   const items = await loadItems(tx, input.items);
   if (items.some((i) => i.isRestring)) throw new DomainError("VALIDATION_FAILED", "Restringing is booked at the shop counter.");
-  const deliveryFee = input.fulfilment === "DELIVERY" ? s.delivery_fee : 0;
+  const deliveryFee = input.fulfilment === "DELIVERY" ? s.delivery.fee : 0;
   const quote = await quoteShop(tx, { memberId, date: istDate(now), items, deliveryFee }, s);
   const code = formatCode("shopOrder", await nextSeq(tx, CODE_SEQUENCE.shopOrder));
-  const holdMs = input.paymentOption === "ONLINE" ? s.online_hold_minutes * MINUTE : s.pickup_hold_hours * HOUR;
+  // Holds: online 15 min, pay-at-pickup 48 h; pay-on-delivery orders are not auto-cancelled (staff deliver them).
+  const holdMs = input.paymentOption === "ONLINE" ? s.online_hold_minutes * MINUTE : input.paymentOption === "PAY_AT_PICKUP" ? s.pickup_hold_hours * HOUR : null;
   const bill = await createBill(tx, { sourceType: "SHOP_ORDER", customer: { memberId, guestId, name: customerName }, tier: quote.tier, lines: quote.lines, createdBy: actorId(actor) });
   const order = await tx.shopOrder.create({
     data: {
       code, memberId, guestId, fulfilment: input.fulfilment, address: input.address ?? null, deliveryFee,
       paymentOption: input.paymentOption, status: input.paymentOption === "ONLINE" ? "PENDING_PAYMENT" : "CONFIRMED",
-      holdExpiresAt: new Date(now.getTime() + holdMs), billId: bill.id, trackToken: randomBytes(12).toString("base64url"), createdBy: actorId(actor),
+      holdExpiresAt: holdMs === null ? null : new Date(now.getTime() + holdMs), billId: bill.id, trackToken: randomBytes(12).toString("base64url"), createdBy: actorId(actor),
     },
   });
   await tx.bill.update({ where: { id: bill.id }, data: { sourceId: order.id } });
@@ -299,8 +316,11 @@ export async function setOrderStatus(actor: Actor, orderId: string, status: Orde
     if (status === "COLLECTED" && billDue(bill) > 0) {
       throw new DomainError("PAYMENT_DUE", `Order ${o.code} has ${formatINR(billDue(bill))} to pay before it can be handed over.`, { billId: bill.id });
     }
-    if (status === "OUT_FOR_DELIVERY" && billDue(bill) > 0) {
+    if (status === "OUT_FOR_DELIVERY" && billDue(bill) > 0 && o.paymentOption !== "PAY_ON_DELIVERY") {
       throw new DomainError("PAYMENT_DUE", `Order ${o.code} is not paid yet.`, { billId: bill.id });
+    }
+    if (status === "DELIVERED" && billDue(bill) > 0) {
+      throw new DomainError("PAYMENT_DUE", `Order ${o.code} has ${formatINR(billDue(bill))} to collect on delivery — record the payment first.`, { billId: bill.id });
     }
     if (HANDED_OVER.includes(status) && !HANDED_OVER.includes(o.status)) {
       for (const l of o.lines) await fulfil(tx, actor, l.variantId, l.qty, { type: "shop_order", id: o.id });
@@ -332,13 +352,16 @@ export async function cancelOrderTx(tx: Tx, actor: Actor, orderId: string, reaso
   for (const l of o.lines) await release(tx, actor, l.variantId, l.qty, { type: "shop_order", id: o.id });
   const bill = await tx.bill.findUniqueOrThrow({ where: { id: o.billId } });
   const paid = netPaid(bill);
-  if (paid > 0) await refundTx(tx, actor, bill.id, paid, { reason: `Order ${o.code} cancelled: ${reason}` });
+  const refund = paid > 0 ? await refundTx(tx, actor, bill.id, paid, { reason: `Order ${o.code} cancelled: ${reason}` }) : { refunded: 0, pending: 0 };
   await closeBill(tx, bill.id, `Order cancelled: ${reason}`, clock.now());
   await tx.shopOrder.update({ where: { id: o.id }, data: { status: "CANCELLED", cancelReason: reason, holdExpiresAt: null } });
   await tx.shopOrderEvent.create({ data: { orderId: o.id, status: "CANCELLED", note: reason, actorId: actorId(actor), at: clock.now() } });
-  await audit(tx, actor, "shop_order.cancel", "shop_order", o.id, { before: { status: o.status }, after: { status: "CANCELLED", refunded: paid }, reason });
-  await notifyOrderCustomer(tx, o, "CANCELLED", `Order ${o.code} was cancelled (${reason}).${paid ? ` ${formatINR(paid)} refunded.` : ""}`);
-  return { orderId: o.id, status: "CANCELLED" as const, refunded: paid };
+  await audit(tx, actor, "shop_order.cancel", "shop_order", o.id, { before: { status: o.status }, after: { status: "CANCELLED", refunded: refund.refunded, refundPending: refund.pending }, reason });
+  await notifyOrderCustomer(
+    tx, o, "CANCELLED",
+    `Order ${o.code} was cancelled (${reason}).${refund.refunded ? ` ${formatINR(refund.refunded)} refunded.` : ""}${refund.pending ? ` ${formatINR(refund.pending)} will be refunded at the club counter.` : ""}`,
+  );
+  return { orderId: o.id, status: "CANCELLED" as const, refunded: refund.refunded, refundPending: refund.pending };
 }
 
 export async function cancelOrder(actor: Actor, orderId: string, reason: string) {
@@ -372,6 +395,7 @@ export const returnSchema = z.object({
   billId: z.string().min(1),
   lines: z.array(z.object({ billLineId: z.string().min(1), qty: z.number().int().positive() })).min(1),
   method: z.enum(["CASH", "CARD", "UPI"]).optional(),
+  reference: z.string().trim().max(100).optional(),
   reason: z.string().trim().min(3).max(200),
 });
 
@@ -405,10 +429,11 @@ export async function returnItems(actor: Actor, raw: z.infer<typeof returnSchema
       refund += line.netAmount - keptNet;
       await restock(tx, actor, line.variantId, r.qty, { type: "return", id: bill.id });
     }
-    if (refund > 0) await refundTx(tx, actor, bill.id, Math.min(refund, netPaid(bill)), { method: input.method, reason: `Return: ${input.reason}` });
+    let pending = 0;
+    if (refund > 0) pending = (await refundTx(tx, actor, bill.id, Math.min(refund, netPaid(bill)), { method: input.method, reference: input.reference, approvalCode: input.reference, reason: `Return: ${input.reason}` })).pending;
     await refreshBill(tx, bill.id);
     await audit(tx, actor, "shop.return", "bill", bill.id, { after: { refund, lines: input.lines }, reason: input.reason });
-    return { refunded: refund };
+    return { refunded: refund - pending, pending };
   });
 }
 
@@ -520,19 +545,30 @@ export async function listCounterSales(actor: Actor, date?: string) {
 
 // ───────────── product admin ─────────────
 
+/**
+ * Default GST slab for goods (completion pass §9; same rule as migration 0003): sports goods (HSN 9506) and apparel
+ * or shoes up to ₹2,500 are 5 %, everything else 18 %. The shop can always choose explicitly.
+ */
+export function defaultGoodsCategory(category: string, hsnSac: string, price: number): "GOODS_5" | "GOODS_18" {
+  if (hsnSac.startsWith("9506")) return "GOODS_5";
+  if ((category === "APPAREL" || category === "SHOES") && price <= 250000) return "GOODS_5";
+  return "GOODS_18";
+}
+
 export const productSchema = z.object({
   name: z.string().trim().min(2).max(120),
   brand: z.string().trim().max(60).default(""),
   category: z.enum(["RACKETS", "BALLS", "SHOES", "ACCESSORIES", "APPAREL", "SERVICES"]),
   description: z.string().max(1000).default(""),
-  imageUrl: z.string().max(500).optional(),
+  // Only photos uploaded to the club's own server (no hot-linked or stock images).
+  imageUrl: z.string().regex(/^\/api\/uploads\/product\/[a-z0-9]{24}\.(png|jpg|webp)$/, "Upload the product photo first.").optional(),
   isRestring: z.boolean().default(false),
   variants: z.array(z.object({
     sku: z.string().trim().min(3).max(40),
     label: z.string().trim().min(1).max(60).default("Standard"),
     price: z.number().int().min(0),
     reorderLevel: z.number().int().min(0).optional(),
-    taxCategory: z.enum(["GOODS", "SERVICE"]).optional(),
+    taxCategory: z.enum(["GOODS_5", "GOODS_18", "SERVICE"]).optional(),
     hsnSac: z.string().trim().min(4).max(10),
   })).min(1),
 });
@@ -550,7 +586,7 @@ export async function createProduct(actor: Actor, raw: z.input<typeof productSch
       await tx.productVariant.create({
         data: {
           productId: product.id, sku: v.sku.toUpperCase(), label: v.label, price: v.price, reorderLevel: isService ? 0 : (v.reorderLevel ?? s.default_reorder_level),
-          taxCategory: v.taxCategory ?? (isService ? "SERVICE" : "GOODS"), hsnSac: v.hsnSac,
+          taxCategory: v.taxCategory ?? (isService ? "SERVICE" : defaultGoodsCategory(input.category, v.hsnSac, v.price)), hsnSac: v.hsnSac,
         },
       });
     }
@@ -559,7 +595,25 @@ export async function createProduct(actor: Actor, raw: z.input<typeof productSch
   }, outer);
 }
 
-export const variantUpdateSchema = z.object({ price: z.number().int().min(0).optional(), reorderLevel: z.number().int().min(0).optional(), archived: z.boolean().optional() });
+/** Completion pass §9: set or clear a product's photo (an uploaded /api/uploads/product/... file). */
+export async function setProductImage(actor: Actor, productId: string, url: string | null) {
+  assertCan(actor, "shop.stock");
+  const imageUrl = url === null ? null : productSchema.shape.imageUrl.parse(url) ?? null;
+  const p = await prisma.product.findUnique({ where: { id: productId } });
+  if (!p) throw new DomainError("NOT_FOUND", "Product was not found.");
+  const updated = await prisma.product.update({ where: { id: p.id }, data: { imageUrl } });
+  await audit(prisma, actor, "product.image", "product", p.id, { before: { imageUrl: p.imageUrl }, after: { imageUrl } });
+  return { id: updated.id, imageUrl: updated.imageUrl };
+}
+
+export const variantUpdateSchema = z.object({
+  price: z.number().int().min(0).optional(),
+  reorderLevel: z.number().int().min(0).optional(),
+  archived: z.boolean().optional(),
+  taxCategory: z.enum(["GOODS_5", "GOODS_18", "SERVICE"]).optional(),
+  // Completion pass P2: the printed barcode (EAN/UPC…); empty clears it.
+  barcode: z.string().trim().regex(/^([0-9A-Za-z-]{4,32})?$/, "A barcode is 4–32 letters or digits.").optional(),
+});
 
 export async function updateVariant(actor: Actor, variantId: string, raw: z.infer<typeof variantUpdateSchema>) {
   assertCan(actor, "shop.stock");
@@ -570,7 +624,13 @@ export async function updateVariant(actor: Actor, variantId: string, raw: z.infe
     if (!before) throw new DomainError("NOT_FOUND", "Product was not found.");
     const v = await tx.productVariant.update({
       where: { id: variantId },
-      data: { price: input.price, reorderLevel: input.reorderLevel, archivedAt: input.archived === undefined ? undefined : input.archived ? clock.now() : null },
+      data: {
+        price: input.price, reorderLevel: input.reorderLevel, taxCategory: input.taxCategory, archivedAt: input.archived === undefined ? undefined : input.archived ? clock.now() : null,
+        barcode: input.barcode === undefined ? undefined : input.barcode || null,
+      },
+    }).catch((e) => {
+      if (pgErrorCode(e) === "23505") throw new DomainError("VALIDATION_FAILED", `Barcode ${input.barcode} is already on another item.`);
+      throw e;
     });
     await audit(tx, actor, "variant.update", "product_variant", variantId, { before, after: v });
     const { checkLowStock } = await import("./inventory");
