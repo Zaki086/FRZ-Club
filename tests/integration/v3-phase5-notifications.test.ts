@@ -3,11 +3,11 @@ import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { clock } from "@/lib/clock";
 import { addDays, istToUtc } from "@/lib/time";
-import { prisma, withTx } from "@/server/db";
+import { prisma, settleAfterCommit, withTx } from "@/server/db";
 import { login, redeemPasswordSetToken, tokenHash } from "@/server/auth/sessions";
 import { setCapabilityOverridesForTests } from "@/server/services/capabilities";
 import {
-  flushDeliveries, handleWhatsappWebhook, markManualSent, notifyMember, openManualMessage, setChannelTransportsForTests, setMyPreferences, subscribePush,
+  flushDeliveries, markManualSent, notifyMember, openManualMessage, setChannelTransportsForTests, setMyPreferences, subscribePush,
 } from "@/server/services/channels";
 import { runDuesReminders } from "@/server/services/dues";
 import { listView } from "@/server/services/filters";
@@ -15,6 +15,8 @@ import { createMember, credentialsStatus, reissueCredentials, renewMembership, r
 import { setMailTransportForTests } from "@/server/services/notifications";
 import { recordCounterPayment } from "@/server/services/payments";
 import { updateSetting } from "@/server/services/settings";
+import { setMyWhatsappOptIn } from "@/server/services/whatsapp/opt-in";
+import { handleWebhook } from "@/server/services/whatsapp/webhook";
 import { makeWorld, utr, type World } from "../helpers/world";
 import { makeMember } from "../helpers/members";
 
@@ -89,22 +91,29 @@ describe("v3 §6.3 — channels (NT-4)", () => {
   });
 
   it("WhatsApp API: template messages only; delivery comes from the signed webhook; manual fallback is skipped", async () => {
-    process.env.WHATSAPP_APP_SECRET = "test-app-secret";
-    const m = await makeMember(w, { name: "Whats Wasim", plan: "SILVER" });
-    await updateSetting(w.actors.OWNER, "whatsapp_templates", { DUES_REMINDER: { name: "dues_reminder", language: "en" } });
-    setCapabilityOverridesForTests({ email: true, "whatsapp.api": true });
-    const calls: Array<Record<string, unknown>> = [];
-    setChannelTransportsForTests({ fetch: (async (_u: string, init: RequestInit) => { calls.push(JSON.parse(String(init.body))); return new Response(JSON.stringify({ messages: [{ id: "wamid.TEST1" }] }), { status: 200 }); }) as typeof fetch });
-    await withTx((tx) => notifyMember(tx, { event: "DUES_REMINDER", userId: m.member.userId!, title: "₹400 due", body: "Please pay.", dedupeKey: "wa:1", params: ["Wasim", "₹400", "court booking", "4"] }));
-    expect(await byChannel("wa:1")).toMatchObject({ WHATSAPP_API: "QUEUED", WHATSAPP_MANUAL: "SKIPPED" });
-    await flushDeliveries();
-    expect(calls[0]).toMatchObject({ type: "template", to: `91${m.member.phone}`, template: { name: "dues_reminder", language: { code: "en" } } });
-    expect((await byChannel("wa:1")).WHATSAPP_API).toBe("SENT");
-    const body = JSON.stringify({ entry: [{ changes: [{ value: { statuses: [{ id: "wamid.TEST1", status: "delivered" }] } }] }] });
-    await expect(handleWhatsappWebhook(body, "sha256=00")).rejects.toMatchObject({ code: "FORBIDDEN" });
-    const sig = "sha256=" + createHmac("sha256", "test-app-secret").update(body).digest("hex");
-    expect(await handleWhatsappWebhook(body, sig)).toEqual({ updated: 1 });
-    expect((await byChannel("wa:1")).WHATSAPP_API).toBe("DELIVERED");
+    // v4 §5 (WHATSAPP): the §5.1 env names, a mapped APPROVED template (Settings → WhatsApp), the member's opt-in and
+    // the event's typed `wa` values; the message is sent right after commit; the webhook is whatsapp/webhook.ts.
+    const env = { WHATSAPP_ACCESS_TOKEN: "test-token", WHATSAPP_PHONE_NUMBER_ID: "1098765", WHATSAPP_GRAPH_API_VERSION: "v23.0", WHATSAPP_APP_SECRET: "test-app-secret" };
+    Object.assign(process.env, env);
+    try {
+      const m = await makeMember(w, { name: "Whats Wasim", plan: "SILVER" });
+      await setMyWhatsappOptIn(m.actor, { optIn: true });
+      await updateSetting(w.actors.OWNER, "whatsapp_template_map", { dues_reminder: { name: "dues_reminder", language: "en", status: "APPROVED", checked_at: null } });
+      setCapabilityOverridesForTests({ email: true, "whatsapp.api": true });
+      const calls: Array<Record<string, unknown>> = [];
+      setChannelTransportsForTests({ fetch: (async (_u: string, init: RequestInit) => { calls.push(JSON.parse(String(init.body))); return new Response(JSON.stringify({ messages: [{ id: "wamid.TEST1" }] }), { status: 200 }); }) as typeof fetch });
+      await withTx((tx) => notifyMember(tx, { event: "DUES_REMINDER", userId: m.member.userId!, title: "₹400 due", body: "Please pay.", dedupeKey: "wa:1", params: ["Wasim", "₹400", "court booking", "4"], wa: { template: "dues_reminder", vars: { name: "Wasim", amount: "400", whatFor: "court booking" } } }));
+      await settleAfterCommit();
+      expect(await byChannel("wa:1")).toMatchObject({ WHATSAPP_API: "SENT", WHATSAPP_MANUAL: "SKIPPED" });
+      expect(calls[0]).toMatchObject({ type: "template", to: `91${m.member.phone}`, template: { name: "dues_reminder", language: { code: "en" } } });
+      const body = JSON.stringify({ entry: [{ changes: [{ value: { statuses: [{ id: "wamid.TEST1", status: "delivered" }] } }] }] });
+      await expect(handleWebhook(body, "sha256=00")).rejects.toMatchObject({ code: "FORBIDDEN" });
+      const sig = "sha256=" + createHmac("sha256", "test-app-secret").update(body).digest("hex");
+      expect(await handleWebhook(body, sig)).toEqual({ statuses: 1, inbound: 0 });
+      expect((await byChannel("wa:1")).WHATSAPP_API).toBe("DELIVERED");
+    } finally {
+      for (const k of Object.keys(env)) delete process.env[k];
+    }
   });
 
   it("manual WhatsApp: one click opens wa.me (LINK_OPENED), staff mark it sent; the log shows it", async () => {

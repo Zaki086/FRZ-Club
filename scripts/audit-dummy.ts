@@ -58,7 +58,7 @@ for (const file of [...walk("src"), "public/sw.js"]) {
 }
 
 // 2. Crawl (unless --source-only).
-type Crawl = { role: string; path: string; viewport: string; status: number; consoleErrors: string[]; dummyText: string | null; overflowPx: number };
+type Crawl = { role: string; path: string; viewport: string; status: number; consoleErrors: string[]; dummyText: string | null; overflowPx: number; menuMismatch?: string | null };
 let crawl: Crawl[] = [];
 let crawlNote = "";
 if (!process.argv.includes("--source-only")) {
@@ -80,7 +80,10 @@ const badStatus = crawl.filter((c) => c.status >= 400 || c.status === 0);
 const consoleErr = crawl.filter((c) => c.consoleErrors.length);
 const dummyText = crawl.filter((c) => c.dummyText);
 const overflow = crawl.filter((c) => c.viewport === "360px" && c.overflowPx > 1);
-const problems = violations.length + badStatus.length + consoleErr.length + dummyText.length + overflow.length;
+// v4 §1.4: each staff role's rendered sidebar must be its navigation list (the §1.1 lists for Owner, Manager, Front desk).
+const menuMismatch = crawl.filter((c) => c.menuMismatch);
+const visits = crawl.filter((c) => c.path !== "(sidebar)");
+const problems = violations.length + badStatus.length + consoleErr.length + dummyText.length + overflow.length + menuMismatch.length;
 const esc = (s: string) => s.replace(/\|/g, "\\|");
 
 const md = [
@@ -100,7 +103,7 @@ const md = [
   ...(hits.some((h) => h.allowed) ? ["### Allowed (deliberate)", "", "| Pattern | Where | Why |", "|---|---|---|", ...hits.filter((h) => h.allowed).map((h) => `| ${h.rule} | \`${h.file}:${h.line}\` | ${h.allowed} |`), ""] : []),
   "## 2. Crawl — every role, every page, desktop and 360 px",
   "",
-  crawlNote || `${new Set(crawl.map((c) => `${c.role} ${c.path}`)).size} role × page combinations, ${crawl.length} page loads, roles: ${[...new Set(crawl.map((c) => c.role))].join(", ")}.`,
+  crawlNote || `${new Set(visits.map((c) => `${c.role} ${c.path}`)).size} role × page combinations, ${visits.length} page loads, roles: ${[...new Set(visits.map((c) => c.role))].join(", ")}.`,
   "",
   "| Check | Problems |",
   "|---|---|",
@@ -108,17 +111,19 @@ const md = [
   `| Browser console errors | ${consoleErr.length} |`,
   `| Dummy text on screen (lorem, undefined, NaN, [object Object], TODO, test mode…) | ${dummyText.length} |`,
   `| Wider than a 360 px phone (horizontal scroll) | ${overflow.length} |`,
+  `| Sidebar differs from the role's navigation list (v4 §1.1) | ${menuMismatch.length} |`,
   "",
   ...(badStatus.length ? ["### HTTP errors", "", ...badStatus.map((c) => `- ${c.role} · \`${c.path}\` (${c.viewport}) → ${c.status}`), ""] : []),
   ...(consoleErr.length ? ["### Console errors", "", ...consoleErr.map((c) => `- ${c.role} · \`${c.path}\` (${c.viewport}): ${esc(c.consoleErrors[0])}`), ""] : []),
   ...(dummyText.length ? ["### Dummy text", "", ...dummyText.map((c) => `- ${c.role} · \`${c.path}\` (${c.viewport}): “${esc(c.dummyText!)}”`), ""] : []),
   ...(overflow.length ? ["### Too wide on a phone", "", ...overflow.map((c) => `- ${c.role} · \`${c.path}\`: ${c.overflowPx}px wider than the screen`), ""] : []),
+  ...(menuMismatch.length ? ["### Sidebar differs from the navigation list", "", ...menuMismatch.map((c) => `- ${c.role}: ${esc(c.menuMismatch!)}`), ""] : []),
   "## Pages visited",
   "",
-  ...[...new Set(crawl.map((c) => c.role))].map((role) => `- **${role}:** ${[...new Set(crawl.filter((c) => c.role === role).map((c) => `\`${c.path}\``))].join(", ")}`),
+  ...[...new Set(visits.map((c) => c.role))].map((role) => `- **${role}:** ${[...new Set(visits.filter((c) => c.role === role).map((c) => `\`${c.path}\``))].join(", ")}`),
   "",
 ].join("\n");
 
 writeFileSync("AUDIT.md", md);
-console.log(`AUDIT.md written: ${violations.length} source violation(s), ${badStatus.length} HTTP error(s), ${consoleErr.length} console-error page(s), ${dummyText.length} dummy-text page(s), ${overflow.length} too-wide page(s).`);
+console.log(`AUDIT.md written: ${violations.length} source violation(s), ${badStatus.length} HTTP error(s), ${consoleErr.length} console-error page(s), ${dummyText.length} dummy-text page(s), ${overflow.length} too-wide page(s), ${menuMismatch.length} sidebar mismatch(es).`);
 process.exit(problems === 0 ? 0 : 1);

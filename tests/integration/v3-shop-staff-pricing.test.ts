@@ -66,8 +66,8 @@ describe("D-79 shop staff set shop prices (price book, history, audit)", () => {
       await expect(createRule(ss, { kind: "PROMOTION", name: "Sneaky", scope, adjustType: "PCT", adjustPct: 5 })).rejects.toMatchObject({ code: "FORBIDDEN" });
     }
     await expect(createRule(ss, { kind: "BAND", name: "Peak", scope: "COURTS", daysOfWeek: [1], startTime: "18:00", endTime: "20:00", adjustType: "PCT", adjustPct: 10 })).rejects.toMatchObject({ code: "FORBIDDEN" });
-    // A manager's court rule can't be ended or "changed" into a shop discount by shop staff.
-    const band = await createRule(w.actors.MANAGER, { kind: "BAND", name: "Peak", scope: "COURTS", daysOfWeek: [1], startTime: "18:00", endTime: "20:00", adjustType: "PCT", adjustPct: 10 });
+    // The Owner's court rule can't be ended or "changed" into a shop discount by shop staff (v4 RN-3: the Owner prices courts).
+    const band = await createRule(w.actors.OWNER, { kind: "BAND", name: "Peak", scope: "COURTS", daysOfWeek: [1], startTime: "18:00", endTime: "20:00", adjustType: "PCT", adjustPct: 10 });
     await expect(endRule(ss, band.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(endShopDiscount(ss, band.id)).rejects.toMatchObject({ code: "NOT_FOUND" });
     await expect(changeRule(ss, band.id, { kind: "PROMOTION", name: "Swap", scope: "PRODUCTS", adjustType: "PCT", adjustPct: 5 })).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -107,7 +107,8 @@ describe("D-79 shop discounts by shop staff", () => {
     expect((await walkInPrice(grip.variantId, 30000)).discountAmount).toBe(0);
   });
 
-  it("above the limit it waits for approval (not applied); a manager approves within theirs; shop staff can't approve", async () => {
+  // v4 RN-3 (was: "a manager approves within theirs"): above the shop-staff limit a discount waits for the Owner only.
+  it("above the limit it waits for the Owner's approval (not applied); the Manager and shop staff can't approve", async () => {
     const shoe = await makeProduct(w, { name: "Court Shoe", category: "SHOES", price: 400000, onHand: 2 });
     const big = await addProductPromotion(w.actors.SHOP_STAFF, shoe.productId, { name: "Shoe blowout", pct: 25 });
     expect([big.status, big.approvalNeeded]).toEqual(["PENDING_APPROVAL", "above the 15% limit for shop staff"]);
@@ -115,8 +116,9 @@ describe("D-79 shop discounts by shop staff", () => {
     expect(shopWide.status).toBe("PENDING_APPROVAL");
     expect((await walkInPrice(shoe.variantId, 400000)).discountAmount).toBe(0);
     await expect(decideRule(w.actors.SHOP_STAFF, big.id, "APPROVE")).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(decideRule(w.actors.MANAGER, shopWide.id, "APPROVE")).rejects.toMatchObject({ code: "FORBIDDEN" }); // 40% > the manager's 30%
-    await decideRule(w.actors.MANAGER, big.id, "APPROVE");
+    await expect(decideRule(w.actors.MANAGER, shopWide.id, "APPROVE")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(decideRule(w.actors.MANAGER, big.id, "APPROVE")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await decideRule(w.actors.OWNER, big.id, "APPROVE");
     expect((await walkInPrice(shoe.variantId, 400000)).discountAmount).toBe(100000);
     await expect(addShopDiscount(w.actors.SHOP_STAFF, { name: "Bad", pct: 10, dateFrom: "2026-10-20", dateTo: "2026-10-19" })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
   });

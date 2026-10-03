@@ -386,6 +386,9 @@ model Member {
   guardianMemberId      String?   @map("guardian_member_id")
   // DPDP erasure: personal data replaced, transactions kept.
   anonymisedAt          DateTime? @map("anonymised_at") @db.Timestamptz(3)
+  // v4 §5.1 (WHATSAPP): consent to automatic WhatsApp updates, and a "STOP" reply.
+  whatsappOptInAt       DateTime? @map("whatsapp_opt_in_at") @db.Timestamptz(3)
+  whatsappOptOutAt      DateTime? @map("whatsapp_opt_out_at") @db.Timestamptz(3)
   createdBy             String?   @map("created_by")
   createdAt             DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -403,6 +406,9 @@ model Guest {
   phone        String?   @unique
   email        String?
   idVerifiedAt DateTime? @map("id_verified_at") @db.Timestamptz(3)
+  // v4 §5.1 (WHATSAPP): consent to automatic WhatsApp updates, and a "STOP" reply.
+  whatsappOptInAt  DateTime? @map("whatsapp_opt_in_at") @db.Timestamptz(3)
+  whatsappOptOutAt DateTime? @map("whatsapp_opt_out_at") @db.Timestamptz(3)
   createdAt    DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1069,6 +1075,9 @@ model Lead {
   assignmentReason  String?        @map("assignment_reason")
   assignedAt        DateTime?      @map("assigned_at") @db.Timestamptz(3)
   escalatedAt       DateTime?      @map("escalated_at") @db.Timestamptz(3)
+  // v4 §5.1 (WHATSAPP): consent to automatic WhatsApp updates, and a "STOP" reply.
+  whatsappOptInAt   DateTime?      @map("whatsapp_opt_in_at") @db.Timestamptz(3)
+  whatsappOptOutAt  DateTime?      @map("whatsapp_opt_out_at") @db.Timestamptz(3)
   createdAt         DateTime       @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
   activities        LeadActivity[]
@@ -1334,11 +1343,98 @@ model CashDrawerSession {
   depositRef    String?   @map("deposit_ref")
   depositedAt   DateTime? @map("deposited_at") @db.Timestamptz(3)
   depositedBy   String?   @map("deposited_by")
+  // v4 §2 (DRAWER): the till, OPEN / PENDING_APPROVAL / CLOSED / APPROVED / REJECTED, denomination counts, the close
+  // split (float carried in the till vs dropped to the safe) and the variance approval (CD-5…CD-8).
+  drawerId        String?   @map("drawer_id")
+  status          String    @default("OPEN")
+  openingCounts   Json?     @map("opening_counts")
+  closingCounts   Json?     @map("closing_counts")
+  floatCarried    Int?      @map("float_carried")
+  cashDropped     Int?      @map("cash_dropped")
+  dropRef         String?   @map("drop_ref")
+  varianceReason  String?   @map("variance_reason")
+  approvedBy      String?   @map("approved_by")
+  approvedAt      DateTime? @map("approved_at") @db.Timestamptz(3)
+  rejectedBy      String?   @map("rejected_by")
+  rejectedAt      DateTime? @map("rejected_at") @db.Timestamptz(3)
+  rejectionReason String?   @map("rejection_reason")
   createdAt     DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@index([userId, closedAt])
   @@map("cash_drawer_sessions")
+}
+
+/// v4 §2.1 (DRAWER): a physical till. The Owner adds them in Settings; a till holds at most one OPEN session.
+model CashDrawer {
+  id           String   @id @default(cuid())
+  name         String
+  location     String // FRONT_DESK | SHOP | BAR | OFFICE
+  defaultFloat Int      @default(0) @map("default_float")
+  active       Boolean  @default(true)
+  createdBy    String?  @map("created_by")
+  createdAt    DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("cash_drawers")
+}
+
+/// v4 §2.1 (DRAWER): append-only cash movements of a drawer session; balance_after is the running balance (CD-1).
+model DrawerMovement {
+  id           String   @id @default(cuid())
+  sessionId    String   @map("session_id")
+  lineNo       Int      @map("line_no")
+  type         String // OPENING_FLOAT | CASH_SALE | CASH_REFUND | PAY_IN | PAY_OUT | CASH_DROP | CLOSING_ADJUSTMENT
+  amount       Int
+  balanceAfter Int      @map("balance_after")
+  atClose      Boolean  @default(false) @map("at_close")
+  paymentId    String?  @map("payment_id")
+  expenseId    String?  @map("expense_id")
+  reference    String?
+  category     String?
+  actorId      String?  @map("actor_id")
+  note         String?
+  at           DateTime @db.Timestamptz(3)
+  createdAt    DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([sessionId, lineNo], map: "drawer_movements_line")
+  @@map("drawer_movements")
+}
+
+/// v4 §2.6 (DRAWER): the safe — cash drops in, pay-ins and bank deposits out (append-only, running balance).
+model SafeMovement {
+  id               String   @id @default(cuid())
+  lineNo           Int      @unique(map: "safe_movements_line") @map("line_no")
+  type             String // CASH_DROP | PAY_IN | BANK_DEPOSIT
+  amount           Int
+  balanceAfter     Int      @map("balance_after")
+  drawerMovementId String?  @map("drawer_movement_id")
+  bankDepositId    String?  @map("bank_deposit_id")
+  reference        String?
+  actorId          String?  @map("actor_id")
+  note             String?
+  at               DateTime @db.Timestamptz(3)
+  createdAt        DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+
+  @@map("safe_movements")
+}
+
+/// v4 §2.6 (DRAWER): cash taken from the safe to the bank (slip reference, optional photo). SESSION = a pre-v4
+/// session's counted cash deposited directly (v3 recordDeposit), which never passed through the safe.
+model BankDeposit {
+  id          String   @id @default(cuid())
+  amount      Int
+  depositDate DateTime @map("deposit_date") @db.Date
+  slipRef     String   @map("slip_ref")
+  photoUrl    String?  @map("photo_url")
+  note        String?
+  source      String   @default("SAFE")
+  sessionId   String?  @map("session_id")
+  recordedBy  String?  @map("recorded_by")
+  createdAt   DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("bank_deposits")
 }
 
 /// §3.4: outbound communication — emails actually sent/failed and WhatsApp links opened by staff.
@@ -1483,6 +1579,14 @@ model RefundRequest {
   retryOfId     String?   @map("retry_of_id")
   createdAt     DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  // v4 §3 (RF-8/9/10): READY_TO_COLLECT | COLLECTED (sub-status of APPROVED/COMPLETED), identity check, reminders.
+  collectStatus     String?   @map("collect_status")
+  readyAt           DateTime? @map("ready_at") @db.Timestamptz(3)
+  identityCheckedBy String?   @map("identity_checked_by")
+  identityCheckedAt DateTime? @map("identity_checked_at") @db.Timestamptz(3)
+  identityMethod    String?   @map("identity_method")
+  remindersSent     Int       @default(0) @map("reminders_sent")
+  lastReminderAt    DateTime? @map("last_reminder_at") @db.Timestamptz(3)
 
   @@index([status, createdAt])
   @@index([billId])
@@ -1511,12 +1615,37 @@ model NotificationDelivery {
   sentAt       DateTime? @map("sent_at") @db.Timestamptz(3)
   deliveredAt  DateTime? @map("delivered_at") @db.Timestamptz(3)
   openedAt     DateTime? @map("opened_at") @db.Timestamptz(3)
+  // v4 §5.4 step 6 (WHATSAPP): Meta's status timeline for a WhatsApp API message (furthest state; never moves back).
+  waStatus     String?   @map("wa_status") // sent | delivered | read | failed
+  waSentAt     DateTime? @map("wa_sent_at") @db.Timestamptz(3)
+  waReadAt     DateTime? @map("wa_read_at") @db.Timestamptz(3)
+  waFailedAt   DateTime? @map("wa_failed_at") @db.Timestamptz(3)
+  waErrorCode  Int?      @map("wa_error_code")
+  // v4 §4.2/§5.4 (PUSH): tries so far, earliest send time (quiet hours / retry backoff), quiet-hours bypass, and the
+  // WhatsApp API template, language, body parameters (JSON string array) and URL button parameter.
+  attempts      Int       @default(0)
+  notBefore     DateTime? @map("not_before") @db.Timestamptz(3)
+  urgent        Boolean   @default(false)
+  waTemplate    String?   @map("wa_template")
+  waLanguage    String?   @map("wa_language")
+  waParams      Json?     @map("wa_params")
+  waButtonParam String?   @map("wa_button_param")
   createdAt    DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([dedupeKey, channel], map: "notification_deliveries_once")
   @@index([channel, status], map: "notification_deliveries_queue_idx")
   @@map("notification_deliveries")
+}
+
+/// v4 §5.4 step 9 (PUSH): a rate-limit answer pauses a channel's sending until `pausedUntil`; rows stay QUEUED.
+model DeliveryPause {
+  channel     String   @id
+  pausedUntil DateTime @map("paused_until") @db.Timestamptz(3)
+  reason      String
+  updatedAt   DateTime @default(dbgenerated("app_now()")) @map("updated_at") @db.Timestamptz(3)
+
+  @@map("delivery_pauses")
 }
 
 model PushSubscription {
@@ -1652,4 +1781,19 @@ model ProductImage {
 
   @@index([productId, sort], map: "product_images_product_idx")
   @@map("product_images")
+}
+
+// v4 §5.4 step 6 (WHATSAPP): inbound WhatsApp messages, one row per Meta message id (webhook idempotency).
+model WhatsappInbound {
+  id         String   @id // Meta message id (wamid)
+  fromPhone  String   @map("from_phone")
+  type       String
+  text       String?
+  handledAs  String   @map("handled_as") // STOP | TASK | IGNORED
+  deliveryId String?  @map("delivery_id")
+  receivedAt DateTime @map("received_at") @db.Timestamptz(3)
+  createdAt  DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+
+  @@index([fromPhone, receivedAt], map: "whatsapp_inbound_from_idx")
+  @@map("whatsapp_inbound")
 }

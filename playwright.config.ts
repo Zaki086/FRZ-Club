@@ -22,6 +22,8 @@ export default defineConfig({
     { name: "demo", testMatch: /demo\.spec\.ts/, use: { ...devices["Desktop Chrome"] } },
     { name: "ui-cash", testMatch: /ui-flows\.spec\.ts/, metadata: { payments: "cash" }, dependencies: ["demo"], use: { ...devices["Desktop Chrome"] } },
     { name: "ui-card-upi", testMatch: /ui-flows\.spec\.ts/, metadata: { payments: "card_upi" }, dependencies: ["ui-cash"], use: { ...devices["Desktop Chrome"] } },
+    // v4 (role navigation, cash drawer v2, refunds v2, push, WhatsApp): after the click-through flows, cash only.
+    { name: "v4", testMatch: /v4-[a-z]+\.spec\.ts/, dependencies: ["ui-card-upi"], use: { ...devices["Desktop Chrome"] } },
     // A brand-new club on its own port and database (never touches the sample instance).
     { name: "fresh-install", testMatch: /fresh-install\.spec\.ts/, timeout: 20 * 60_000, use: { ...devices["Desktop Chrome"] } },
   ],

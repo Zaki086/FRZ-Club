@@ -21,11 +21,12 @@ module.exports = {
       restart_delay: 5000,
     },
     {
-      // HTTPS while ports 80/443 belong to another project's Caddy (v3 §1, Path B): a Cloudflare quick tunnel.
-      // Its address changes when it restarts; scripts/tunnel.mjs keeps APP_URL in .env in step.
-      name: "champions-tunnel",
+      // HTTPS while ports 80/443 belong to another project's Caddy (v3 §1, Path B): a Let's Encrypt certificate for
+      // HTTPS_HOSTS (sslip.io / nip.io names, DNS-01 challenge answered by the script itself), served on HTTPS_PORT
+      // and forwarded to the app on 127.0.0.1:3200. Renews itself 30 days before expiry. See scripts/https.mjs.
+      name: "champions-https",
       cwd: __dirname,
-      script: "scripts/tunnel.mjs",
+      script: "scripts/https.mjs",
       max_memory_restart: "200M",
       restart_delay: 10000,
     },

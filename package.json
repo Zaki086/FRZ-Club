@@ -23,6 +23,7 @@
     "audit:dummy": "tsx --env-file-if-exists=.env scripts/audit-dummy.ts",
     "verify:integrity": "tsx --env-file-if-exists=.env scripts/verify-integrity.ts",
     "demo:race": "tsx --env-file-if-exists=.env scripts/demo-race.ts",
+    "vapid:generate": "node scripts/vapid-generate.mjs",
     "postinstall": "node -e \"const fs=require('fs');if(process.env.NODE_ENV!=='production'&&!fs.existsSync('.env')){fs.copyFileSync('.env.example','.env');console.log('Created .env from .env.example (development only)')}\" && prisma generate"
   },
   "dependencies": {

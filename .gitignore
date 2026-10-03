@@ -21,3 +21,4 @@ CLAUDE.md
 /backups/
 /.bin/
 /.tunnel-url
+/.certs/

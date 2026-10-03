@@ -11,6 +11,7 @@ import {
 } from "@/server/services/payments";
 import { testGateway } from "@/server/services/gateway";
 import { makeWorld, type World, utr, CARD_PROOF } from "../helpers/world";
+import { withFloat } from "../helpers/drawer";
 import { expectIntegrity } from "../helpers/integrity";
 import { approvedRefund } from "../helpers/refunds";
 import { payOutRefund, requestRefund, approveRefund } from "@/server/services/refunds";
@@ -94,6 +95,7 @@ describe("Phase 1 — payments, refunds and the ledger (§5.10)", () => {
     const r = await recordCounterPayment(w.actors.FRONT_DESK, { billId: bill.id, method: "UPI", reference: utr(), amount: 20000 });
     expect(r.billStatus).toBe("PARTIAL");
     expect(r.due).toBe(35000);
+    await withFloat(w.actors.FRONT_DESK, 20000); // v4 CD-4: the change comes from cash already in the drawer
     const r2 = await recordCounterPayment(w.actors.FRONT_DESK, { billId: bill.id, method: "CASH", amount: 35000, tendered: 50000 });
     expect(r2.billStatus).toBe("PAID");
     expect(r2.changeGiven).toBe(15000);
@@ -109,7 +111,7 @@ describe("Phase 1 — payments, refunds and the ledger (§5.10)", () => {
     ).rejects.toMatchObject({ code: "REFUND_EXCEEDS_PAID" });
     const r = await approvedRefund(w, bill.id, 15000);
     expect(r.pending).toBe(15000);
-    const done = await payOutRefund(w.actors.FRONT_DESK, r.id, { method: "CARD", approvalCode: "RFND01" });
+    const done = await payOutRefund(w.actors.FRONT_DESK, r.id, { method: "CARD", approvalCode: "RFND01", identityChecked: true }); // v4 RF-9: identity tick
     expect(done.status).toBe("COMPLETED");
     const ledger = await prisma.ledgerEntry.findMany({ where: { billId: bill.id }, orderBy: { createdAt: "asc" } });
     expect(ledger.map((l) => [l.source, l.direction, l.amount])).toEqual([

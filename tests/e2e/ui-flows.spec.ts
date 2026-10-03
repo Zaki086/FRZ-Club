@@ -26,6 +26,21 @@ async function loginUi(browser: Browser, identifier: string, password: string, l
   return { ctx, page };
 }
 
+const TILL_OF = { "Front desk": "Front Desk Till 1", Shop: "Shop Till", Bar: "Bar Till" } as const;
+
+/** Notes and coins (labels as on the count screens) that make `paise` — whole rupees. */
+function countsFor(paise: number): Array<[string, string]> {
+  const den: Array<[string, number]> = [["₹500 notes", 50000], ["₹200 notes", 20000], ["₹100 notes", 10000], ["₹50 notes", 5000], ["₹20 notes", 2000], ["₹10 notes", 1000], ["₹5 coins", 500], ["₹2 coins", 200], ["₹1 coins", 100]];
+  let left = Math.floor(paise / 100) * 100;
+  const out: Array<[string, string]> = [];
+  for (const [label, v] of den) {
+    const n = Math.floor(left / v);
+    if (n) out.push([label, String(n)]);
+    left -= n * v;
+  }
+  return out;
+}
+
 /** Open the drawer on screen (if it isn't already) — the way staff start a shift. */
 async function openDrawerUi(s: Session, area: "Front desk" | "Shop" | "Bar") {
   await s.page.goto("/app/drawer");
@@ -33,9 +48,11 @@ async function openDrawerUi(s: Session, area: "Front desk" | "Shop" | "Bar") {
   const openCard = s.page.getByText(/drawer · open since/i);
   await expect(opener.or(openCard)).toBeVisible(); // the page loads its state first
   if (await opener.isVisible()) {
-    await opener.getByLabel("Drawer").selectOption({ label: area });
-    await opener.getByLabel("Opening float").fill("500");
-    await opener.getByRole("button", { name: "Open drawer" }).click();
+    // v4 §2.3 changed this helper (was: a drawer area and a float total): staff choose the till and count the float
+    // by denomination (₹500 here, as before).
+    await opener.getByLabel("Till").selectOption({ label: TILL_OF[area] });
+    await opener.getByLabel("₹500 notes", { exact: true }).fill("1");
+    await opener.getByRole("button", { name: /Open drawer/ }).click();
     opened.push(s);
   }
   await expect(s.page.getByText(/drawer · open since/i)).toBeVisible();
@@ -115,8 +132,11 @@ test("2. the front desk lands on Today, opens the drawer and signs up a member w
   newMemberToken = new URL(slip!, "http://x").searchParams.get("t");
 });
 
-test("2b. the desk narrows the members list from the summary strip and the search (state in the URL)", async () => {
-  const page = desk.page;
+// v4 RN-1 changed this step (was: the front desk on the members list): the members list is on the Manager's menu, not
+// the desk's (the desk searches members at Check-in & Search Members), so the Manager narrows it; the desk keeps the leads board.
+test("2b. the manager narrows the members list from the summary strip and the search (state in the URL)", async ({ browser }) => {
+  const mgr = await loginUi(browser, "manager@championsclub.example", STAFF_PW);
+  const page = mgr.page;
   await page.goto("/app/members");
   await expect(page.getByTestId("summary-strip")).toBeVisible();
   await page.getByTestId("summary-strip").getByRole("button", { name: /With dues/ }).click();
@@ -127,9 +147,10 @@ test("2b. the desk narrows the members list from the summary strip and the searc
   await expect(page.getByTestId("result-count")).toBeVisible();
   await page.getByRole("button", { name: "Clear all" }).click();
   await expect(page).not.toHaveURL(/dues=yes/);
-  await page.goto("/app/crm");
-  await expect(page.getByTestId("filter-bar")).toBeVisible();
-  await expect(page).toHaveURL(/status=NEW%2CCONTACTED%2CQUOTED|status=NEW,CONTACTED,QUOTED/);
+  await mgr.ctx.close();
+  await desk.page.goto("/app/crm");
+  await expect(desk.page.getByTestId("filter-bar")).toBeVisible();
+  await expect(desk.page).toHaveURL(/status=NEW%2CCONTACTED%2CQUOTED|status=NEW,CONTACTED,QUOTED/);
 });
 
 test("3. a member books in the portal; online payment is not offered without a live gateway", async ({ browser }) => {
@@ -261,8 +282,13 @@ test("8. the desk closes the drawer with a count; the accountant sees it in the 
   const d = await (await desk.ctx.request.get("/api/drawer")).json();
   const expected = d.data.open.cashExpected as number;
   await page.goto("/app/drawer");
-  await page.getByLabel("Counted cash").fill((expected / 100).toFixed(2));
+  // v4 CD-5/CD-7 changed this step (was: one "Counted cash" total): a blind count by denomination; the till's float
+  // stays for the next shift and the rest goes to the safe in a sealed bag.
   await page.getByRole("button", { name: "Close drawer" }).click();
+  const close = page.getByTestId("close-drawer");
+  for (const [label, n] of countsFor(expected)) await close.getByLabel(label, { exact: true }).fill(n);
+  await close.getByLabel("Sealed bag no.").fill("E2E-BAG-8");
+  await close.getByRole("button", { name: "Count done — close drawer" }).click();
   await expect(page.getByTestId("drawer-closed")).toContainText("no variance");
   opened.splice(opened.indexOf(desk), 1);
   const acc = await loginUi(browser, "accounts@championsclub.example", STAFF_PW, /\/app\/finance\/cash/);
@@ -270,12 +296,13 @@ test("8. the desk closes the drawer with a count; the accountant sees it in the 
   await acc.ctx.close();
 });
 
+// v4 RN-1 changed this step (was: the front desk): the members list is on the Manager's menu, so the Manager follows the deep link.
 test("9. a deep link survives login (returnTo); a session that ends mid-use asks to log in again in place", async ({ browser }) => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto("/app/members?dues=yes");
   await page.waitForURL(/\/login\?returnTo=/);
-  await page.getByLabel("Phone or email").fill("desk@championsclub.example");
+  await page.getByLabel("Phone or email").fill("manager@championsclub.example");
   await page.getByLabel("Password").fill(STAFF_PW);
   await page.getByRole("button", { name: "Log in" }).click();
   await page.waitForURL(/\/app\/members\?dues=yes/);
@@ -291,7 +318,7 @@ test("9. a deep link survives login (returnTo); a session that ends mid-use asks
   const guard = page.getByTestId("session-guard");
   await expect(guard).toBeVisible();
   await expect(guard).toContainText("Your session ended — log in again to continue");
-  await guard.getByLabel("Phone or email").fill("desk@championsclub.example");
+  await guard.getByLabel("Phone or email").fill("manager@championsclub.example");
   await guard.getByLabel("Password").fill(STAFF_PW);
   await guard.getByRole("button", { name: "Log in" }).click();
   await expect(guard).toBeHidden();
@@ -307,7 +334,7 @@ test("9. a deep link survives login (returnTo); a session that ends mid-use asks
   await page.goto("/app/members?tier=GOLD");
   await page.waitForURL(/\/login\?returnTo=.*ended=1/);
   await expect(page.getByText("Your session ended — log in again to continue")).toBeVisible();
-  await page.getByLabel("Phone or email").fill("desk@championsclub.example");
+  await page.getByLabel("Phone or email").fill("manager@championsclub.example");
   await page.getByLabel("Password").fill(STAFF_PW);
   await page.getByRole("button", { name: "Log in" }).click();
   await page.waitForURL(/\/app\/members\?tier=GOLD/);
@@ -361,23 +388,38 @@ test("11. the desk asks for a refund on a paid booking; the manager approves; th
   await expect(sent).toContainText(/Refund RF-\d{6} for ₹100 sent for approval/);
   const code = /RF-\d{6}/.exec((await sent.textContent()) ?? "")![0];
 
+  // v4 RN-4 changed this part (was: the manager approves on the refunds queue): the Manager approves inline in "Needs
+  // your approval" on the dashboard; the row links to the refund's own page (as the approval notification does).
   const mgr = await loginUi(browser, "manager@championsclub.example", STAFF_PW);
-  await mgr.page.goto("/app/refunds");
-  await expect(mgr.page.getByTestId("summary-strip")).toContainText("Awaiting approval");
-  await mgr.page.goto(`/app/refunds?q=${code}`);
-  await mgr.page.getByRole("row", { name: new RegExp(code) }).click();
-  await mgr.page.getByRole("button", { name: "Approve ₹100" }).click();
-  await expect(mgr.page.getByRole("row", { name: new RegExp(code) })).toContainText("Ready to pay out");
+  await mgr.page.goto("/app");
+  const ask = mgr.page.getByTestId("approvals-panel").getByTestId("approval-row").filter({ hasText: code });
+  await expect(ask).toContainText("₹100");
+  await expect(ask.getByRole("link", { name: new RegExp(code) })).toHaveAttribute("href", /^\/app\/refunds\//);
+  await ask.getByRole("button", { name: /^Approve/ }).click();
+  await expect(mgr.page.getByTestId("approval-row").filter({ hasText: code })).toHaveCount(0);
   await mgr.ctx.close();
 
+  // v4 RF-8/RF-9 changed this part (was: "Paid out" on the row): the approved refund is "Ready to collect"; the desk
+  // compares the person with the member photo, ticks "Identity checked" (required), pays from the drawer and can print
+  // the refund receipt; the row then reads "Collected".
   await page.goto(`/app/refunds?q=${code}`);
-  await page.getByRole("row", { name: new RegExp(code) }).click();
+  const row = page.getByRole("row", { name: new RegExp(code) });
+  await expect(row).toContainText("Ready to collect");
+  await row.click();
   const payout = page.getByTestId("refund-payout");
+  await expect(payout.getByTestId("payout-photo")).toBeVisible();
+  const pay = payout.getByRole("button", { name: /^Pay out ₹100/ });
+  await expect(pay).toBeDisabled();
+  await payout.getByLabel("Identity checked").check();
   await payout.getByLabel("Method").selectOption("CASH");
-  await payout.getByRole("button", { name: "Paid out" }).click();
-  await expect(page.getByRole("row", { name: new RegExp(code) })).toContainText("Completed");
+  await pay.click();
+  await expect(page.getByTestId("refund-paid-out")).toContainText(`${code} is collected`);
+  await expect(page.getByTestId("refund-paid-out").getByRole("link", { name: "Print refund receipt" })).toHaveAttribute("href", /^\/print\/refund\//);
+  await page.goto(`/app/refunds?q=${code}`);
+  await expect(page.getByRole("row", { name: new RegExp(code) })).toContainText("Collected");
   await page.goto("/app/drawer");
-  await expect(page.getByTestId("cash-expected")).toContainText("Cash refunded");
+  // v4 §2.4 changed this line (was: "Cash refunded"): the drawer's summary strip reads "Cash refunds" (count, ₹).
+  await expect(page.getByTestId("cash-expected")).toContainText("Cash refunds");
 });
 
 test("12. the walk-in signed up in step 2 sets their own password from the link and logs in to the portal", async ({ browser }) => {
@@ -436,12 +478,12 @@ test("13. the manager closes a court with a reason; the member reschedules the c
   await neha.ctx.close();
 });
 
-test("14. the manager creates a peak band in the price book; the price simulator and the public pages show it", async ({ browser }) => {
-  const mgr = await loginUi(browser, "manager@championsclub.example", STAFF_PW);
-  const page = mgr.page;
+// v4 RN-3 changed this step (was: the manager): the price book is the Owner's alone.
+test("14. the owner creates a peak band in the price book; the price simulator and the public pages show it", async () => {
+  const page = owner.page;
   // PR-15: the sample data has no pricing rules; end any left by the other payment set-up's run.
-  const book = await (await mgr.ctx.request.get("/api/pricing")).json();
-  for (const r of book.data.rules as Array<{ id: string; state: string }>) if (r.state === "IN_EFFECT" || r.state === "SCHEDULED") await mgr.ctx.request.post(`/api/pricing/rules/${r.id}/end`, { data: {} });
+  const book = await (await owner.ctx.request.get("/api/pricing")).json();
+  for (const r of book.data.rules as Array<{ id: string; state: string }>) if (r.state === "IN_EFFECT" || r.state === "SCHEDULED") await owner.ctx.request.post(`/api/pricing/rules/${r.id}/end`, { data: {} });
   await page.goto("/app/pricing");
   const form = page.getByTestId("rule-form");
   await form.getByLabel("Name").fill("Peak");
@@ -459,9 +501,8 @@ test("14. the manager creates a peak band in the price book; the price simulator
   await page.goto("/availability");
   await expect(page.getByTestId("price-notes")).toContainText("Peak +20%");
   // Leave the sample data's prices as they were for the next run.
-  const after = await (await mgr.ctx.request.get("/api/pricing")).json();
-  for (const r of after.data.rules as Array<{ id: string; state: string }>) if (r.state === "IN_EFFECT") await mgr.ctx.request.post(`/api/pricing/rules/${r.id}/end`, { data: {} });
-  await mgr.ctx.close();
+  const after = await (await owner.ctx.request.get("/api/pricing")).json();
+  for (const r of after.data.rules as Array<{ id: string; state: string }>) if (r.state === "IN_EFFECT") await owner.ctx.request.post(`/api/pricing/rules/${r.id}/end`, { data: {} });
 });
 
 test("15. the shop adds a product with photos; it appears in the public shop with its gallery", async ({ browser }) => {

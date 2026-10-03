@@ -10,7 +10,8 @@ const SETS: Array<{ who: string; login?: string; pw?: string; pages: string[] }>
   { who: "public", pages: ["/", "/plans", "/availability", "/shop", "/trial", "/login"] },
   { who: "member", login: "9811000001", pw: MEMBER_PW, pages: ["/portal", "/portal/book", "/portal/membership", "/portal/account"] },
   { who: "owner", login: "owner@championsclub.example", pw: STAFF_PW, pages: ["/app", "/app/settings", "/app/reports", "/app/finance/gst"] },
-  { who: "desk", login: "desk@championsclub.example", pw: STAFF_PW, pages: ["/app/desk", "/app/members", "/app/courts", "/app/courts/bookings", "/app/crm"] },
+  // v4 RN-1: the members list is not on the desk's menu any more; its dashboard and Check-in Risk are.
+  { who: "desk", login: "desk@championsclub.example", pw: STAFF_PW, pages: ["/app", "/app/desk", "/app/desk/risk", "/app/courts", "/app/courts/bookings", "/app/crm"] },
   { who: "shop", login: "shop@championsclub.example", pw: STAFF_PW, pages: ["/app/shop", "/app/shop/stock"] },
   { who: "bar", login: "bar@championsclub.example", pw: STAFF_PW, pages: ["/app/bar"] },
   { who: "kitchen", login: "kitchen@championsclub.example", pw: STAFF_PW, pages: ["/app/bar/kds"] },

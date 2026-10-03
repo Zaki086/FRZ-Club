@@ -102,19 +102,20 @@ describe("cancelled or moved by the club", () => {
     const d = await prisma.notificationDelivery.findFirstOrThrow({ where: { memberId: m.memberId, event: "BOOKING_CANCELLED_BY_CLUB", channel: "EMAIL" } });
     expect(d.body).toMatch(/Reason: coach unwell\. Your ₹\d[\d,]* (has been refunded|is refunded)/);
     // The cancellation message carries the refund: no second "refund" message for the same money.
-    expect(await prisma.notificationDelivery.count({ where: { memberId: m.memberId, event: { in: ["REFUND_APPROVED", "REFUND_COMPLETED"] } } })).toBe(0);
+    expect(await prisma.notificationDelivery.count({ where: { memberId: m.memberId, event: { in: ["REFUND_APPROVED", "REFUND_READY_TO_COLLECT", "REFUND_COMPLETED", "REFUND_COLLECTED"] } } })).toBe(0);
     expect(await prisma.notificationDelivery.count({ where: { guestId: { not: null }, event: "BOOKING_CANCELLED_BY_CLUB", channel: "WHATSAPP_MANUAL", toAddress: "919876540012" } })).toBe(1);
     await expectIntegrity();
   });
 
-  it("a booking cancelled by the desk: every channel; a member cancelling their own gets the in-app/email confirmation only", async () => {
+  it("a booking cancelled by the desk or by the member: every channel (v4 §4.1)", async () => {
     const m = await reachable("Desk Dev");
     const b = await book(w, { time: "18:00", players: [{ memberId: m.memberId }], payment: { kind: "COUNTER", method: "CASH" } });
     await cancelBooking(w.actors.FRONT_DESK, b.bookingId, { reason: "member called" });
     expect(await rows(m.memberId, "BOOKING_CANCELLED")).toEqual(ALL);
     const own = await book(w, { time: "19:00", players: [{ memberId: m.memberId }] });
     await cancelBooking(m.actor, own.bookingId);
-    expect(await prisma.notificationDelivery.count({ where: { dedupeKey: { startsWith: `booking-cancelled:${own.bookingId}` } } })).toBe(0);
+    // v4 §4.1 (D-82): a member's own cancellation now goes out on every channel too (was in-app + email only).
+    expect(await rows(m.memberId, "BOOKING_CANCELLED", `booking-cancelled:${own.bookingId}`)).toEqual(ALL);
     expect(await prisma.notification.count({ where: { userId: m.member.userId!, type: "BOOKING_CANCELLED" } })).toBe(2);
   });
 
@@ -136,11 +137,11 @@ describe("cancelled or moved by the club", () => {
     expect(await rows(c.memberId, "BOOKING_AUTO_REFUNDED")).toEqual(ALL);
     const ad = await prisma.notificationDelivery.findFirstOrThrow({ where: { memberId: c.memberId, event: "BOOKING_AUTO_REFUNDED", channel: "EMAIL" } });
     expect(ad.body).toMatch(new RegExp(`No new time was chosen for ${bc.bookingCode}.*refunded in full: ₹150\\. ₹150 is ready at the front desk`));
-    expect(await prisma.notificationDelivery.count({ where: { memberId: c.memberId, event: "REFUND_APPROVED" } })).toBe(0);
-    // Paid out at the desk later → "Refund completed" on every channel.
+    expect(await prisma.notificationDelivery.count({ where: { memberId: c.memberId, event: { in: ["REFUND_APPROVED", "REFUND_READY_TO_COLLECT"] } } })).toBe(0);
+    // Paid out at the desk later (v4 RF-9: identity checked) → "Refund collected" (v4 §3.6) on every channel.
     const req = await prisma.refundRequest.findFirstOrThrow({ where: { billId: bc.billId } });
-    await payOutRefund(w.actors.FRONT_DESK, req.id, { method: "CASH" });
-    expect(await rows(c.memberId, "REFUND_COMPLETED")).toEqual(ALL);
+    await payOutRefund(w.actors.FRONT_DESK, req.id, { method: "CASH", identityChecked: true });
+    expect(await rows(c.memberId, "REFUND_COLLECTED")).toEqual(ALL);
     await expectIntegrity();
   });
 });
@@ -199,11 +200,12 @@ describe("refunds", () => {
     const req = await requestRefund(w.actors.FRONT_DESK, { billId: b.billId, amount: 15000, reason: "SERVICE_ISSUE", note: "lights failed" });
     expect(await rows(m.memberId, "REFUND_REQUESTED")).toEqual(ALL);
     await approveRefund(w.actors.MANAGER, req.id);
-    expect(await rows(m.memberId, "REFUND_APPROVED")).toEqual(ALL);
-    const ap = await prisma.notificationDelivery.findFirstOrThrow({ where: { memberId: m.memberId, event: "REFUND_APPROVED", channel: "EMAIL" } });
-    expect(ap.body).toMatch(new RegExp(`${req.code} · ₹150 for your court booking ${b.bookingCode} \\(Court 1, .*\\)\\. It is ready at the front desk`));
-    await payOutRefund(w.actors.FRONT_DESK, req.id, { method: "CASH" });
-    expect(await rows(m.memberId, "REFUND_COMPLETED")).toEqual(ALL);
+    // v4 §3.6: in cash-only mode "approved" is "ready to collect" (amount, code, desk hours, QR link).
+    expect(await rows(m.memberId, "REFUND_READY_TO_COLLECT")).toEqual(ALL);
+    const ap = await prisma.notificationDelivery.findFirstOrThrow({ where: { memberId: m.memberId, event: "REFUND_READY_TO_COLLECT", channel: "EMAIL" } });
+    expect(ap.body).toMatch(new RegExp(`${req.code} · ₹150 for your court booking ${b.bookingCode} \\(Court 1, .*\\) is ready in cash at the front desk`));
+    await payOutRefund(w.actors.FRONT_DESK, req.id, { method: "CASH", identityChecked: true });
+    expect(await rows(m.memberId, "REFUND_COLLECTED")).toEqual(ALL);
 
     const r2 = await requestRefund(w.actors.FRONT_DESK, { billId: b.billId, amount: 10000, reason: "GOODWILL", note: "sorry" });
     await rejectRefund(w.actors.MANAGER, r2.id, "already refunded the court fee");
