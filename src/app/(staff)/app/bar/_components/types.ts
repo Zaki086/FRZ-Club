@@ -18,4 +18,5 @@ export type StaffMe = {
   leave: Array<{ id: string; type: string; startDate: string; endDate: string; days: number; reason: string; status: string; decisionNote: string | null }>;
   attendance: Array<{ id: string; clockIn: string; clockOut: string | null; cashExpected: number | null; cashCounted: number | null; variance: number | null }>;
   allowance: { CASUAL: { total: number; used: number }; SICK: { total: number; used: number } };
+  today: string;
 };

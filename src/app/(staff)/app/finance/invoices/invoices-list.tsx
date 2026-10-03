@@ -1,89 +1,114 @@
 "use client";
+// v3 §3.2: invoices with the standard FilterBar — status (incl. derived overdue), client, type — and a summary strip.
+// The old `?status=` and `?clientId=` links are facets of the list. Next action inline: issue a draft, collect a balance.
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { FilePlus } from "lucide-react";
-import { useApi } from "@/components/api";
-import { DataState } from "@/components/states";
-import { Card } from "@/components/ui/card";
+import { api, ApiError } from "@/components/api";
+import { FilteredList, useListReload } from "@/components/list/filtered-list";
+import { RejectionBanner } from "@/components/states";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/input";
-import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { StatusBadge } from "@/components/badges";
 import { Money } from "@/components/money";
-import { dateOnly } from "../_components/fmt";
+import { RelTime } from "@/components/rel-time";
+import { formatINR } from "@/lib/money";
 
-type Row = { id: string; number: string | null; kind: string; customer: string; issueDate: string | null; dueDate: string | null; total: number; due: number; status: string; overdue: boolean };
+type Row = {
+  id: string; number: string | null; kind: string; status: string; client_id: string | null; customer: string;
+  issue_day: string | null; due_day: string | null; created_at: string; total: number; paid: number; due: number; overdue: boolean;
+};
 
-export function InvoicesList({ clientId, initialStatus }: { clientId: string; initialStatus: string }) {
-  const [status, setStatus] = useState(initialStatus);
-  const q = new URLSearchParams();
-  if (status) q.set("status", status);
-  if (clientId) q.set("clientId", clientId);
-  const state = useApi<Row[]>(`/api/invoices?${q.toString()}`);
+const KIND: Record<string, string> = { MEMBERSHIP: "membership", BUSINESS: "business", MEMBER: "member" };
+
+function IssueDraft({ r }: { r: Row }) {
+  const reload = useListReload();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Select className="w-52" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-          <option value="">All statuses</option>
-          <option value="DRAFT">Draft</option>
-          <option value="ISSUED">Issued</option>
-          <option value="PARTIALLY_PAID">Partially paid</option>
-          <option value="PAID">Paid</option>
-          <option value="OVERDUE">Overdue</option>
-          <option value="CANCELLED">Cancelled</option>
-        </Select>
-        {clientId ? (
-          <Link href="/app/finance/invoices" className="text-sm text-primary underline">
-            Showing one client — show all
-          </Link>
-        ) : null}
-        <Button asChild className="ml-auto">
-          <Link href={`/app/finance/invoices/new${clientId ? `?clientId=${clientId}` : ""}`}>
-            <FilePlus className="h-4 w-4" /> New invoice
-          </Link>
-        </Button>
-      </div>
-      <Card>
-        <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: "No invoices", hint: "Create a draft for a business client or a member." }}>
-          {(rows) => (
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Number</TH>
-                  <TH>Customer</TH>
-                  <TH>Type</TH>
-                  <TH>Issued</TH>
-                  <TH>Due</TH>
-                  <TH className="text-right">Total</TH>
-                  <TH className="text-right">Balance</TH>
-                  <TH>Status</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {rows.map((r) => (
-                  <TR key={r.id}>
-                    <TD>
-                      <Link className="font-mono text-xs font-semibold text-primary hover:underline" href={`/app/finance/invoices/${r.id}`}>
-                        {r.number ?? "Draft"}
-                      </Link>
-                    </TD>
-                    <TD>{r.customer}</TD>
-                    <TD className="text-xs">{r.kind.toLowerCase()}</TD>
-                    <TD className="text-sm">{dateOnly(r.issueDate)}</TD>
-                    <TD className="text-sm">{dateOnly(r.dueDate)}</TD>
-                    <TD className="text-right"><Money paise={r.total} /></TD>
-                    <TD className="text-right"><Money paise={r.due} /></TD>
-                    <TD className="flex gap-1">
-                      <StatusBadge status={r.status} />
-                      {r.overdue ? <StatusBadge status="OVERDUE" /> : null}
-                    </TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          )}
-        </DataState>
-      </Card>
-    </div>
+    <span className="flex flex-col items-start gap-1">
+      <Button
+        size="sm"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            await api(`/api/invoices/${r.id}`, { body: { action: "issue" } });
+            reload();
+          } catch (e) {
+            setError(e instanceof ApiError ? { code: e.code, message: e.message } : { message: String(e) });
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        Issue invoice
+      </Button>
+      <RejectionBanner error={error} />
+    </span>
+  );
+}
+
+function NextAction({ r }: { r: Row }) {
+  if (r.status === "DRAFT") return <IssueDraft r={r} />;
+  if ((r.status === "ISSUED" || r.status === "PARTIALLY_PAID") && r.due > 0) {
+    return (
+      <Link className="text-sm font-semibold text-primary hover:underline" href={`/app/finance/invoices/${r.id}`}>
+        {r.overdue ? "Chase" : "Record payment"} · {formatINR(r.due)}
+      </Link>
+    );
+  }
+  return <span className="text-xs text-muted-foreground">—</span>;
+}
+
+function NewInvoice() {
+  // Filtered to exactly one client: start the new invoice for that client.
+  const clients = useSearchParams().get("clientId")?.split(",").filter(Boolean) ?? [];
+  return (
+    <Button asChild>
+      <Link href={`/app/finance/invoices/new${clients.length === 1 ? `?clientId=${clients[0]}` : ""}`}>
+        <FilePlus className="h-4 w-4" /> New invoice
+      </Link>
+    </Button>
+  );
+}
+
+export function InvoicesList() {
+  return (
+    <FilteredList<Row>
+      list="invoices"
+      searchPlaceholder="Number, customer or note"
+      toolbar={<NewInvoice />}
+      columns={[
+        {
+          key: "number",
+          header: "Number",
+          cell: (r) => (
+            <Link className="font-mono text-xs font-semibold text-primary hover:underline" href={`/app/finance/invoices/${r.id}`}>
+              {r.number ?? "Draft"}
+            </Link>
+          ),
+        },
+        { key: "customer", header: "Customer", cell: (r) => r.customer },
+        { key: "kind", header: "Type", cell: (r) => <span className="text-xs">{KIND[r.kind] ?? r.kind.toLowerCase()}</span> },
+        { key: "issued", header: "Issued", cell: (r) => <RelTime className="text-sm" when={r.issue_day} /> },
+        { key: "due", header: "Due", cell: (r) => <RelTime className={r.overdue ? "text-sm font-semibold text-destructive" : "text-sm"} when={r.due_day} /> },
+        { key: "total", header: "Total", className: "text-right", cell: (r) => <Money paise={r.total} /> },
+        { key: "balance", header: "Balance", className: "text-right", cell: (r) => <Money paise={r.due} /> },
+        {
+          key: "status",
+          header: "Status",
+          cell: (r) => (
+            <span className="flex gap-1">
+              <StatusBadge status={r.status} />
+              {r.overdue ? <StatusBadge status="OVERDUE" /> : null}
+            </span>
+          ),
+        },
+        { key: "next", header: "Next", cell: (r) => <NextAction r={r} /> },
+      ]}
+      empty={{ title: "No invoices match these filters", hint: "Create a draft for a business client or a member, or remove a filter." }}
+    />
   );
 }

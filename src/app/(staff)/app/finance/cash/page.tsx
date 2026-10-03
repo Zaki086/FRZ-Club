@@ -2,6 +2,8 @@ import { forbidden } from "next/navigation";
 import { requireUser } from "@/server/auth/current";
 import { can } from "@/server/rbac/permissions";
 import { PageHeader } from "@/components/page";
+import { TODO_HOME } from "@/server/services/todo";
+import { TodoPanel } from "../../_components/todo-panel";
 import { CashReconciliation } from "./cash-reconciliation";
 
 export default async function CashPage() {
@@ -10,6 +12,7 @@ export default async function CashPage() {
   return (
     <div>
       <PageHeader title="Daily cash reconciliation" subtitle="Every drawer opened that day: float, cash expected, counted, variance, card and UPI totals, and the bank deposit." />
+      {TODO_HOME[actor.role] === "finance" ? <TodoPanel /> : null}
       <CashReconciliation />
     </div>
   );

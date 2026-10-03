@@ -71,11 +71,11 @@ export function KitchenDisplay() {
     }
   };
   return (
-    <div className="-m-4 min-h-[calc(100vh-3.5rem)] bg-slate-950 p-4 text-white lg:-m-6 lg:p-6">
+    <div className="-m-4 min-h-[calc(100vh-3.5rem)] bg-ink p-4 text-ink-foreground lg:-m-6 lg:p-6">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-black tracking-tight">Kitchen display</h1>
-        <div className="flex items-center gap-3 text-sm text-slate-400">
-          {state.error ? <span className="text-red-400">Connection problem: {state.error.message}</span> : <span>Live · refreshes every 4 s</span>}
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          {state.error ? <span className="text-destructive-foreground">Connection problem: {state.error.message}</span> : <span>Live · refreshes every 4 s</span>}
           <Button size="sm" variant="secondary" onClick={sound.toggle} aria-pressed={sound.on} data-testid="kds-sound">
             {sound.on ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />} {sound.on ? "Sound on" : "Sound off"}
           </Button>
@@ -86,45 +86,45 @@ export function KitchenDisplay() {
       </div>
       <RejectionBanner error={error} />
       {state.data === undefined && !state.error ? (
-        <p className="py-20 text-center text-xl text-slate-400">Loading tickets…</p>
+        <p className="py-20 text-center text-xl text-muted-foreground">Loading tickets…</p>
       ) : state.data && state.data.length === 0 ? (
-        <p className="py-20 text-center text-2xl text-slate-500">No open tickets. 👍</p>
+        <p className="py-20 text-center text-2xl text-muted-foreground">No open tickets. 👍</p>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {(state.data ?? []).map((t) => (
             <div
               key={t.ticketId}
               className={cn(
-                "flex flex-col rounded-xl border-4 bg-slate-900",
-                t.ageMinutes > 20 ? "border-red-500" : t.ageMinutes > 10 ? "border-amber-400" : "border-slate-700",
+                "flex flex-col rounded-2xl border-4 bg-white/5",
+                t.ageMinutes > 20 ? "border-destructive" : t.ageMinutes > 10 ? "border-warning" : "border-white/15",
               )}
               data-testid="kds-ticket"
             >
-              <div className="flex items-start justify-between gap-2 border-b border-slate-700 p-3">
+              <div className="flex items-start justify-between gap-2 border-b border-white/15 p-3">
                 <div>
                   <p className="text-3xl font-black leading-none">{t.table ? `Table ${t.table}` : "Counter"}</p>
-                  <p className="mt-1 text-xl font-semibold text-emerald-300">{t.payer}</p>
-                  <p className="font-mono text-xs text-slate-400">{t.tabCode} · sent {istTime(new Date(t.sentAt))}</p>
+                  <p className="mt-1 text-xl font-semibold text-accent">{t.payer}</p>
+                  <p className="font-mono text-xs text-muted-foreground">{t.tabCode} · sent {istTime(new Date(t.sentAt))}</p>
                 </div>
-                <span className={cn("rounded-lg px-3 py-1 text-2xl font-black tabular", t.ageMinutes > 20 ? "bg-red-600" : t.ageMinutes > 10 ? "bg-amber-500 text-black" : "bg-slate-700")}>
+                <span className={cn("rounded-lg px-3 py-1 text-2xl font-black tabular", t.ageMinutes > 20 ? "bg-destructive text-destructive-foreground" : t.ageMinutes > 10 ? "bg-warning text-warning-foreground" : "bg-white/10")}>
                   {t.ageMinutes}′
                 </span>
               </div>
-              <div className="flex flex-col divide-y divide-slate-800">
+              <div className="flex flex-col divide-y divide-white/10">
                 {t.lines.map((l) => (
                   <div key={l.id} className="flex items-center justify-between gap-3 p-3">
                     <div className="min-w-0">
                       <p className="text-xl font-bold">
-                        <span className="text-emerald-300">{l.qty}×</span> {l.name}
+                        <span className="text-accent">{l.qty}×</span> {l.name}
                       </p>
-                      {l.note ? <p className="text-base font-semibold text-amber-300">⚠ {l.note}</p> : null}
+                      {l.note ? <p className="text-base font-semibold text-warning">⚠ {l.note}</p> : null}
                     </div>
                     {l.status === "NEW" ? (
                       <Button size="lg" variant="secondary" disabled={busy === l.id} onClick={() => advance(l.id, "PREPARING")}>Start</Button>
                     ) : l.status === "PREPARING" ? (
-                      <Button size="lg" className="bg-emerald-500 text-black hover:bg-emerald-400" disabled={busy === l.id} onClick={() => advance(l.id, "READY")}>Ready</Button>
+                      <Button size="lg" className="bg-success text-success-foreground hover:bg-success/90" disabled={busy === l.id} onClick={() => advance(l.id, "READY")}>Ready</Button>
                     ) : (
-                      <span className="rounded-md bg-blue-600 px-3 py-2 text-sm font-bold">READY</span>
+                      <span className="rounded-md bg-junior text-white px-3 py-2 text-sm font-bold">READY</span>
                     )}
                   </div>
                 ))}

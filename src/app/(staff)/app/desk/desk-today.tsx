@@ -14,6 +14,9 @@ type Today = {
   checkinsToday: number;
   pendingRefunds: number;
   expiringThisWeek: number;
+  /** null when this person can't open the list (no tile then). */
+  messagesToSend: number | null;
+  overdueFollowUps: number | null;
   drawer: { area: string; cashExpected: number } | null;
 };
 
@@ -23,14 +26,24 @@ export function DeskToday() {
     <DataState state={state}>
       {(t) => (
         <div className="mb-4 flex flex-col gap-3" data-testid="desk-today">
-          <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
             <Link href="/app/courts/bookings" className="rounded-md border p-2 hover:bg-muted">Bookings today<br /><span className="text-lg font-bold">{t.bookingsToday}</span></Link>
-            <div className="rounded-md border p-2">Checked in<br /><span className="text-lg font-bold">{t.checkinsToday}</span></div>
-            <div className={`rounded-md border p-2 ${t.dues.count ? "border-amber-300 bg-amber-50" : ""}`}>To collect<br /><Money paise={t.dues.total} className="text-lg font-bold" /> <span className="text-xs">({t.dues.count})</span></div>
-            <Link href="/app/refunds" className={`rounded-md border p-2 hover:bg-muted ${t.pendingRefunds ? "border-amber-300 bg-amber-50" : ""}`}>Refunds to pay<br /><span className="text-lg font-bold">{t.pendingRefunds}</span></Link>
+            <Link href="/app/desk/visits" className="rounded-md border p-2 hover:bg-muted">Checked in<br /><span className="text-lg font-bold">{t.checkinsToday}</span></Link>
+            <div className={`rounded-md border p-2 ${t.dues.count ? "border-warning/50 bg-warning/15" : ""}`}>To collect<br /><Money paise={t.dues.total} className="text-lg font-bold" /> <span className="text-xs">({t.dues.count})</span></div>
+            <Link href="/app/refunds" className={`rounded-md border p-2 hover:bg-muted ${t.pendingRefunds ? "border-warning/50 bg-warning/15" : ""}`}>Refunds to pay<br /><span className="text-lg font-bold">{t.pendingRefunds}</span></Link>
             <Link href="/app/desk/expiring" className="rounded-md border p-2 hover:bg-muted">Expiring in 7 days<br /><span className="text-lg font-bold">{t.expiringThisWeek}</span></Link>
-            <Link href="/app/drawer" className={`rounded-md border p-2 hover:bg-muted ${t.drawer ? "" : "border-red-300 bg-red-50"}`}>
-              My drawer<br />{t.drawer ? <Money paise={t.drawer.cashExpected} className="text-lg font-bold" /> : <span className="font-semibold text-red-700">Not open</span>}
+            {t.messagesToSend !== null ? (
+              <Link href="/app/messages?channel=WHATSAPP_MANUAL&status=QUEUED%2CLINK_OPENED" className={`rounded-md border p-2 hover:bg-muted ${t.messagesToSend ? "border-warning/50 bg-warning/15" : ""}`} data-testid="desk-messages-to-send">
+                Messages to send<br /><span className="text-lg font-bold">{t.messagesToSend}</span>
+              </Link>
+            ) : null}
+            {t.overdueFollowUps !== null ? (
+              <Link href="/app/crm" className={`rounded-md border p-2 hover:bg-muted ${t.overdueFollowUps ? "border-warning/50 bg-warning/15" : ""}`} data-testid="desk-overdue-follow-ups">
+                My overdue follow-ups<br /><span className="text-lg font-bold">{t.overdueFollowUps}</span>
+              </Link>
+            ) : null}
+            <Link href="/app/drawer" className={`rounded-md border p-2 hover:bg-muted ${t.drawer ? "" : "border-destructive/40 bg-destructive/10"}`}>
+              My drawer<br />{t.drawer ? <Money paise={t.drawer.cashExpected} className="text-lg font-bold" /> : <span className="font-semibold text-destructive">Not open</span>}
             </Link>
           </div>
           <Card>
@@ -48,7 +61,7 @@ export function DeskToday() {
                       </span>
                       <span className="flex items-center gap-2 text-xs">
                         <span>{b.checkedIn}/{b.total} in</span>
-                        {b.due > 0 ? <span className="font-semibold text-amber-700"><Money paise={b.due} /> due</span> : <span className="text-green-700">paid</span>}
+                        {b.due > 0 ? <span className="font-semibold text-warning-text"><Money paise={b.due} /> due</span> : <span className="text-success-text">paid</span>}
                       </span>
                     </div>
                   ))}

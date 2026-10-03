@@ -36,6 +36,7 @@ export function TablesMap() {
             <OpenTabDialog tables={d.tables} />
             <Button asChild variant="outline" size="lg"><Link href="/app/bar/ready">Ready to serve</Link></Button>
             <Button asChild variant="outline" size="lg"><Link href="/app/bar/kds">Kitchen display</Link></Button>
+            <Button asChild variant="outline" size="lg"><Link href="/app/bar/tabs">All tabs</Link></Button>
             <span className="ml-auto text-sm text-muted-foreground">
               {d.tables.filter((t) => t.status === "OCCUPIED").length}/{d.tables.length} tables occupied · {d.tables.reduce((a, t) => a + t.tabs.length, 0) + d.unassigned.length} open tabs
             </span>

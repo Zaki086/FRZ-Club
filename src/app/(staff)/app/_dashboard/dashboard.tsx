@@ -19,7 +19,7 @@ const SCOPE_LABEL: Record<string, string> = {
   FULL: "Owner view", OPS: "Operations view", FINANCE: "Finance view", BAR: "Bar view", SHOP: "Shop view", DESK: "Today's desk view",
 };
 
-export function DashboardView({ quickLinks, today }: { quickLinks: Array<{ href: string; label: string }>; today: string }) {
+export function DashboardView({ todo, today }: { todo: React.ReactNode; today: string }) {
   const [period, setPeriod] = useState<PeriodState>({ period: "TODAY", from: today, to: today });
   const [drill, setDrill] = useState<{ metric: string; title: string } | null>(null);
   const query = periodQuery(period);
@@ -37,15 +37,7 @@ export function DashboardView({ quickLinks, today }: { quickLinks: Array<{ href:
         </div>
         {state.data?.scope !== "DESK" ? <PeriodPicker value={period} onChange={setPeriod} /> : null}
       </div>
-      {quickLinks.length ? (
-        <div className="flex flex-wrap gap-2">
-          {quickLinks.map((l) => (
-            <Button key={l.href} asChild variant="outline" size="sm">
-              <Link href={l.href}>{l.label}</Link>
-            </Button>
-          ))}
-        </div>
-      ) : null}
+      {todo}
       {!periodReady(period) ? <p className="text-sm text-muted-foreground">Choose a valid from and to date.</p> : null}
       <DataState state={state}>
         {(d) => <DashboardBody d={d} open={open} query={query} />}
@@ -189,6 +181,7 @@ function OpsSection({ d, open }: { d: Dashboard; open: (metric: string, title: s
               {o.bookings ? <KpiCard label="Bookings" kind="count" kpi={o.bookings} onClick={() => open("bookings", "Bookings in the period")} /> : null}
               {o.cancellations ? <KpiCard label="Cancellations" kind="count" invert kpi={o.cancellations} onClick={() => open("cancellations", "Cancelled bookings")} /> : null}
               {o.noShows ? <KpiCard label="No-shows" kind="count" invert kpi={o.noShows} onClick={() => open("noShows", "No-shows")} /> : null}
+              {o.clubCancellationsPending !== undefined ? <StatCard label="Club cancellations pending choice" value={o.clubCancellationsPending} href="/app/courts/bookings?resolution=PENDING_CHOICE" /> : null}
               {o.utilization ? (
                 <StatCard label="Court utilization" value={`${o.utilization.pct}%`} hint={`${o.utilization.bookedHours} of ${o.utilization.openHours} open court-hours booked`} />
               ) : null}
@@ -228,7 +221,7 @@ function OpsSection({ d, open }: { d: Dashboard; open: (metric: string, title: s
           <Section title="Shop">
             <div className="flex flex-col gap-3">
               <div className="grid grid-cols-2 gap-3">
-                <StatCard label="Low-stock items" value={<span className={o.shop.lowStock ? "text-amber-700" : ""}>{o.shop.lowStock}</span>} href="/app/shop/stock?filter=low" />
+                <StatCard label="Low-stock items" value={<span className={o.shop.lowStock ? "text-warning-text" : ""}>{o.shop.lowStock}</span>} href="/app/shop/stock?filter=low" />
                 <StatCard label="Open online orders" value={o.shop.openOrders} href="/app/shop/orders" />
               </div>
               <div>
@@ -256,11 +249,10 @@ function OpsSection({ d, open }: { d: Dashboard; open: (metric: string, title: s
         ) : null}
         {o.bar ? (
           <Section title="Bar & cafeteria">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <KpiCard label="Bar revenue" kpi={o.bar.revenue} onClick={() => open("source:BAR", "Bar — collected")} />
+            <div className="grid grid-cols-2 gap-3">
+              {/* The bar's takings are the "Bar" money tile above (or "Bar collected" on the bar view), not repeated here. */}
               <StatCard label="Average tab" value={<Money paise={o.bar.averageTab} />} hint={`${o.bar.settledTabs} settled tabs`} />
               <StatCard label="Open tabs" value={o.bar.openTabs} href="/app/bar" />
-              <StatCard label="Day report" value="Open" href="/app/bar/day" />
             </div>
           </Section>
         ) : null}

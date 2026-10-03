@@ -1,17 +1,16 @@
 "use client";
+// v3 §3.2: business clients with the standard FilterBar — has outstanding, overdue, active — and a summary strip.
 import Link from "next/link";
 import { useState } from "react";
 import { Building2 } from "lucide-react";
-import { api, ApiError, useApi } from "@/components/api";
-import { DataState, RejectionBanner } from "@/components/states";
-import { Card } from "@/components/ui/card";
+import { api, ApiError } from "@/components/api";
+import { FilteredList, useListReload } from "@/components/list/filtered-list";
+import { RejectionBanner } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/input";
-import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { Money } from "@/components/money";
-
-type Client = { id: string; name: string; gstin: string | null; stateCode: string; address: string; contactName: string; contactEmail: string | null; contactPhone: string | null; paymentTermsDays: number; outstanding: number };
 
 function NewClient({ onDone }: { onDone: () => void }) {
   const [open, setOpen] = useState(false);
@@ -70,36 +69,51 @@ function NewClient({ onDone }: { onDone: () => void }) {
   );
 }
 
+type Row = {
+  id: string; name: string; gstin: string | null; state_code: string; address: string; contact_name: string; contact_email: string | null; contact_phone: string | null;
+  payment_terms_days: number; outstanding: number; invoices: number; overdue: number; active: boolean;
+};
+
+function NewClientButton() {
+  const reload = useListReload();
+  return <NewClient onDone={reload} />;
+}
+
 export function ClientsList() {
-  const state = useApi<Client[]>("/api/clients");
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex justify-end"><NewClient onDone={() => void state.reload()} /></div>
-      <Card>
-        <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: "No business clients yet", hint: "Add a corporate client to invoice court packages and events." }}>
-          {(rows) => (
-            <Table>
-              <THead><TR><TH>Client</TH><TH>GSTIN</TH><TH>State</TH><TH>Contact</TH><TH>Terms</TH><TH className="text-right">Outstanding</TH><TH /></TR></THead>
-              <TBody>
-                {rows.map((c) => (
-                  <TR key={c.id}>
-                    <TD><p className="font-medium">{c.name}</p><p className="max-w-xs truncate text-xs text-muted-foreground">{c.address}</p></TD>
-                    <TD className="font-mono text-xs">{c.gstin ?? "—"}</TD>
-                    <TD>{c.stateCode}{c.stateCode === "24" ? " (intra)" : " (inter)"}</TD>
-                    <TD className="text-sm">{c.contactName}<br /><span className="text-xs text-muted-foreground">{c.contactEmail ?? c.contactPhone ?? ""}</span></TD>
-                    <TD>{c.paymentTermsDays} days</TD>
-                    <TD className="text-right"><Money paise={c.outstanding} /></TD>
-                    <TD className="flex gap-2">
-                      <Link className="text-sm text-primary underline" href={`/app/finance/invoices?clientId=${c.id}`}>Invoices</Link>
-                      <Link className="text-sm text-primary underline" href={`/app/finance/invoices/new?clientId=${c.id}`}>New invoice</Link>
-                    </TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          )}
-        </DataState>
-      </Card>
-    </div>
+    <FilteredList<Row>
+      list="clients"
+      searchPlaceholder="Name, GSTIN or contact"
+      toolbar={<NewClientButton />}
+      columns={[
+        { key: "client", header: "Client", cell: (c) => <><p className="font-medium">{c.name}{c.active ? null : <Badge tone="neutral" className="ml-2">Archived</Badge>}</p><p className="max-w-xs truncate text-xs text-muted-foreground">{c.address}</p></> },
+        { key: "gstin", header: "GSTIN", cell: (c) => <span className="font-mono text-xs">{c.gstin ?? "—"}</span> },
+        { key: "state", header: "State", cell: (c) => <>{c.state_code}{c.state_code === "24" ? " (intra)" : " (inter)"}</> },
+        { key: "contact", header: "Contact", cell: (c) => <span className="text-sm">{c.contact_name}<br /><span className="text-xs text-muted-foreground">{c.contact_email ?? c.contact_phone ?? ""}</span></span> },
+        { key: "terms", header: "Terms", cell: (c) => <>{c.payment_terms_days} days</> },
+        {
+          key: "outstanding",
+          header: "Outstanding",
+          className: "text-right",
+          cell: (c) => (
+            <span className="flex flex-col items-end">
+              <Money paise={c.outstanding} />
+              {c.overdue > 0 ? <Badge tone="red">{c.overdue} overdue</Badge> : null}
+            </span>
+          ),
+        },
+        {
+          key: "actions",
+          header: "",
+          cell: (c) => (
+            <span className="flex gap-2">
+              <Link className="text-sm text-primary underline" href={`/app/finance/invoices?clientId=${c.id}`}>Invoices</Link>
+              <Link className="text-sm text-primary underline" href={`/app/finance/invoices/new?clientId=${c.id}`}>New invoice</Link>
+            </span>
+          ),
+        },
+      ]}
+      empty={{ title: "No business clients match these filters", hint: "Add a corporate client to invoice court packages and events." }}
+    />
   );
 }

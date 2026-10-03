@@ -148,3 +148,256 @@ Phase 1 notes:
   social and cart checkout) render only enabled methods and ask for each method's proof; a `DRAWER_NOT_OPEN`
   rejection opens the drawer inline. New staff pages: `/app/drawer`, `/app/refunds`, `/app/finance/cash`,
   Settings → Payments & services.
+
+## v3 — Operations upgrade, HTTPS and design port
+
+### Definition of done (§12) — the 19 items
+
+| # | Item | Phase / section | Main tests |
+|---|---|---|---|
+| 1 | Owner sees staff: directory | 3 · §4.1 | `v3-phase3-staff` directory; ui-flows 10 |
+| 2 | Employee page | 3 · §4.2 | `v3-phase3-staff` employee page; ui-flows 10 |
+| 3 | Attendance rules AT-1…AT-6 | 3 · §4.3 | `v3-phase3-staff` AT-1…AT-6; ui-flows 10 |
+| 4 | Drawer shows all money collected | 4 · §5.1 | `v3-phase4-refunds` §5.1 |
+| 5 | Refund workflow RF-1…RF-7 | 4 · §5.2 | `v3-phase4-refunds` RF-1…RF-7; ui-flows 11 |
+| 6 | Sessions don't expire too early | 3 · §6.1 | `v3-phase3-staff` sessions; ui-flows 9 |
+| 7 | Members list filters | 2 · §3/§6.2 | `v3-phase2-lists`; ui-flows 2b |
+| 8 | Walk-in credentials WK-1…WK-7 | 5 · §6.4 | `v3-phase5-notifications` WK; ui-flows 2, 12 |
+| 9 | Expiry and dues NT-1…NT-4 (on the §6.3 channels) | 5 · §6.3, §6.5 | `v3-phase5-notifications` NT, channels |
+| 10 | Booking filters | 2, 6 · §7.1 | `v3-phase2-lists`, CC-8 |
+| 11 | Club cancellation → reschedule or refund CC-1…CC-8 | 6 · §7.2 | `v3-phase6-closures-leads` CC; ui-flows 13 |
+| 12 | Leads board filters | 2 · §8.1 | `v3-phase2-lists` leads |
+| 13 | Lead assignment LA-1…LA-8 | 6 · §8.2 | `v3-phase6-closures-leads` LA |
+| 14 | Leave date validation LV-1…LV-3 | 3 · §9.1 | `v3-phase3-staff` LV |
+| 15–16 | Dynamic pricing PR-10…PR-15 | 7 · §9.2 | `v3-phase7-pricing-products` PR; ui-flows 14 |
+| 17–19 | Product management (photos, prices/promotions, archive) | 7 · §9.3 | `v3-phase7-pricing-products` §9.3; ui-flows 15 |
+| — | HTTPS | 1 · §1 | Path B, tunnel running (below); phone-camera check not done |
+| — | Design port | 1, 8 · §2, §10 | contrast script; `docs/screenshots/before` and `after` |
+| — | FilterBar on every list | 2, 8 · §3 | `v3-phase2-lists`, `v3-phase8-*` |
+
+(The spec numbers §4 as "item 1"; items 2 and 3 are taken to be its employee page and attendance rules.)
+
+### Phase 1 — HTTPS (§1) and design foundation (§2) ✅
+
+**HTTPS findings (§1.1).** `ss -ltnp` shows ports 80 and 443 held by `caddy` (root, pid 3821258,
+`/usr/local/bin/caddy run --config /etc/caddy/Caddyfile`, not a systemd unit). The Caddyfile serves other projects:
+`38-49-215-124.nip.io` / `38.49.215.124.sslip.io` (CampusVerse, static), `http://38.49.215.124` and
+`tourism.38.49.215.124.*` (→ 127.0.0.1:3100), `idr.38.49.215.124.*` (→ 127.0.0.1:8080). No nginx/Apache. → **Path B.**
+
+**For the Caddy owner** — the block to add (then `caddy reload --config /etc/caddy/Caddyfile`); once it is live,
+set `APP_URL=https://champions.38.49.215.124.sslip.io`, stop `champions-tunnel`, and bind the app to 127.0.0.1
+(`-H 127.0.0.1` in `ecosystem.config.cjs`):
+
+```
+champions.38.49.215.124.nip.io, champions.38.49.215.124.sslip.io {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3200 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-For {remote_host}
+	}
+	log {
+		output file /var/log/caddy-champions.log {
+			roll_size 10MiB
+			roll_keep 3
+		}
+	}
+}
+```
+
+**Meanwhile:** PM2 `champions-tunnel` (Cloudflare quick tunnel, `scripts/tunnel.mjs`, binary in `.bin/`, not in git).
+**Its URL changes whenever it restarts** (also after someone's `pm2 restart all`); the wrapper writes the current one to
+`.tunnel-url` and updates `APP_URL` automatically; when Cloudflare drops the tunnel ("Tunnel not found") it exits so PM2
+starts a new one (D-81). Evidence (2026-10-03): `https://gentleman-promise-lottery-muslim.trycloudflare.com`, later
+`https://tennessee-travelers-threaded-researcher.trycloudflare.com/login` → 200
+→ `HTTP/2 200`; login sets `cc_session=…; Secure; HttpOnly; SameSite=lax`; `curl -I http://…/login` → `308` to HTTPS;
+`strict-transport-security: max-age=31536000`; `/manifest.webmanifest`, `/sw.js`, `/icon` served over HTTPS (PWA
+installable). **Not verified here:** scanning a member card with an Android phone's camera and installing the PWA
+on a phone — both need a person with a phone on the HTTPS address above.
+
+| Item | Files | Tests / evidence |
+|---|---|---|
+| HTTPS tunnel, APP_URL sync | `scripts/tunnel.mjs`, `ecosystem.config.cjs` | curl evidence above |
+| HTTP→HTTPS redirect, HSTS | `src/proxy.ts`, `next.config.ts` | curl evidence above; local `:3200` unaffected (e2e 32/32) |
+| Design inventory | `DESIGN_PORT.md` | — |
+| Tokens, fonts, contrast | `src/app/globals.css`, `src/app/layout.tsx`, `scripts/contrast.mjs` | `node scripts/contrast.mjs`: 22 pairs AA |
+| Primitives restyled (props unchanged) | `src/components/ui/{button,badge,card,input,table,tabs,dialog}.tsx`, `page.tsx`, `states.tsx`, `logo.tsx`, staff header + sidebar, public nav + footer, portal header + tabs (fixed "CC" removed) | 169/169 tests · e2e 32/32 · integrity 10/10 · audit:dummy clean |
+| Screenshots before | `docs/screenshots/before/` (50 images, 360 px + 1280 px) | `tests/audit/screenshots.spec.ts` |
+
+### Phase 2 — FilterBar, summary strip and server filtering (§3), on Members, Bookings, Leads ✅
+
+| Item | Files | Tests |
+|---|---|---|
+| List engine (search, IST date presets, facets with counts, sort, 25/50/100 paging, summary, defaults, CSV) | `src/server/services/filters/core.ts`, `index.ts`; `GET /api/lists/[name]`, `/api/lists/[name]/csv` | `v3-phase2-lists.test.ts` |
+| Saved views (max 10 per list) | `src/server/services/saved-views.ts`, `/api/views`, migration `0006_v3_lists` (+ indexes for filtered columns) | `v3-phase2-lists.test.ts` › saved views |
+| FilterBar, summary strip, chips, Clear all, N results, export, saved views, pager, day stepper | `src/components/list/{use-list.ts,filtered-list.tsx}`, `src/components/rel-time.tsx` | ui-flows step 2b |
+| Members (tier, status incl. Expiring ≤7d, dues, open tab, Junior, guardian, joined, last visit, sport) + next action + row expand | `filters/members.ts`, `app/members/members-list.tsx` | members tests; ui-flows 2b |
+| Bookings (date default Today, court, sport, status, channel, payment, member/guest, created by) + next action + detail in place | `filters/bookings.ts`, `app/courts/bookings/bookings-list.tsx` | bookings test; ui-flows step 4 |
+| Leads (status, source, assignee incl. Me/Unassigned, overdue, created, interest); board and list share filters; front desk defaults to own open leads | `filters/leads.ts`, `app/crm/leads-board.tsx` | leads test; ui-flows 2b |
+
+Checks: typecheck ✓ · lint ✓ · 175/175 tests · e2e 34/34 · integrity 10/10 · audit:dummy clean.
+
+### Phase 3 — Sessions (§6.1), leave validation (§9.1), staff directory and attendance (§4) ✅
+
+| Item | Files | Tests |
+|---|---|---|
+| Cause of early logouts found (D-62) | `DECISIONS.md` D-62 | — |
+| Sliding sessions: member 30 d idle / 90 d absolute, staff 7 / 30, kiosk 90; extend when < half left, ≤ 1 write per 10 min; cookie = absolute end; revocation still immediate | `src/server/auth/sessions.ts`, migration `0007_v3_sessions_attendance` (sessions.kind, last_seen_at, absolute_expires_at), `POST /api/auth/kiosk`, kiosk page link | `v3-phase3-staff.test.ts` › sliding sessions (3) |
+| 401 → `/login?returnTo=` (+ "Your session ended" when a session existed); API 401 → log-in-again dialog in place, data refetched, typed input kept | `src/proxy.ts` (x-cc-path), `src/server/auth/current.ts`, `src/components/{api.ts,session-guard.tsx}`, staff and portal layouts, login form | ui-flows step 9 |
+| LV-1 `LEAVE_DATE_IN_PAST`, LV-2 `LEAVE_OVERLAP`, LV-3 approval re-validation + daily expiry → EXPIRED + notification | `src/server/services/staff.ts`, `src/server/jobs/index.ts`, `src/server/errors.ts`, leave form min dates, "Expired" filter | `v3-phase3-staff.test.ts` › LV-1, LV-2, LV-3 (×2) |
+| Staff directory `/app/staff/employees` (now / clocked in since, today's shift, week worked vs scheduled, late this month, missing clock-outs, leave left, open drawer + expected cash); Owner, Manager, Accountant read-only | `filters/staff.ts` (employees), `app/staff/employees/*`, nav | directory test; ui-flows step 10 |
+| Employee page: profile, attendance log, roster ±30 days, drawer sessions with variances, leave history and balance, payslips (Owner/Accountant), activity (Owner/Manager) | `staff.ts` `employeeDetail`, `GET /api/staff/employees/[id]`, `app/staff/employees/[id]/*` | employee page test; ui-flows step 10 |
+| AT-1…AT-4 numbers in one SQL definition; settings `late_grace_minutes` 10, `overtime_threshold_minutes` 30, `missing_clockout_hours` 4 (Settings → Policies); missing clock-out job + Manager notification, never auto-closed | `src/server/services/attendance.ts`, `settings.ts`, `jobs/index.ts`, policies tab | AT-1/2/3, AT-4 tests |
+| AT-5 correction with mandatory reason, originals kept, audited, "Edited" marker | `attendance.ts` `correctAttendance`, `POST /api/staff/attendance/[id]/correct`, `app/staff/_components/attendance-bits.tsx` | AT-5 test; ui-flows step 10 |
+| AT-6 attendance log + per-employee summary for a period, FilterBar + CSV | `filters/staff.ts` (attendance, attendance-summary), `app/staff/attendance/*` | AT-6 test; ui-flows step 10 |
+| Breaks | Not recorded anywhere in the system → no break column (absent, not zero); see D-65 | — |
+
+Checks: typecheck ✓ · lint ✓ · 188/188 tests · e2e 38/38 · integrity 10/10 (11/11 once migration 0008 of phase 4 was applied) · audit:dummy clean (0 violations, every role crawled at desktop and 360 px).
+
+### Phase 4 — Cash drawers (§5.1) and the refund workflow (§5.2) ✅
+
+| Item | Files | Tests |
+|---|---|---|
+| Drawer shows collections by method (count, amount, refunds) + total collected; expected cash = float + cash − cash refunds; only cash is counted | `src/server/services/drawers.ts` (`drawerTotals`, `drawerPayments`), `src/components/drawer-breakdown.tsx`, `app/drawer/my-drawer.tsx` | §5.1 test; ui-flows step 8, 11 |
+| Drill-down per method lists the payments; they sum exactly to the total | `GET /api/drawer/[id]/payments?method=` | §5.1 test (every method) |
+| Online payments started at a counter count in that session | `payments.ts` `startOnlinePaymentTx` | §5.1 test |
+| All sessions for Owner/Manager/Accountant with FilterBar (staff, date, variance ≠ 0) | `filters/drawers.ts`, `app/finance/drawers/*`, nav | §5.1 test |
+| `refund_requests` table, states and codes (RF-…) | migration `0008_v3_refunds`, `src/server/services/{refund-records.ts,refunds.ts}` | `v3-phase4-refunds.test.ts` |
+| RF-1 who may ask (staff on bills they can see; members for eligible items) | `refunds.ts` `requestRefund`, `requestRefundAsMember`, `POST /api/refunds/request`, request form on bills (`components/refund-request.tsx`, payment panel, booking detail) | RF-1 tests (staff, members) |
+| RF-2 amount ≤ refundable (open requests count), partial, reason category + note | `refund-records.ts` `createRequestedTx` | RF-2 test |
+| RF-3 policy refunds created approved; Manager ≤ `refund_manager_limit` (₹5,000), Owner above; never your own | `payments.ts` `refundTx` (policy request), `refunds.ts` `approveRefund`/`rejectRefund`, setting in Policies | RF-3 test |
+| RF-4 back the way it came: gateway on approval (if online on), else desk with UTR / card reference / cash from an open drawer; FAILED → pay at the desk | `approveRefund`, `payOutRefund`, `retryAtDesk` | RF-4 tests (×2) |
+| RF-5 completion = REFUND payment + negative ledger in one transaction + member notified | `refund-records.ts` `settleRequestIfPaid` | RF-5 test |
+| RF-6 refunds queue with FilterBar + summary (Awaiting approval · Ready to pay out · Completed today ₹ · Failed); old refund endpoint and membership-cancel refund now open requests | `filters/refunds.ts`, `app/refunds/*`, `POST /api/payments/refund` | RF-6 test; ui-flows step 11 |
+| RF-7 every transition audited; integrity stays green | audit actions `refund_request.*`; integrity check #11 | RF-7 test; `expectIntegrity` in every refund test |
+| Member portal button for eligible refunds | API ready (`POST /api/refunds/request` as a member); the portal button comes with the club-cancellation choice in phase 6 | RF-1 (members) test |
+
+Checks: typecheck ✓ · lint ✓ · 198/198 tests · e2e 40/40 · integrity 11/11 · audit:dummy clean.
+
+### Phase 5 — Notification channels (§6.3), walk-in credentials (§6.4), expiry and dues (§6.5) ✅
+
+| Item | Files | Tests |
+|---|---|---|
+| `notifyMember` fan-out with `notification_deliveries` (QUEUED/SENT/DELIVERED/FAILED/LINK_OPENED/SKIPPED), exactly once per key + channel | migration `0009_v3_notifications`, `src/server/services/channels.ts` | NT-4 channel tests |
+| Web Push (`web-push`, `push_subscriptions`, dead subscriptions removed on 404/410), service worker push handler | `channels.ts`, `public/sw.js`, `POST /api/push/subscribe`, `/unsubscribe`, capability `push` | Web Push test |
+| Email through the delivery log | `channels.ts` `flushDeliveries` | channel test; completion §3 tests |
+| WhatsApp Cloud API (templates only, capability `whatsapp.api`, signed delivery webhook, test message) | `channels.ts`, `GET/POST /api/webhooks/whatsapp`, `POST /api/messages/test-whatsapp`, Settings → Payments & channels | WhatsApp API test |
+| Manual WhatsApp "Messages to send" (open wa.me = LINK_OPENED, mark sent) | `POST /api/messages/manual/[id]/open|sent`, `app/messages/*`, nav | manual WhatsApp test |
+| Member preferences (in-app always on) — portal and staff account | `GET/PUT /api/me/notifications`, `components/notification-settings.tsx` | preferences test; ui-flows step 12 |
+| Notification log with facets type, channel, status, date, member, triggered by | `filters/notifications.ts` (notifications), `app/messages` | manual WhatsApp test |
+| WK-1 no password fields; WK-2 login on first paid membership, username = phone (member code accepted), link valid `credential_link_hours` 72; Juniors under 13 with a guardian get none | `membership.ts` (`issueFirstCredentialsTx`), `auth/sessions.ts`, new-member form | WK-1/2/3 test, Junior test; ui-flows steps 2, 12 |
+| WK-3 no plaintext password generated, stored or sent (hash only) | `createPasswordSetToken` | WK-1/2/3 test |
+| WK-4 `MEMBERSHIP_WELCOME` on every available channel | `issueFirstCredentialsTx` | WK-4/5 test |
+| WK-5 credentials panel: delivery status per channel, QR, Send on WhatsApp, 80 mm welcome slip | `components/credentials-panel.tsx`, `/print/welcome/[id]`, `GET /api/members/[id]/credentials` | WK-4/5 test; ui-flows step 2 |
+| WK-6 reissue (old link invalid); WK-7 renewals send a confirmation only | `reissueCredentials`, `onMembershipBillPaid` | WK-6/7 test |
+| NT-1 expiry reminders via the channels, once per membership + type + channel | `runMembershipJob` | NT-1 test; MB-11 |
+| NT-2 dues reminders after `dues_reminder_days` (3), weekly, max 3, stop when paid | `src/server/services/dues.ts`, `dues_reminders`, daily job | NT-2 test |
+| NT-3 Renewals & dues screen with FilterBar, how/when told, one-click WhatsApp, Renew now | `filters/notifications.ts` (renewals), `app/desk/expiring/*` | NT-1 test (list) |
+| NT-4 exactly once per channel, preferences respected, unavailable = SKIPPED | `channels.ts` | NT-4 tests |
+| Not verifiable on this server | Push and WhatsApp API need keys/accounts that aren't configured here (VAPID keys, a Meta WhatsApp Business account); both are absent in the UI until set, and work in tests with the transports mocked | — |
+
+Checks: typecheck ✓ · lint ✓ · 209/209 tests · e2e 40/41 on the first run (step 11 in the card/UPI project: the refund confirmation vanished when the refundable amount reached ₹0 — a real UI bug, fixed in phase 6 and re-run there) · integrity 11/11 · audit:dummy clean. Push is configured on this server (VAPID keys generated into `.env`); a phone opt-in has not been tried.
+
+### Phase 6 — Club cancellations (§7.2) and lead assignment (§8.2) ✅
+
+| Item | Files | Tests |
+|---|---|---|
+| CC-1 "Close courts" (courts, date, range, reason, note) with a preview of every booking and social player and what they paid | `src/server/services/closures.ts` (`previewClosure`), `POST /api/closures/preview`, `app/courts/_components/close-courts-dialog.tsx` | CC-1/2/3/7 test; ui-flows step 13 |
+| CC-2 one transaction: CANCELLED_BY_CLUB, reservations released, MAINTENANCE blocks (gaps only), daily counts freed, PENDING_CHOICE records; social sessions cancelled and refunded | `closeCourts`, migration `0010_v3_closures_leads`, `social.ts` `cancelSocialSessionTx`, every cancelled-status check updated | CC-1/2/3/7 and CC-2 tests |
+| CC-3 booker and member players notified on every channel with reason, slot and the two choices; guests with a phone get a manual WhatsApp task | `notifyCancelled`, `channels.ts` `queueGuestWhatsApp`, migration `0011_v3_guest_messages` | CC-1/2/3/7 test |
+| CC-4 reschedule once within `reschedule_window_days` (14), all BK rules, no extra charge (priced then waived), no partial refund | `rescheduleClubCancellation`, `booking.ts` `createBookingTx({ reschedule })`, `components/club-cancellation-choice.tsx` (portal + desk) | CC-4 test; ui-flows step 13 |
+| CC-5 refund = approved CLUB_CANCELLATION request, full amount, ignoring the 2-hour rule; portal refund resolves the same record | `refundClubCancellation`, `refunds.ts` | CC-5 test |
+| CC-6 auto-refund after `resolution_deadline_days` (7) | daily job `autoRefundClubCancellations` | CC-6 test |
+| CC-7 unpaid: cancelled, nothing owed, notified | `closeCourts` | CC-1/2/3/7 test |
+| CC-8 dashboard tile + bookings facet "Club cancellation: pending choice" | `reports.ts`, dashboard, `filters/bookings.ts` | CC-1/2/3/7 test |
+| A regular booking can't be made inside the closed range | MAINTENANCE reservations + exclusion constraint | CC-1/2/3/7 test |
+| LA-1…LA-4 deterministic assignment with tie-breaks | `crm.ts` `chooseAssignee` | LA-2, LA-1, LA-3/4 tests |
+| LA-5 assigned at creation, assignee told in-app + push | `createLeadTx`, `notifyMember(channels: ["PUSH"])` | LA-5/6 test |
+| LA-6 `assignment_reason` stored and shown | migration 0010, lead detail | LA tests |
+| LA-7 Manager/Owner reassign with a reason, both told; deactivation reassigns | `assignLead`, `reassignLeadsOf`, `users.ts` | LA-7 test |
+| LA-8 escalate once after `lead_escalation_hours` (48) | `flagOverdueLeads` | LA-8 test |
+
+### Phase 7 — Dynamic pricing (§9.2) and product management (§9.3) ✅
+
+| Item | Files | Tests |
+|---|---|---|
+| Price book page (base court/social fees per tier and sport, bar & café prices, bands, special dates, promotions, approvals, guardrails, simulator) | `app/pricing/*`, `src/server/services/price-book.ts`, `/api/pricing/*`, nav | PR tests; ui-flows step 14 |
+| Base prices as dated versions; court/social fees moved from plan rows (migration) | migration `0012_v3_pricing_products`, `pricing.ts` `bookPrice`, `plans.ts`, `settings.ts` (walk-in), `shop.ts`/`bar.ts` price edits | existing pricing tests; PR-12 test |
+| Time bands (+ PRICE_BAND_OVERLAP), special dates, promotions | `price-book.ts` `createRule`/`changeRule`/`endRule`/`decideRule`, `pricing.ts` `adjustBase`/`bestDiscount` | PR-10 tests |
+| PR-10 precedence + explanation | `quoteCourt`, `quoteSocial`, `quoteShop`, `quoteBar` | PR-10 tests; booking at peak test |
+| PR-11 guardrails (`max_manager_discount_pct` 30, `max_staff_discount_pct` 15; Owner-only) | `needsApproval`, `decideRule`, `setGuardrails` | PR-11 test; staff promotion test |
+| PR-12 effective datetime, versioned, audited, old bills unchanged | `setBasePrice` (+ job `applyDuePriceChanges`), `changeRule` | PR-12 test |
+| PR-13 simulator | `simulatePrice`, `POST /api/pricing/simulate` | PR-13 test; ui-flows step 14 |
+| PR-14 public prices | `publicPriceNotes`, `GET /api/pricing/public`, `components/price-notes.tsx` on Plans, Availability, Shop, portal Book | PR-10 band test; ui-flows step 14 |
+| PR-15 seed creates no rules | (no rule in any seed) | "no rules" test; ui-flows step 14 |
+| Products list with FilterBar | `filters/products.ts`, `app/shop/products/*` | archive test, promotion test |
+| Photos: up to 5, sharp 1200/400, cover, reorder, remove | `src/server/services/products.ts`, `/api/shop/products/[id]/photos*`, product editor | photos test; ui-flows step 15 |
+| Details, variants, restring flag, price via price book (managers) | `updateProductDetails`, `addVariant`, `updateVariant` | details test |
+| Archive/restore, PRODUCT_HAS_RESERVATIONS | `archiveProduct`, `restoreProduct` | archive test |
+| Inline product promotion (staff limit) | `addProductPromotion` | promotion test |
+| Public shop updates immediately (gallery) | `listCatalogue` images, `/shop/[id]` | ui-flows step 15 |
+
+### Phase 8 — FilterBar on every list (§3.2) and the page-by-page design port (§10)
+
+Every list in §3.2 now runs on the one list engine (`src/server/services/filters/*`, registry `filters/index.ts`) and
+the one `FilteredList` component: search, date presets, filters with counts, sort, 25/50/100, chips, CSV (roles that
+may export), saved views, a clickable summary strip and the next action in the row.
+
+| List (§3.2) | List def | Page | Tests |
+|---|---|---|---|
+| Members, bookings, leads | `members.ts`, `bookings.ts` (+ club-cancellation facet), `leads.ts` | phase 2 | `v3-phase2-lists` |
+| Social sessions & participants | `social.ts`, `social-participants.ts` | `/app/courts/social` (board view), `/app/courts/social/players` | `v3-phase8-bar-courts-desk` |
+| Visits / check-ins | `visits.ts` | `/app/desk/visits` | `v3-phase8-bar-courts-desk` |
+| Notifications / message log | `notifications.ts`, `messages.ts` | `/app/messages`, `/app/settings/messages` | `v3-phase5-notifications`, `v3-phase8-admin` |
+| Online orders | `orders.ts` | `/app/shop/orders` (board / list) | `v3-phase8-shop` |
+| Counter sales | `sales.ts` | `/app/shop/sales` | `v3-phase8-shop` |
+| Products & stock | `products.ts`, `stock.ts` (`?filter=low` kept) | `/app/shop/products`, `/app/shop/stock` | `v3-phase7-…`, `v3-phase8-shop` |
+| Stock movements | `movements.ts` | `/app/shop/movements` | `v3-phase8-shop` |
+| Purchase orders | `purchase-orders.ts` | `/app/shop/purchasing` | `v3-phase8-shop` |
+| Stock takes | `stock-takes.ts` | `/app/shop/stock-take` | `v3-phase8-shop` |
+| Tabs | `tabs.ts` | `/app/bar/tabs` | `v3-phase8-bar-courts-desk` |
+| Bar days | `bar-days.ts` | `/app/bar/day` | `v3-phase8-bar-courts-desk` |
+| Invoices | `invoices.ts` (`?status=`, `?clientId=` kept) | `/app/finance/invoices` | `v3-phase8-finance` |
+| Business clients | `clients.ts` | `/app/finance/clients` | `v3-phase8-finance` |
+| Expenses | `expenses.ts` (`?status=OVERDUE/UNPAID` kept) | `/app/finance/expenses` | `v3-phase8-finance` |
+| Payroll runs | `payroll.ts` | `/app/finance/payroll` | `v3-phase8-finance` |
+| Ledger (Tally export follows the filters) | `ledger.ts` | `/app/finance/ledger` | `v3-phase8-finance` |
+| Refunds | `refunds.ts` | `/app/refunds` | `v3-phase4-refunds` |
+| Attendance | `staff.ts` (attendance, summary, employees) | `/app/staff/attendance`, `/app/staff/employees` | `v3-phase3-staff` |
+| Roster / shifts | `shifts.ts` | `/app/staff/roster` (List tab) | `v3-phase8-admin` |
+| Leave requests | `leave.ts` | `/app/staff/leave` | `v3-phase8-admin` |
+| Drawer sessions | `drawers.ts` | `/app/finance/drawers` | `v3-phase4-refunds` |
+| Audit log | `audit.ts` | `/app/settings/audit` | `v3-phase8-admin` |
+| Users | `users.ts` | Settings → Users & roles | `v3-phase8-admin` |
+| Data requests | `data-requests.ts` | `/app/settings/privacy` | `v3-phase8-admin` |
+| Renewals & dues, notifications | `notifications.ts` | `/app/desk/expiring`, `/app/messages` | `v3-phase5-notifications` |
+| Payslips | no separate list (each payslip page is reached from its run) | — | — |
+
+Design port (§10): the primitives were ported in phase 1, so every page already uses the reference look; this phase
+replaced the remaining hard-coded Tailwind colours on the public site, portal, kiosk, kitchen display, member card,
+courts grid and shared components with the theme tokens, and every new screen was built in the new design. The
+contrast check (`node scripts/contrast.mjs`) now also covers the tinted chips and state colours (all AA).
+
+Parts of the reference design not used: its dark theme (none exists in the reference), its multi-club switcher and
+event/tournament pages (no such features here), its sample data, photos, demo PIN and copy (never copied — `DESIGN_PORT.md`).
+
+
+### Owner follow-up requests (2026-10-03)
+
+| Request | Done | Where | Tests |
+|---|---|---|---|
+| "Session expires after a few minutes; the same password stops working" | Cause: the test gate reset the live database. Gates now use their own DB (`champions_e2e`) and app (:3201); the live club is never reset. Session windows already exceed 2–3 days (members 30 d, staff 7 d, sliding) | gate script, D-81 | `v3-session-credentials` (3) |
+| HTTPS for the camera and push | Trusted HTTPS via the Cloudflare tunnel, now self-recovering. A fixed address needs the Caddy owner's block (above) or the owner's go-ahead for a Let's Encrypt certificate on our own port | `scripts/tunnel.mjs` | curl evidence above |
+| Email + push + phone for cancellations, maintenance, dues, expiry, refunds | Every member event goes through `notifyMember` (in-app, email, push, WhatsApp API or the manual WhatsApp queue); maintenance over bookings takes the club-cancellation path; desk cancellations, reschedules, auto-refunds, refund requested/approved/rejected, invoice due/overdue added; guests get email too; the worker retries with backoff and logs failures | `channels.ts`, `closures.ts`, `booking.ts`, `social.ts`, `dues.ts`, `refunds.ts`, `worker.ts`, D-80 | `v3-notify-coverage` (10) |
+| Shop staff: photos, details, prices, dynamic discounts | New capability `shop.pricing` (Owner, Manager, Shop staff) for shop product prices (through the price book) and product/category/shop-wide discounts (time bands, days, dates; staff limit, larger ones go to a manager); the public shop shows the offer price | `price-book.ts`, `products.ts`, `shop.ts`, product editor, D-79 | `v3-shop-staff-pricing` (7) |
+| Each panel shows only that role's work, no repetition | One menu per role (`ROLE_NAV`), each screen once; each role's home leads with "Waiting for you" to-dos from the database; repeated dashboard tiles and quick links removed | `_nav.ts`, `todo.ts`, `/api/me/todo` | `v3-role-panels` (19) |
+
+Not provided by any service here: WhatsApp Cloud API keys and an SMS gateway (phone messages wait in "Messages to send"
+for staff to send from the club phone until the owner adds them).
+
+### Phase 9 — full regression (2026-10-03) ✅
+On a snapshot, against the separate test club (`champions_e2e`, :3201): lint ✓ · `tsc` ✓ · unit/integration **293/293** ·
+production build ✓ · Playwright **48/48** (demo, ui-cash incl. steps 13–15, ui-card-upi, fresh-install) ·
+`verify:integrity` **11/11** · `audit:dummy` clean (0 source violations, 0 HTTP errors, 0 console errors, 0 dummy text,
+0 too-wide pages) · `docs/screenshots/after` **50** images (360 + 1280 px). Not verified here: scanning a card with a
+phone camera and receiving push on a phone (needs a person with a phone on the HTTPS address).

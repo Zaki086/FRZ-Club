@@ -6,7 +6,7 @@ import type { Kpi } from "./types";
 
 /** Change % always comes from the server; null means there was nothing in the previous period. */
 export function ChangeBadge({ change, invert }: { change: number | null; invert?: boolean }) {
-  if (change === null) return <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[11px] font-semibold text-blue-800">new</span>;
+  if (change === null) return <span className="rounded bg-junior/10 px-1.5 py-0.5 text-[11px] font-semibold text-junior">new</span>;
   if (change === 0) {
     return (
       <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground">
@@ -17,7 +17,7 @@ export function ChangeBadge({ change, invert }: { change: number | null; invert?
   const good = invert ? change < 0 : change > 0;
   const Icon = change > 0 ? ArrowUpRight : ArrowDownRight;
   return (
-    <span className={cn("inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-semibold", good ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800")}>
+    <span className={cn("inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-semibold", good ? "bg-success/10 text-success-text" : "bg-destructive/10 text-destructive")}>
       <Icon className="h-3 w-3" />
       {change > 0 ? "+" : ""}
       {change}%

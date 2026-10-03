@@ -12,10 +12,10 @@ import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
 import { MemberStatusBadge, type MemberStatus } from "@/components/member-status";
 import { MemberCard } from "@/components/member-card";
+import { CredentialsPanel } from "@/components/credentials-panel";
 import { Money } from "@/components/money";
 import { StatusBadge, TierBadge } from "@/components/badges";
 import { PaymentPanel } from "@/components/payment-panel";
-import { emptyRefund, RefundFields, refundBody, type RefundDraft } from "@/components/tender-fields";
 import { ConfirmButton } from "@/components/confirm";
 import { fmtDate, fmtDateTime, fmtRange } from "@/lib/time";
 import { formatINR, parseRupees } from "@/lib/money";
@@ -137,26 +137,20 @@ function PlanChangeDialog({ memberId, mode, onDone }: { memberId: string; mode: 
 
 function CancelMembership({ membershipId, onDone }: { membershipId: string; onDone: () => void }) {
   const [refund, setRefund] = useState("");
-  const [how, setHow] = useState<RefundDraft>(emptyRefund);
   return (
     <ConfirmButton
       trigger="Cancel membership"
       title="Cancel membership"
-      description="Owner/Manager only (MB-13). This is audited. Enter a refund only if one is agreed."
+      description="Owner/Manager only (MB-13). This is audited. A refund, if agreed, becomes a refund request: someone else approves it and the desk pays it out the way the member paid."
       requireReason
       confirmLabel="Cancel membership"
       onConfirm={async (reason) => {
         const amount = refund ? parseRupees(refund) : null;
-        await api("/api/memberships/cancel", { body: { membershipId, reason, refundAmount: amount ?? undefined, ...(amount ? refundBody(how) : {}) } });
+        await api("/api/memberships/cancel", { body: { membershipId, reason, refundAmount: amount ?? undefined } });
         onDone();
       }}
     >
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Refund (₹, optional)"><Input value={refund} onChange={(e) => setRefund(e.target.value)} inputMode="decimal" /></Field>
-        <Field label="Refund method">
-          <RefundFields value={how} onChange={setHow} />
-        </Field>
-      </div>
+      <Field label="Refund to request (₹, optional)"><Input value={refund} onChange={(e) => setRefund(e.target.value)} inputMode="decimal" /></Field>
     </ConfirmButton>
   );
 }
@@ -227,18 +221,18 @@ export function Member360({ memberId, perms }: { memberId: string; perms: Perms 
             </div>
 
             {p.openTab ? (
-              <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              <div className="flex items-center gap-2 rounded-md border border-warning/50 bg-warning/15 p-3 text-sm text-warning-foreground">
                 <Beer className="h-4 w-4" /> Open bar tab {p.openTab.code}: {formatINR(p.openTab.due)} to settle before leaving (E-13).
               </div>
             ) : null}
             {p.totals.dueTotal > 0 ? (
-              <div className="flex items-center gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900">
+              <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
                 <AlertTriangle className="h-4 w-4" /> Outstanding dues: {formatINR(p.totals.dueTotal)}
               </div>
             ) : null}
 
             <div className="grid gap-4 lg:grid-cols-3">
-              <div className="lg:col-span-1"><MemberCard memberId={p.member.id} /></div>
+              <div className="flex flex-col gap-3 lg:col-span-1"><MemberCard memberId={p.member.id} /><CredentialsPanel memberId={p.member.id} /></div>
               <Card className="lg:col-span-2">
                 <CardHeader><CardTitle>Today</CardTitle></CardHeader>
                 <CardContent>
@@ -252,13 +246,13 @@ export function Member360({ memberId, perms }: { memberId: string; perms: Perms 
                             <p className="font-medium">{b.court} · {fmtRange(b.startAt, b.endAt)} <span className="font-mono text-xs text-muted-foreground">{b.code}</span></p>
                             <StatusBadge status={b.status} />
                           </div>
-                          {b.checkedInAt ? <span className="text-sm text-green-700">Checked in {fmtDateTime(b.checkedInAt).split(", ")[1]}</span> : perms.checkin && b.status === "CONFIRMED" ? <CheckInButton kind="booking" id={b.playerId} onDone={reload} /> : null}
+                          {b.checkedInAt ? <span className="text-sm text-success-text">Checked in {fmtDateTime(b.checkedInAt).split(", ")[1]}</span> : perms.checkin && b.status === "CONFIRMED" ? <CheckInButton kind="booking" id={b.playerId} onDone={reload} /> : null}
                         </div>
                       ))}
                       {p.today.social.map((s) => (
                         <div key={s.id} className="flex items-center justify-between gap-2 py-2">
                           <p className="font-medium">Social: {s.title} · {fmtRange(s.startAt, s.endAt)}</p>
-                          {s.checkedInAt ? <span className="text-sm text-green-700">Checked in</span> : perms.checkin ? <CheckInButton kind="social" id={s.id} onDone={reload} /> : null}
+                          {s.checkedInAt ? <span className="text-sm text-success-text">Checked in</span> : perms.checkin ? <CheckInButton kind="social" id={s.id} onDone={reload} /> : null}
                         </div>
                       ))}
                     </div>

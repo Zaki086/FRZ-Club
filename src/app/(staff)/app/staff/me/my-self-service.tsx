@@ -32,7 +32,7 @@ function ClockCard({ me, reload }: { me: StaffMe; reload: () => void }) {
     <Card>
       <CardHeader><CardTitle className="flex items-center gap-2"><Clock className="h-4 w-4" /> Attendance</CardTitle></CardHeader>
       <CardContent className="flex flex-col gap-3">
-        {done ? <p className="rounded-md border border-green-300 bg-green-50 p-2 text-sm">{done}</p> : null}
+        {done ? <p className="rounded-md border border-success/40 bg-success/10 p-2 text-sm">{done}</p> : null}
         {me.clockedIn ? (
           <>
             <p className="text-sm">Clocked in since <strong>{fmtDateTime(me.clockedIn.since)}</strong> · opening float <Money paise={me.clockedIn.openingFloat} /></p>
@@ -74,7 +74,7 @@ function ClockCard({ me, reload }: { me: StaffMe; reload: () => void }) {
   );
 }
 
-function LeaveForm({ reload }: { reload: () => void }) {
+function LeaveForm({ reload, today }: { reload: () => void; today: string }) {
   const [type, setType] = useState("CASUAL");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
@@ -107,12 +107,12 @@ function LeaveForm({ reload }: { reload: () => void }) {
             <option value="CASUAL">Casual</option><option value="SICK">Sick</option><option value="UNPAID">Unpaid</option>
           </Select>
         </Field>
-        <Field label="From"><Input type="date" value={start} onChange={(e) => setStart(e.target.value)} required /></Field>
-        <Field label="To"><Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
+        <Field label="From"><Input type="date" min={today} value={start} onChange={(e) => setStart(e.target.value)} required /></Field>
+        <Field label="To"><Input type="date" min={start || today} value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
       </div>
       <Field label="Reason"><Textarea value={reason} onChange={(e) => setReason(e.target.value)} required minLength={3} /></Field>
       <RejectionBanner error={error} />
-      {ok ? <p className="text-sm text-green-700">Request sent to the manager.</p> : null}
+      {ok ? <p className="text-sm text-success-text">Request sent to the manager.</p> : null}
       <Button type="submit" disabled={busy}>Request leave</Button>
     </form>
   );
@@ -148,7 +148,7 @@ export function MySelfService() {
                 <div className="rounded-md border p-2">Casual: <strong>{me.allowance.CASUAL.total - me.allowance.CASUAL.used}</strong> of {me.allowance.CASUAL.total} left</div>
                 <div className="rounded-md border p-2">Sick: <strong>{me.allowance.SICK.total - me.allowance.SICK.used}</strong> of {me.allowance.SICK.total} left</div>
               </div>
-              <LeaveForm reload={reload} />
+              <LeaveForm reload={reload} today={me.today} />
             </CardContent>
           </Card>
           <Card>

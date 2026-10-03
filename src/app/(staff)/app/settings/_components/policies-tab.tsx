@@ -30,10 +30,24 @@ const GROUPS: Array<{ title: string; fields: Scalar[] }> = [
     ],
   },
   {
+    title: "Staff attendance",
+    fields: [
+      { key: "late_grace_minutes", label: "Late after scheduled start + (min)", kind: "int", hint: "AT-2" },
+      { key: "overtime_threshold_minutes", label: "Overtime counted beyond (min)", kind: "int", hint: "AT-3" },
+      { key: "missing_clockout_hours", label: "Flag missing clock-out after shift end (hours)", kind: "int", hint: "AT-4" },
+    ],
+  },
+  {
     title: "Finance, CRM & reports",
     fields: [
       { key: "invoice_terms_days", label: "Default invoice payment terms (days)", kind: "int" },
+      { key: "refund_manager_limit", label: "Manager approves refunds up to (₹)", kind: "rupees", hint: "RF-3" },
+      { key: "credential_link_hours", label: "New member's login link works for (hours)", kind: "int", hint: "WK-2" },
+      { key: "dues_reminder_days", label: "First dues reminder after (days unpaid)", kind: "int", hint: "NT-2" },
       { key: "lead_follow_up_hours", label: "Lead follow-up within (hours)", kind: "int", hint: "CR-3" },
+      { key: "lead_escalation_hours", label: "Escalate an overdue follow-up after (hours)", kind: "int", hint: "LA-8" },
+      { key: "reschedule_window_days", label: "Club-cancelled sessions can move up to (days ahead)", kind: "int", hint: "CC-4" },
+      { key: "resolution_deadline_days", label: "Refund automatically if no choice within (days)", kind: "int", hint: "CC-6" },
       { key: "quote_valid_days", label: "Quotes valid for (days)", kind: "int", hint: "CR-6" },
       { key: "share_link_days", label: "Share links expire after (days)", kind: "int", hint: "DB-5" },
       { key: "expiring_soon_days", label: "“Expiring soon” window (days)", kind: "int", hint: "MB-11" },
