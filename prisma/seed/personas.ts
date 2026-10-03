@@ -3,7 +3,8 @@ import { addDays, addMonths } from "@/lib/time";
 import { prisma } from "@/server/db";
 import type { UserActor } from "@/server/rbac/actor";
 import { createMember } from "@/server/services/membership";
-import { MEMBER_PASSWORD } from "./base";
+import { seedPasswords } from "./base";
+import { tender } from "./proof";
 
 export const PERSONAS = [
   { key: "rahul", name: "Rahul Mehta", phone: "9811000001", email: "rahul@example.com", dobYearsAgo: 34, plan: "GOLD" as const, months: 12 as const },
@@ -21,9 +22,11 @@ export async function seedPersonas(desk: UserActor, today: string): Promise<Reco
     }
     const dob = addDays(addMonths(today, -12 * p.dobYearsAgo), 40); // Aarav is 15 throughout the window
     const r = await createMember(desk, {
-      name: p.name, phone: p.phone, email: p.email, dob, password: MEMBER_PASSWORD,
+      name: p.name, phone: p.phone, email: p.email, dob, password: seedPasswords().member,
       emergencyContactName: "Family", emergencyContactPhone: "9822000000",
-      plan: { code: p.plan, months: p.months, payment: { method: "UPI", reference: `UTR-${p.key.toUpperCase()}` } },
+      // Aarav (15) has Rahul as his guardian: Rahul sees him under "Family" in the portal.
+      ...(p.key === "aarav" ? { guardianName: "Rahul Mehta", guardianPhone: "9811000001" } : {}),
+      plan: { code: p.plan, months: p.months, payment: tender("UPI") },
     });
     ids[p.key] = r.memberId;
   }

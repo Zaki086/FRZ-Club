@@ -7,7 +7,7 @@ import { cancelOrder, checkout, counterSale, expireHolds, listCatalogue, returnI
 import { recordCounterPayment, verifyOnlinePayment } from "@/server/services/payments";
 import { testGateway } from "@/server/services/gateway";
 import { payExpense } from "@/server/services/expenses";
-import { makeWorld, type World } from "../helpers/world";
+import { makeWorld, type World, utr, CARD_PROOF } from "../helpers/world";
 import { makeMember } from "../helpers/members";
 import { makeProduct } from "../helpers/shop";
 import { expectIntegrity } from "../helpers/integrity";
@@ -46,7 +46,7 @@ describe("Phase 4 — counter sale (SH-4, R-19, R-24)", () => {
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED", message: expect.stringMatching(/sale total is ₹5,400/) });
     const r = await counterSale(w.actors.SHOP_STAFF, {
       memberId: neha.memberId, items: [{ variantId: shoes.variantId, qty: 1 }],
-      payments: [{ method: "CASH", amount: 200000, tendered: 200000 }, { method: "UPI", amount: 340000, reference: "UTR9" }],
+      payments: [{ method: "CASH", amount: 200000, tendered: 200000 }, { method: "UPI", reference: utr(), amount: 340000 }],
     });
     expect(r.total).toBe(540000);
     expect(r.discountTotal).toBe(60000);
@@ -64,7 +64,7 @@ describe("Phase 4 — counter sale (SH-4, R-19, R-24)", () => {
   it("SH-12/E-10: selling a restring creates a ticket; READY notifies the member", async () => {
     const m = await makeMember(w, { name: "String Snap", plan: "GOLD" });
     const restring = await makeProduct(w, { name: "Racket restring", category: "SERVICES", price: 80000, isRestring: true });
-    const r = await counterSale(w.actors.SHOP_STAFF, { memberId: m.memberId, items: [{ variantId: restring.variantId, qty: 1 }], payments: [{ method: "UPI" }], restring: { racket: "Wilson Blade 98", notes: "24 kg" } });
+    const r = await counterSale(w.actors.SHOP_STAFF, { memberId: m.memberId, items: [{ variantId: restring.variantId, qty: 1 }], payments: [{ method: "UPI", reference: utr() }], restring: { racket: "Wilson Blade 98", notes: "24 kg" } });
     expect(r.total).toBe(68000); // Gold 15% off services too (PR-5)
     expect(r.tickets).toHaveLength(1);
     const t = await prisma.serviceTicket.findFirstOrThrow();
@@ -83,7 +83,7 @@ describe("Phase 4 — one shelf for counter and online (SH-5…SH-7, R-20…R-23
     expect(order.status).toBe("CONFIRMED");
     expect(order.total).toBe(1275000);
     expect((await stock(racket.variantId)).reserved).toBe(1);
-    await expect(counterSale(w.actors.SHOP_STAFF, { items: [{ variantId: racket.variantId, qty: 1 }], payments: [{ method: "CARD" }] })).rejects.toMatchObject({
+    await expect(counterSale(w.actors.SHOP_STAFF, { items: [{ variantId: racket.variantId, qty: 1 }], payments: [{ method: "CARD", ...CARD_PROOF }] })).rejects.toMatchObject({
       code: "INSUFFICIENT_STOCK",
       message: "Pro Staff 97 is out of stock (1 reserved for online orders).",
     });
@@ -155,11 +155,11 @@ describe("Phase 4 — one shelf for counter and online (SH-5…SH-7, R-20…R-23
     const o = await checkout(m.actor, { items: [{ variantId: p.variantId, qty: 1 }], fulfilment: "PICKUP", paymentOption: "PAY_AT_PICKUP" });
     await setOrderStatus(w.actors.SHOP_STAFF, o.orderId, "READY_FOR_PICKUP");
     await expect(setOrderStatus(w.actors.SHOP_STAFF, o.orderId, "COLLECTED")).rejects.toMatchObject({ code: "PAYMENT_DUE" });
-    await recordCounterPayment(w.actors.SHOP_STAFF, { billId: o.billId, method: "CARD", amount: o.total });
+    await recordCounterPayment(w.actors.SHOP_STAFF, { billId: o.billId, method: "CARD", ...CARD_PROOF, amount: o.total });
     await setOrderStatus(w.actors.SHOP_STAFF, o.orderId, "COLLECTED");
-    const d = await checkout(m.actor, { items: [{ variantId: p.variantId, qty: 1 }], fulfilment: "DELIVERY", address: "12 Lake View Road, Ahmedabad 380015", paymentOption: "ONLINE" });
+    const d = await checkout(m.actor, { items: [{ variantId: p.variantId, qty: 1 }], fulfilment: "DELIVERY", address: "12 Lake View Road, Ahmedabad 380015", pincode: "380015", paymentOption: "ONLINE" });
     expect(d.total).toBe(170000 + 9900);
-    await expect(checkout(m.actor, { items: [{ variantId: p.variantId, qty: 1 }], fulfilment: "DELIVERY", paymentOption: "PAY_AT_PICKUP", address: "12 Lake View Road, Ahmedabad" })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    await expect(checkout(m.actor, { items: [{ variantId: p.variantId, qty: 1 }], fulfilment: "DELIVERY", paymentOption: "PAY_AT_PICKUP", address: "12 Lake View Road, Ahmedabad", pincode: "380015" })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     await payOnline(d.payment!.paymentId);
     await setOrderStatus(w.actors.SHOP_STAFF, d.orderId, "PACKED");
     await setOrderStatus(w.actors.SHOP_STAFF, d.orderId, "OUT_FOR_DELIVERY");
@@ -188,8 +188,8 @@ describe("Phase 4 — receipts, adjustments, returns, payables (SH-3, SH-9, SH-1
     const r = await receiveStock(w.actors.SHOP_STAFF, { variantId: p.variantId, qty: 24, unitCost: 30000, supplier: "Sports Wholesale Ltd", createPayable: true, inputGst: 77143 });
     const e = await prisma.expenseBill.findUniqueOrThrow({ where: { id: r.expenseId! } });
     expect([e.category, e.amount, e.status]).toEqual(["STOCK_PURCHASE", 720000, "UNPAID"]);
-    await expect(payExpense(w.actors.SHOP_STAFF, e.id, { method: "UPI" })).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await payExpense(w.actors.ACCOUNTANT, e.id, { method: "UPI" });
+    await expect(payExpense(w.actors.SHOP_STAFF, e.id, { method: "UPI", reference: utr() })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await payExpense(w.actors.ACCOUNTANT, e.id, { method: "UPI", reference: utr() });
     const l = await prisma.ledgerEntry.findFirstOrThrow({ where: { refId: e.id } });
     expect([l.source, l.direction, l.amount]).toEqual(["EXPENSE", "OUT", -720000]);
   });
@@ -205,9 +205,9 @@ describe("Phase 4 — receipts, adjustments, returns, payables (SH-3, SH-9, SH-1
 
   it("SH-10: a return within 7 days restocks and refunds the returned quantity", async () => {
     const p = await makeProduct(w, { name: "Shirt", category: "APPAREL", price: 120000, onHand: 5 });
-    const r = await counterSale(w.actors.SHOP_STAFF, { items: [{ variantId: p.variantId, qty: 2 }], payments: [{ method: "CARD" }] });
+    const r = await counterSale(w.actors.SHOP_STAFF, { items: [{ variantId: p.variantId, qty: 2 }], payments: [{ method: "CARD", ...CARD_PROOF }] });
     const line = await prisma.billLine.findFirstOrThrow({ where: { billId: r.billId } });
-    const ret = await returnItems(w.actors.SHOP_STAFF, { billId: r.billId, lines: [{ billLineId: line.id, qty: 1 }], reason: "wrong size" });
+    const ret = await returnItems(w.actors.SHOP_STAFF, { billId: r.billId, lines: [{ billLineId: line.id, qty: 1 }], reference: "RFND03", reason: "wrong size" });
     expect(ret.refunded).toBe(120000);
     expect((await stock(p.variantId)).onHand).toBe(4);
     const bill = await prisma.bill.findUniqueOrThrow({ where: { id: r.billId } });

@@ -1,8 +1,8 @@
 // `npm run demo:race` — fires 20 simultaneous booking requests for the same court and time at the RUNNING app
 // over HTTP (§10.2, demo step 5). Exactly one must succeed; the other 19 must be rejected with SLOT_TAKEN.
 const BASE = process.env.APP_URL ?? "http://localhost:3200";
-const LOGIN = process.env.RACE_LOGIN ?? "desk@championsclub.test";
-const PASSWORD = process.env.RACE_PASSWORD ?? "champions123";
+const LOGIN = process.env.RACE_LOGIN ?? "desk@championsclub.example";
+const PASSWORD = process.env.RACE_PASSWORD ?? process.env.SEED_STAFF_PASSWORD ?? "";
 const N = Number(process.env.RACE_N ?? 20);
 
 type Json = { data?: unknown; error?: { code: string; message: string } };

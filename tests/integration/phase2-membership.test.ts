@@ -15,7 +15,7 @@ import {
 import { lookupByCard, member360, searchMembers, memberCard } from "@/server/services/members";
 import { recordCounterPayment } from "@/server/services/payments";
 import { quoteCourt } from "@/server/services/pricing";
-import { makeWorld, T0, type World } from "../helpers/world";
+import { makeWorld, T0, type World, CARD_PROOF, utr } from "../helpers/world";
 import { makeMember } from "../helpers/members";
 import { expectIntegrity } from "../helpers/integrity";
 
@@ -52,7 +52,7 @@ describe("Phase 2 — sign-up (MB-1, R-01) and activation (MB-3, IN-4)", () => {
     const r = await makeMember(w, { name: "Unpaid Uma", plan: "GOLD", pay: false });
     expect(r.membershipStatus).toBe("PENDING_PAYMENT");
     expect((await courtFee(r.memberId, "2026-10-12")).tier).toBe("WALK_IN");
-    await recordCounterPayment(w.actors.FRONT_DESK, { billId: r.billId!, method: "CARD", amount: 350000 });
+    await recordCounterPayment(w.actors.FRONT_DESK, { billId: r.billId!, method: "CARD", ...CARD_PROOF, amount: 350000 });
     const ms = await prisma.membership.findUniqueOrThrow({ where: { id: r.membershipId! } });
     expect(ms.status).toBe("ACTIVE");
     expect((await courtFee(r.memberId, "2026-10-12")).netAmount).toBe(0);
@@ -113,7 +113,7 @@ describe("Phase 2 — renew, upgrade, downgrade (MB-6, MB-7, MB-8, MB-9)", () =>
     const up = await upgradeMembership(w.actors.FRONT_DESK, { memberId: r.memberId, planCode: "GOLD", months: 1 });
     expect(up.credit).toBe(129032);
     expect(up.total).toBe(350000 - 129032);
-    await recordCounterPayment(w.actors.FRONT_DESK, { billId: up.billId, method: "CARD", amount: up.total });
+    await recordCounterPayment(w.actors.FRONT_DESK, { billId: up.billId, method: "CARD", ...CARD_PROOF, amount: up.total });
     const old = await prisma.membership.findUniqueOrThrow({ where: { id: r.membershipId! } });
     expect(old.status).toBe("CHANGED");
     expect(old.endDate.toISOString().slice(0, 10)).toBe("2026-10-11");
@@ -193,7 +193,7 @@ describe("Phase 2 — cancellation, card, Member 360 (MB-13, MB-14, R-05, R-06)"
   it("MB-13: only OWNER/MANAGER cancel, with a reason; optional refund is a negative ledger entry", async () => {
     const r = await makeMember(w, { name: "Cancel Cara", plan: "SILVER" });
     await expect(cancelMembership(w.actors.FRONT_DESK, { membershipId: r.membershipId!, reason: "moving" })).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await cancelMembership(w.actors.MANAGER, { membershipId: r.membershipId!, reason: "moving city", refundAmount: 100000, refundMethod: "UPI" });
+    await cancelMembership(w.actors.MANAGER, { membershipId: r.membershipId!, reason: "moving city", refundAmount: 100000, refundMethod: "UPI", refundReference: utr() });
     const ms = await prisma.membership.findUniqueOrThrow({ where: { id: r.membershipId! } });
     expect(ms.status).toBe("CANCELLED");
     const sum = await prisma.ledgerEntry.aggregate({ where: { billId: r.billId! }, _sum: { amount: true } });

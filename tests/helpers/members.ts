@@ -1,4 +1,6 @@
-import type { World } from "./world";
+import { clock } from "@/lib/clock";
+import { ageOn, istDate } from "@/lib/time";
+import { utr, type World } from "./world";
 import { createMember } from "@/server/services/membership";
 import type { UserActor } from "@/server/rbac/actor";
 import { prisma } from "@/server/db";
@@ -16,8 +18,10 @@ export async function makeMember(
     dob: opts.dob ?? "1990-05-05",
     email: opts.email,
     password: opts.password ?? "member123",
+    // Members under 18 need a guardian (completion pass P1).
+    ...(opts.dob && ageOn(opts.dob, istDate(clock.now())) < 18 ? { guardianName: `Parent of ${opts.name}`, guardianPhone: String(8_800_000_000 + phoneSeq - 7_000_000_000) } : {}),
     plan: opts.plan
-      ? { code: opts.plan, months: opts.months ?? 1, payment: opts.pay === false ? undefined : { method: "UPI", reference: "UTR" + phoneSeq } }
+      ? { code: opts.plan, months: opts.months ?? 1, payment: opts.pay === false ? undefined : { method: "UPI", reference: utr() } }
       : undefined,
   });
   const member = await prisma.member.findUniqueOrThrow({ where: { id: r.memberId } });

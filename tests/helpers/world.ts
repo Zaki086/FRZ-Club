@@ -5,7 +5,10 @@ import { clock } from "@/lib/clock";
 import { istToUtc } from "@/lib/time";
 import { prisma } from "@/server/db";
 import { SYSTEM, type UserActor } from "@/server/rbac/actor";
-import { ensureDefaultSettings } from "@/server/services/settings";
+import { DEFAULT_SETTINGS, ensureDefaultSettings, updateSetting, verifySetting } from "@/server/services/settings";
+import { setCapabilityOverridesForTests } from "@/server/services/capabilities";
+import { openDrawer } from "@/server/services/drawers";
+import { gstinCheckChar } from "@/lib/codes";
 import { ensurePlans } from "@/server/services/plans";
 import { createCourt } from "@/server/services/courts";
 import { createStaff } from "@/server/services/users";
@@ -26,12 +29,30 @@ const STAFF: Array<{ role: Exclude<Role, "MEMBER">; name: string; phone: string 
   { role: "SHOP_STAFF", name: "Sameer Shop", phone: "9000000004" },
   { role: "BAR_STAFF", name: "Bina Bar", phone: "9000000005" },
   { role: "ACCOUNTANT", name: "Arjun Accounts", phone: "9000000006" },
+  { role: "KITCHEN", name: "Kavi Kitchen", phone: "9000000007" },
 ];
 
 /** Default test "now": Monday 12 Oct 2026, 10:00 IST. */
 export const T0 = istToUtc("2026-10-12", "10:00");
 
-export async function makeWorld(now: Date = T0): Promise<World> {
+/** A syntactically valid GSTIN (correct check digit) for a Gujarat-registered test club. */
+/** The test club's identity (a fresh install has none until the setup wizard). */
+export const TEST_CLUB = { ...DEFAULT_SETTINGS.club, name: "The Champions Club", address: "1 Test Road, Ahmedabad", state: "Gujarat", state_code: "24" };
+export const TEST_GSTIN = "24AAACC1206D1Z" + gstinCheckChar("24AAACC1206D1Z");
+export const TEST_UPI_VPA = "championsclub@okaxis";
+
+let utrSeq = 100000000000;
+/** A fresh 12-character UPI reference (UTR). */
+export const utr = () => String(++utrSeq);
+/** Card payments need the terminal approval code and the last 4 digits (§2.4). */
+export const CARD_PROOF = { cardLast4: "4242", approvalCode: "AUTH01" } as const;
+
+export type WorldOptions = {
+  /** Fresh-install defaults: cash only, no GST, no email (capability tests use this). */
+  minimal?: boolean;
+};
+
+export async function makeWorld(now: Date = T0, opts: WorldOptions = {}): Promise<World> {
   clock.set(now);
   await resetDb();
   await ensureDefaultSettings();
@@ -52,6 +73,18 @@ export async function makeWorld(now: Date = T0): Promise<World> {
       password: TEST_PASSWORD, monthlySalary: 3_000_000, joinDate: "2025-01-01",
     });
     actors[s.role] = { kind: "USER", userId: user.id, role: s.role, name: s.name, memberId: null, employeeId: employee.id };
+  }
+  await updateSetting(SYSTEM, "club", TEST_CLUB);
+  if (!opts.minimal) {
+    // Most rule tests run in a fully configured club: card + UPI, GST registered, email verified, drawers open.
+    await updateSetting(SYSTEM, "club", { ...TEST_CLUB, gstin: TEST_GSTIN, legal_name: "Champions Test Club LLP" });
+    await verifySetting(SYSTEM, "tax_rates");
+    await updateSetting(SYSTEM, "payment_methods", { card_enabled: true, upi_vpa: TEST_UPI_VPA, upi_confirmed: true });
+    await updateSetting(SYSTEM, "delivery", { enabled: true, pincodes: ["380015", "380009", "380054"], fee: 9900 });
+    setCapabilityOverridesForTests({ email: true });
+    for (const a of Object.values(actors)) await openDrawer(a, { area: "DESK", openingFloat: 0 });
+  } else {
+    setCapabilityOverridesForTests({});
   }
   const plans = Object.fromEntries(
     (await prisma.plan.findMany()).map((p) => [p.code, { id: p.id }]),

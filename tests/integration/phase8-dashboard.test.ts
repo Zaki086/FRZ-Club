@@ -6,7 +6,7 @@ import { counterSale } from "@/server/services/shop";
 import { addLines, openTab, settleTab } from "@/server/services/bar";
 import { createExpense, payExpense } from "@/server/services/expenses";
 import { createShareLink, dashboard, drillDown, exportCsv, getSharedReport, INCOME_SOURCES, METHODS, resolvePeriod, revokeShareLink } from "@/server/services/reports";
-import { makeWorld, type World } from "../helpers/world";
+import { makeWorld, type World, utr, CARD_PROOF } from "../helpers/world";
 import { makeMember } from "../helpers/members";
 import { book, guest } from "../helpers/booking";
 import { makeProduct } from "../helpers/shop";
@@ -18,8 +18,8 @@ let w: World;
 async function activity(day: string) {
   clock.set(istToUtc(day, "09:00"));
   const m = await makeMember(w, { name: `Member ${day}`, plan: "SILVER" });
-  await book(w, { date: day, time: "18:00", players: [{ memberId: m.memberId }, guest(`Friend ${day}`)], payment: { kind: "COUNTER", method: "UPI", reference: "U" } });
-  const cancelled = await book(w, { court: "Court 2", date: day, time: "19:00", players: [guest(`Canceller ${day}`)], payment: { kind: "COUNTER", method: "CARD" } });
+  await book(w, { date: day, time: "18:00", players: [{ memberId: m.memberId }, guest(`Friend ${day}`)], payment: { kind: "COUNTER", method: "UPI", reference: utr() } });
+  const cancelled = await book(w, { court: "Court 2", date: day, time: "19:00", players: [guest(`Canceller ${day}`)], payment: { kind: "COUNTER", method: "CARD", ...CARD_PROOF } });
   await cancelBooking(w.actors.FRONT_DESK, cancelled.bookingId);
   const p = await makeProduct(w, { name: `Balls ${day}`, category: "BALLS", price: 50000, onHand: 5 });
   await counterSale(w.actors.SHOP_STAFF, { memberId: m.memberId, items: [{ variantId: p.variantId, qty: 2 }], payments: [{ method: "CASH" }] });
@@ -28,7 +28,7 @@ async function activity(day: string) {
   await addLines(w.actors.BAR_STAFF, t.tabId, { items: [{ menuItemId: bar.sandwich.id, qty: 1 }] });
   await settleTab(w.actors.BAR_STAFF, t.tabId, { payments: [{ method: "CASH", amount: 28800 }] });
   const e = await createExpense(w.actors.ACCOUNTANT, { vendor: "Water Co", category: "UTILITIES", amount: 120000 });
-  await payExpense(w.actors.ACCOUNTANT, e.id, { method: "UPI" });
+  await payExpense(w.actors.ACCOUNTANT, e.id, { method: "UPI", reference: utr() });
 }
 
 let barFixture: Awaited<ReturnType<typeof makeBar>> | null = null;

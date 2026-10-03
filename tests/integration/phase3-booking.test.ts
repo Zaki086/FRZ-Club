@@ -7,7 +7,7 @@ import { createSocialSession, joinSession, leaveSession } from "@/server/service
 import { checkIn } from "@/server/services/checkin";
 import { recordCounterPayment } from "@/server/services/payments";
 import { upgradeMembership } from "@/server/services/membership";
-import { makeWorld, type World } from "../helpers/world";
+import { makeWorld, type World, utr, CARD_PROOF } from "../helpers/world";
 import { makeMember } from "../helpers/members";
 import { book, guest } from "../helpers/booking";
 import { expectIntegrity } from "../helpers/integrity";
@@ -155,9 +155,9 @@ describe("Phase 3 — pricing on bookings (PR-4, MB-9, BK-6)", () => {
 describe("Phase 3 — cancellation (BK-7) and RBAC", () => {
   it("BK-7: cancelled ≥ 2h before → full refund + negative ledger entry; the court and the daily count are freed", async () => {
     const m = await makeMember(w, { name: "Cancel Cal", plan: "SILVER" });
-    const r = await book(w, { time: "18:00", players: [{ memberId: m.memberId }, guest("Pal")], payment: { kind: "COUNTER", method: "UPI", reference: "UTR1" } });
+    const r = await book(w, { time: "18:00", players: [{ memberId: m.memberId }, guest("Pal")], payment: { kind: "COUNTER", method: "UPI", reference: utr() } });
     expect(r.billStatus).toBe("PAID");
-    const c = await cancelBooking(w.actors.FRONT_DESK, r.bookingId);
+    const c = await cancelBooking(w.actors.FRONT_DESK, r.bookingId, { refundReference: utr() });
     expect(c.refunded).toBe(55000);
     const ledger = await prisma.ledgerEntry.findMany({ where: { billId: r.billId }, orderBy: { createdAt: "asc" } });
     expect(ledger.map((l) => [l.source, l.amount])).toEqual([["COURTS", 55000], ["COURTS", -55000]]);
@@ -191,9 +191,9 @@ describe("Phase 3 — cancellation (BK-7) and RBAC", () => {
 
   it("BK-8: changing players re-checks the rules and re-prices; removing a payer in time refunds the difference", async () => {
     const m = await makeMember(w, { name: "Change Chen", plan: "SILVER" });
-    const r = await book(w, { time: "18:00", players: [{ memberId: m.memberId }, guest("Drop Me")], payment: { kind: "COUNTER", method: "CARD" } });
+    const r = await book(w, { time: "18:00", players: [{ memberId: m.memberId }, guest("Drop Me")], payment: { kind: "COUNTER", method: "CARD", ...CARD_PROOF } });
     expect(r.total).toBe(55000);
-    const res = await changePlayers(w.actors.FRONT_DESK, r.bookingId, { players: [{ memberId: m.memberId }] });
+    const res = await changePlayers(w.actors.FRONT_DESK, r.bookingId, { players: [{ memberId: m.memberId }], refundReference: "RFND02" });
     expect(res.refunded).toBe(40000);
     const bill = await prisma.bill.findUniqueOrThrow({ where: { id: r.billId } });
     expect(bill.total).toBe(15000);

@@ -63,7 +63,7 @@ describe("§10.2 concurrency", () => {
   it("CR-8: 5 simultaneous trial requests from one new phone on different courts → exactly 1 trial, 4 TRIAL_ALREADY_USED", async () => {
     const courts = ["Court 1", "Court 2", "Court 3", "Court 4", "Net A"];
     const results = await Promise.allSettled(
-      courts.map((c) => createTrialBooking({ name: "Eager Ekta", phone: "9876500999", courtId: w.courts[c].id, date: "2026-10-12", startTime: "16:00" })),
+      courts.map((c) => createTrialBooking({ consent: true, name: "Eager Ekta", phone: "9876500999", courtId: w.courts[c].id, date: "2026-10-12", startTime: "16:00" })),
     );
     const t = tally(results);
     expect(t.ok).toBe(1);

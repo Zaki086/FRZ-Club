@@ -66,7 +66,7 @@ describe("Phase 7 — payroll (ST-6, ST-7, R-42)", () => {
     await expect(payPayrollRun(w.actors.ACCOUNTANT, run.id)).rejects.toMatchObject({ code: "ORDER_STATE_INVALID" });
     await expect(approvePayrollRun(w.actors.ACCOUNTANT, run.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
     await approvePayrollRun(w.actors.OWNER, run.id);
-    const paid = await payPayrollRun(w.actors.ACCOUNTANT, run.id, { method: "ONLINE" });
+    const paid = await payPayrollRun(w.actors.ACCOUNTANT, run.id, { method: "BANK_TRANSFER" });
     expect(paid.status).toBe("PAID");
     const sum = await prisma.ledgerEntry.aggregate({ where: { source: "PAYROLL" }, _sum: { amount: true } });
     expect(sum._sum.amount).toBe(-paid.totals.net);
@@ -87,7 +87,7 @@ describe("Phase 7 — business clients, invoices, GST (IN-1…IN-6, R-40, R-41, 
 
   it("IN-2/IN-3: an inter-state B2B invoice uses IGST; intra-state uses CGST + SGST; FY numbering; partial → PARTIALLY_PAID → PAID", async () => {
     const mum = await createClient(w.actors.ACCOUNTANT, { name: "Mumbai Corp", gstin: "27AAPFU0939F1ZV", address: "Nariman Point, Mumbai", contactName: "Ravi", contactEmail: "ravi@mumbaicorp.test" });
-    const ahm = await createClient(w.actors.ACCOUNTANT, { name: "Ahmedabad Textiles", gstin: "24AABCT1332L1ZB", address: "Ashram Road, Ahmedabad", contactName: "Nisha" });
+    const ahm = await createClient(w.actors.ACCOUNTANT, { name: "Ahmedabad Textiles", gstin: "24AABCT1332L1ZK", address: "Ashram Road, Ahmedabad", contactName: "Nisha" });
     const d1 = await createDraft(w.actors.ACCOUNTANT, { businessClientId: mum.id, lines: [{ kind: "MANUAL", description: "Corporate court package — October", qty: 1, unitPrice: 5_900_000 }] });
     const d2 = await createDraft(w.actors.ACCOUNTANT, { businessClientId: ahm.id, lines: [{ kind: "MANUAL", description: "Team event", qty: 2, unitPrice: 1_180_000 }] });
     const i1 = await issueInvoice(w.actors.ACCOUNTANT, d1.invoice.id);
@@ -97,15 +97,15 @@ describe("Phase 7 — business clients, invoices, GST (IN-1…IN-6, R-40, R-41, 
     expect(v1.totals).toMatchObject({ igst: 900_000, cgst: 0, sgst: 0, taxable: 5_000_000 });
     const v2 = await getInvoice(w.actors.ACCOUNTANT, d2.invoice.id);
     expect(v2.totals).toMatchObject({ igst: 0, cgst: 180_000, sgst: 180_000 });
-    await recordCounterPayment(w.actors.ACCOUNTANT, { billId: d1.bill.id, method: "UPI", amount: 2_000_000, reference: "NEFT1" });
+    await recordCounterPayment(w.actors.ACCOUNTANT, { billId: d1.bill.id, method: "BANK_TRANSFER", amount: 2_000_000, reference: "NEFT9998" });
     expect((await prisma.invoice.findUniqueOrThrow({ where: { id: d1.invoice.id } })).status).toBe("PARTIALLY_PAID");
-    await recordCounterPayment(w.actors.ACCOUNTANT, { billId: d1.bill.id, method: "UPI", amount: 3_900_000, reference: "NEFT2" });
+    await recordCounterPayment(w.actors.ACCOUNTANT, { billId: d1.bill.id, method: "BANK_TRANSFER", amount: 3_900_000, reference: "NEFT39733" });
     expect((await prisma.invoice.findUniqueOrThrow({ where: { id: d1.invoice.id } })).status).toBe("PAID");
     await expectIntegrity();
   });
 
   it("IN-2: OVERDUE is derived after the due date and notified once", async () => {
-    const c = await createClient(w.actors.ACCOUNTANT, { name: "Slow Payer Ltd", gstin: "24AABCS1429B1ZB", address: "CG Road, Ahmedabad", contactName: "Om", paymentTermsDays: 15 });
+    const c = await createClient(w.actors.ACCOUNTANT, { name: "Slow Payer Ltd", gstin: "24AABCS1429B1Z0", address: "CG Road, Ahmedabad", contactName: "Om", paymentTermsDays: 15 });
     const d = await createDraft(w.actors.ACCOUNTANT, { businessClientId: c.id, lines: [{ kind: "MANUAL", description: "Annual corporate membership", qty: 1, unitPrice: 10_000_000 }] });
     await issueInvoice(w.actors.ACCOUNTANT, d.invoice.id);
     clock.set(istToUtc("2026-10-28", "09:00"));
@@ -119,10 +119,10 @@ describe("Phase 7 — business clients, invoices, GST (IN-1…IN-6, R-40, R-41, 
     const mum = await createClient(w.actors.ACCOUNTANT, { name: "Mumbai Corp", gstin: "27AAPFU0939F1ZV", address: "Nariman Point, Mumbai", contactName: "Ravi" });
     const d = await createDraft(w.actors.ACCOUNTANT, { businessClientId: mum.id, lines: [{ kind: "MANUAL", description: "Package", qty: 1, unitPrice: 1_180_000 }] });
     await issueInvoice(w.actors.ACCOUNTANT, d.invoice.id);
-    await recordCounterPayment(w.actors.ACCOUNTANT, { billId: d.bill.id, method: "UPI", amount: 1_180_000 });
+    await recordCounterPayment(w.actors.ACCOUNTANT, { billId: d.bill.id, method: "BANK_TRANSFER", amount: 1_180_000, reference: "NEFT77509" });
     void m;
     const g = await gstReport(w.actors.ACCOUNTANT, { period: "TODAY" });
-    expect(g.ratesVerified).toBe(false);
+    expect(g.ratesVerified).toBe(true);
     expect(g.totals.tax).toBe(30508 + 180000);
     expect(g.totals.igst).toBe(180000);
     expect(g.totals.cgst + g.totals.sgst).toBe(30508);
@@ -132,7 +132,7 @@ describe("Phase 7 — business clients, invoices, GST (IN-1…IN-6, R-40, R-41, 
   it("EX-1: expenses are created and paid by OWNER/ACCOUNTANT; the Manager can only view", async () => {
     await expect(createExpense(w.actors.MANAGER, { vendor: "GUVNL", category: "UTILITIES", amount: 4_500_000 })).rejects.toMatchObject({ code: "FORBIDDEN" });
     const e = await createExpense(w.actors.ACCOUNTANT, { vendor: "GUVNL", category: "UTILITIES", amount: 4_500_000, inputGst: 0 });
-    await payExpense(w.actors.OWNER, e.id, { method: "ONLINE" });
-    await expect(payExpense(w.actors.OWNER, e.id, { method: "ONLINE" })).rejects.toMatchObject({ code: "ORDER_STATE_INVALID" });
+    await payExpense(w.actors.OWNER, e.id, { method: "BANK_TRANSFER" });
+    await expect(payExpense(w.actors.OWNER, e.id, { method: "BANK_TRANSFER" })).rejects.toMatchObject({ code: "ORDER_STATE_INVALID" });
   });
 });

@@ -10,7 +10,7 @@ import {
   verifyOnlinePayment,
 } from "@/server/services/payments";
 import { testGateway } from "@/server/services/gateway";
-import { makeWorld, type World } from "../helpers/world";
+import { makeWorld, type World, utr, CARD_PROOF } from "../helpers/world";
 import { expectIntegrity } from "../helpers/integrity";
 
 let w: World;
@@ -39,11 +39,11 @@ beforeEach(async () => {
 describe("Phase 1 — pricing engine (§5.3)", () => {
   it("PR-2: a line carries discount, net, GST extracted from the inclusive price and an explanation", async () => {
     const s = await getSettings();
-    const l = priceLine({ description: "Racket", qty: 2, unitPrice: 499900, discountPct: 10, taxCategory: "GOODS", hsnSac: "9506", explanation: "Silver member · 10% shop discount" }, s);
+    const l = priceLine({ description: "Racket", qty: 2, unitPrice: 499900, discountPct: 10, taxCategory: "GOODS_5", hsnSac: "9506", explanation: "Silver member · 10% shop discount" }, s);
     expect(l.discountAmount).toBe(99980);
     expect(l.netAmount).toBe(899820);
-    expect(l.taxRate).toBe(12);
-    expect(l.taxAmount).toBe(Math.floor((899820 * 12 * 2 + 112) / (2 * 112)));
+    expect(l.taxRate).toBe(5);
+    expect(l.taxAmount).toBe(Math.floor((899820 * 5 * 2 + 105) / (2 * 105)));
     expect(l.explanation).toMatch(/10% shop discount/);
   });
 
@@ -62,7 +62,7 @@ describe("Phase 1 — pricing engine (§5.3)", () => {
   it("PR-5: walk-in shop prices carry no discount; delivery fee is never discounted", async () => {
     const q = await quoteShop(prisma, {
       date: "2026-10-12",
-      items: [{ variantId: "v1", qty: 1, name: "Balls", price: 50000, taxCategory: "GOODS", hsnSac: "9506" }],
+      items: [{ variantId: "v1", qty: 1, name: "Balls", price: 50000, taxCategory: "GOODS_5", hsnSac: "9506" }],
       deliveryFee: 9900,
     });
     expect(q.total).toBe(59900);
@@ -89,7 +89,7 @@ describe("Phase 1 — payments, refunds and the ledger (§5.10)", () => {
     await expect(
       recordCounterPayment(w.actors.FRONT_DESK, { billId: bill.id, method: "CASH", amount: 60000 }),
     ).rejects.toMatchObject({ code: "OVERPAYMENT", message: expect.stringMatching(/₹600 is more than the ₹550 still due/) });
-    const r = await recordCounterPayment(w.actors.FRONT_DESK, { billId: bill.id, method: "UPI", amount: 20000, reference: "UTR123" });
+    const r = await recordCounterPayment(w.actors.FRONT_DESK, { billId: bill.id, method: "UPI", reference: utr(), amount: 20000 });
     expect(r.billStatus).toBe("PARTIAL");
     expect(r.due).toBe(35000);
     const r2 = await recordCounterPayment(w.actors.FRONT_DESK, { billId: bill.id, method: "CASH", amount: 35000, tendered: 50000 });
@@ -100,11 +100,11 @@ describe("Phase 1 — payments, refunds and the ledger (§5.10)", () => {
 
   it("PY-4: a refund can't exceed the amount paid; refunds are negative IN entries under the original source", async () => {
     const bill = await makeBill(55000);
-    await recordCounterPayment(w.actors.FRONT_DESK, { billId: bill.id, method: "CARD", amount: 55000, reference: "4242" });
+    await recordCounterPayment(w.actors.FRONT_DESK, { billId: bill.id, method: "CARD", amount: 55000, ...CARD_PROOF });
     await expect(
       issueRefund(w.actors.MANAGER, { billId: bill.id, amount: 60000, reason: "test" }),
     ).rejects.toMatchObject({ code: "REFUND_EXCEEDS_PAID" });
-    const r = await issueRefund(w.actors.MANAGER, { billId: bill.id, amount: 15000, reason: "goodwill" });
+    const r = await issueRefund(w.actors.MANAGER, { billId: bill.id, amount: 15000, approvalCode: "RFND01", reason: "goodwill" });
     expect(r.refunded).toBe(15000);
     const ledger = await prisma.ledgerEntry.findMany({ where: { billId: bill.id }, orderBy: { createdAt: "asc" } });
     expect(ledger.map((l) => [l.source, l.direction, l.amount])).toEqual([

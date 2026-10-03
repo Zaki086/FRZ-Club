@@ -23,6 +23,7 @@ enum Role {
   BAR_STAFF
   ACCOUNTANT
   MEMBER
+  KITCHEN
 }
 
 enum PlanCode {
@@ -112,6 +113,7 @@ enum Fulfilment {
 enum PaymentOption {
   ONLINE
   PAY_AT_PICKUP
+  PAY_ON_DELIVERY
 }
 
 enum OrderStatus {
@@ -184,6 +186,7 @@ enum PaymentMethod {
   CARD
   UPI
   ONLINE
+  BANK_TRANSFER
 }
 
 enum PaymentStatus {
@@ -298,15 +301,19 @@ enum ExpenseStatus {
 // ───────────────────────────── identity & auth ─────────────────────────────
 
 model User {
-  id           String   @id @default(cuid())
-  name         String
-  phone        String   @unique
-  email        String?  @unique
-  passwordHash String?  @map("password_hash")
-  role         Role
-  active       Boolean  @default(true)
-  createdAt    DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                String    @id @default(cuid())
+  name              String
+  phone             String    @unique
+  email             String?   @unique
+  passwordHash      String?   @map("password_hash")
+  role              Role
+  active            Boolean   @default(true)
+  lastLoginAt       DateTime? @map("last_login_at") @db.Timestamptz(3)
+  failedLoginCount  Int       @default(0) @map("failed_login_count")
+  lockedUntil       DateTime? @map("locked_until") @db.Timestamptz(3)
+  passwordChangedAt DateTime? @map("password_changed_at") @db.Timestamptz(3)
+  createdAt         DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   sessions      Session[]
   member        Member?
@@ -333,6 +340,8 @@ model PasswordSetToken {
   id        String    @id @default(cuid())
   userId    String    @map("user_id")
   tokenHash String    @unique @map("token_hash")
+  purpose   String    @default("SET") // SET (new account) | RESET (forgotten password)
+  createdBy String?   @map("created_by")
   expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
   usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
   createdAt DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
@@ -345,24 +354,31 @@ model PasswordSetToken {
 // ───────────────────────────── members & memberships ─────────────────────────────
 
 model Member {
-  id                    String   @id @default(cuid())
-  userId                String?  @unique @map("user_id")
-  memberCode            String   @unique @map("member_code")
+  id                    String    @id @default(cuid())
+  userId                String?   @unique @map("user_id")
+  memberCode            String    @unique @map("member_code")
   name                  String
-  phone                 String   @unique
+  phone                 String    @unique
   email                 String?
-  dob                   DateTime @db.Date
-  photoUrl              String?  @map("photo_url")
-  emergencyContactName  String?  @map("emergency_contact_name")
-  emergencyContactPhone String?  @map("emergency_contact_phone")
-  nextPlanId            String?  @map("next_plan_id")
-  nextPlanMonths        Int?     @map("next_plan_months")
-  leadId                String?  @map("lead_id")
-  createdBy             String?  @map("created_by")
-  createdAt             DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
-  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-  user                  User?    @relation(fields: [userId], references: [id])
-  nextPlan              Plan?    @relation("NextPlan", fields: [nextPlanId], references: [id])
+  dob                   DateTime  @db.Date
+  photoUrl              String?   @map("photo_url")
+  emergencyContactName  String?   @map("emergency_contact_name")
+  emergencyContactPhone String?   @map("emergency_contact_phone")
+  nextPlanId            String?   @map("next_plan_id")
+  nextPlanMonths        Int?      @map("next_plan_months")
+  leadId                String?   @map("lead_id")
+  consentAt             DateTime? @map("consent_at") @db.Timestamptz(3)
+  // Completion pass P1: guardian of a Junior / under-18 member (linked when the guardian is a member too).
+  guardianName          String?   @map("guardian_name")
+  guardianPhone         String?   @map("guardian_phone")
+  guardianMemberId      String?   @map("guardian_member_id")
+  // DPDP erasure: personal data replaced, transactions kept.
+  anonymisedAt          DateTime? @map("anonymised_at") @db.Timestamptz(3)
+  createdBy             String?   @map("created_by")
+  createdAt             DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user                  User?     @relation(fields: [userId], references: [id])
+  nextPlan              Plan?     @relation("NextPlan", fields: [nextPlanId], references: [id])
 
   memberships Membership[]
 
@@ -630,6 +646,8 @@ model ProductVariant {
   taxCategory     String    @map("tax_category")
   hsnSac          String    @map("hsn_sac")
   lowStockAlerted Boolean   @default(false) @map("low_stock_alerted")
+  // Completion pass P2: printed barcode (EAN/UPC) for scanning at the till; the SKU also scans.
+  barcode         String?   @unique
   archivedAt      DateTime? @map("archived_at") @db.Timestamptz(3)
   createdAt       DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -911,6 +929,9 @@ model Payment {
   changeGiven      Int?          @map("change_given")
   receivedBy       String?       @map("received_by")
   shiftId          String?       @map("shift_id")
+  drawerSessionId  String?       @map("drawer_session_id")
+  cardLast4        String?       @map("card_last4")
+  approvalCode     String?       @map("approval_code")
   refundOfId       String?       @map("refund_of_id")
   failureReason    String?       @map("failure_reason")
   note             String?
@@ -1030,6 +1051,7 @@ model Lead {
   memberId          String?        @map("member_id")
   guestId           String?        @map("guest_id")
   bookingId         String?        @map("booking_id")
+  consentAt         DateTime?      @map("consent_at") @db.Timestamptz(3)
   createdAt         DateTime       @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
   activities        LeadActivity[]
@@ -1170,22 +1192,24 @@ model Payslip {
 }
 
 model ExpenseBill {
-  id          String          @id @default(cuid())
-  vendor      String
-  category    ExpenseCategory
-  description String          @default("")
-  amount      Int
-  inputGst    Int             @default(0) @map("input_gst")
-  billDate    DateTime        @map("bill_date") @db.Date
-  dueDate     DateTime        @map("due_date") @db.Date
-  status      ExpenseStatus   @default(UNPAID)
-  paidAt      DateTime?       @map("paid_at") @db.Timestamptz(3)
-  method      PaymentMethod?
-  refType     String?         @map("ref_type")
-  refId       String?         @map("ref_id")
-  createdBy   String?         @map("created_by")
-  createdAt   DateTime        @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id            String          @id @default(cuid())
+  vendor        String
+  category      ExpenseCategory
+  description   String          @default("")
+  amount        Int
+  inputGst      Int             @default(0) @map("input_gst")
+  billDate      DateTime        @map("bill_date") @db.Date
+  dueDate       DateTime        @map("due_date") @db.Date
+  status        ExpenseStatus   @default(UNPAID)
+  paidAt        DateTime?       @map("paid_at") @db.Timestamptz(3)
+  method        PaymentMethod?
+  refType       String?         @map("ref_type")
+  refId         String?         @map("ref_id")
+  // Completion pass §7 (accountant): the scanned bill / PDF (an /api/uploads/expense/... URL).
+  attachmentUrl String?         @map("attachment_url")
+  createdBy     String?         @map("created_by")
+  createdAt     DateTime        @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("expense_bills")
 }
@@ -1263,4 +1287,134 @@ model Setting {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("settings")
+}
+
+// ───────────── completion pass (migration 0003) ─────────────
+
+/// 8.4: every staff member who takes cash/card/UPI works inside an open drawer session.
+model CashDrawerSession {
+  id            String    @id @default(cuid())
+  userId        String    @map("user_id")
+  area          String // DESK | SHOP | BAR | OFFICE
+  openedAt      DateTime  @map("opened_at") @db.Timestamptz(3)
+  openingFloat  Int       @default(0) @map("opening_float")
+  closedAt      DateTime? @map("closed_at") @db.Timestamptz(3)
+  closedBy      String?   @map("closed_by")
+  cashExpected  Int?      @map("cash_expected")
+  cashCounted   Int?      @map("cash_counted")
+  variance      Int?
+  cardTotal     Int?      @map("card_total")
+  upiTotal      Int?      @map("upi_total")
+  note          String?
+  depositAmount Int?      @map("deposit_amount")
+  depositRef    String?   @map("deposit_ref")
+  depositedAt   DateTime? @map("deposited_at") @db.Timestamptz(3)
+  depositedBy   String?   @map("deposited_by")
+  createdAt     DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([userId, closedAt])
+  @@map("cash_drawer_sessions")
+}
+
+/// §3.4: outbound communication — emails actually sent/failed and WhatsApp links opened by staff.
+model MessageLog {
+  id        String   @id @default(cuid())
+  channel   String // EMAIL | WHATSAPP
+  to        String
+  subject   String   @default("")
+  body      String
+  status    String // SENT | FAILED | OPENED
+  error     String?
+  entity    String?
+  entityId  String?  @map("entity_id")
+  actorId   String?  @map("actor_id")
+  at        DateTime @db.Timestamptz(3)
+  createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([at])
+  @@map("message_log")
+}
+
+// ───────────────────────────── completion pass P1 ─────────────────────────────
+
+/**
+ * DPDP: a member's request to export or erase their personal data (handled by the Owner).
+ */
+model DataRequest {
+  id          String    @id @default(cuid())
+  memberId    String    @map("member_id")
+  kind        String // EXPORT | ERASE
+  status      String    @default("OPEN") // OPEN | DONE | REJECTED
+  note        String?
+  requestedBy String?   @map("requested_by")
+  handledBy   String?   @map("handled_by")
+  handledAt   DateTime? @map("handled_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([status])
+  @@map("data_requests")
+}
+
+model PurchaseOrder {
+  id         String              @id @default(cuid())
+  code       String              @unique
+  supplier   String
+  status     String              @default("DRAFT") // DRAFT | ORDERED | RECEIVED | CANCELLED
+  note       String?
+  expenseId  String?             @map("expense_id")
+  createdBy  String?             @map("created_by")
+  orderedAt  DateTime?           @map("ordered_at") @db.Timestamptz(3)
+  receivedAt DateTime?           @map("received_at") @db.Timestamptz(3)
+  createdAt  DateTime            @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  lines      PurchaseOrderLine[]
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderLine {
+  id        String        @id @default(cuid())
+  poId      String        @map("po_id")
+  variantId String        @map("variant_id")
+  qty       Int
+  unitCost  Int           @map("unit_cost")
+  inputGst  Int           @default(0) @map("input_gst")
+  createdAt DateTime      @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  po        PurchaseOrder @relation(fields: [poId], references: [id])
+
+  @@map("purchase_order_lines")
+}
+
+/**
+ * A counted stock take: the differences are posted as stock adjustments.
+ */
+model StockTake {
+  id        String          @id @default(cuid())
+  code      String          @unique
+  note      String?
+  createdBy String?         @map("created_by")
+  postedAt  DateTime        @map("posted_at") @db.Timestamptz(3)
+  createdAt DateTime        @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  lines     StockTakeLine[]
+
+  @@map("stock_takes")
+}
+
+model StockTakeLine {
+  id          String    @id @default(cuid())
+  stockTakeId String    @map("stock_take_id")
+  variantId   String    @map("variant_id")
+  expected    Int
+  counted     Int
+  delta       Int
+  createdAt   DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  stockTake   StockTake @relation(fields: [stockTakeId], references: [id])
+
+  @@map("stock_take_lines")
 }

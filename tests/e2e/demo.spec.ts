@@ -1,12 +1,18 @@
-// §12 judge demo, end to end against the running app (seeded with `npm run seed`).
+// §12 judge demo, end to end against the running app (seeded with `npm run seed:demo`).
+// The sample club takes cash + card; this run also switches on UPI (as the Owner would after confirming the club's
+// UPI ID), opens the staff cash drawers, and puts both back afterwards.
 // Logins and key screens run in a real browser; actions go through the same HTTP API the screens call.
 import { expect, test, type APIRequestContext, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 
 test.describe.configure({ mode: "serial" });
 
-const STAFF_PW = "champions123";
-const MEMBER_PW = "member123";
+const STAFF_PW = process.env.SEED_STAFF_PASSWORD ?? "";
+const MEMBER_PW = process.env.SEED_MEMBER_PASSWORD ?? "";
+let utrSeq = Number(String(Date.now()).slice(-9));
+/** A fresh 12-character UPI reference (UTR). */
+const utr = () => `9${String(++utrSeq).padStart(11, "0")}`.slice(0, 12);
+const CARD = { cardLast4: "4242", approvalCode: "E2E001" };
 
 function istNow() {
   const d = new Date(Date.now() + 330 * 60_000);
@@ -56,6 +62,17 @@ async function freeBlock(req: APIRequestContext, date: string, n: number, minSta
 
 let desk: { ctx: BrowserContext; page: Page };
 let rahul: { ctx: BrowserContext; page: Page };
+let ownerSession: { ctx: BrowserContext; page: Page };
+let savedPaymentMethods: unknown = null;
+const drawerUsers: Array<{ ctx: BrowserContext; opened: boolean }> = [];
+
+/** Open the staff member's drawer for this run if it isn't open (closed again in afterAll with the expected count). */
+async function ensureDrawer(s: { ctx: BrowserContext }, area: string) {
+  const d = await call<{ open: unknown }>(s.ctx.request, "GET", "/api/drawer");
+  if (d.data.open) return;
+  await call(s.ctx.request, "POST", "/api/drawer/open", { area, openingFloat: 0 });
+  drawerUsers.push({ ctx: s.ctx, opened: true });
+}
 const now = istNow();
 const demoDate = now.minutes < 15 * 60 ? now.date : addDays(now.date, 1);
 const minStart = demoDate === now.date ? Math.ceil((now.minutes + 90) / 60) * 60 : 8 * 60;
@@ -63,11 +80,24 @@ const kiranPhone = `98${String(Date.now()).slice(-8)}`;
 const S: Record<string, string> = {};
 
 test.beforeAll(async ({ browser }) => {
-  desk = await loginUi(browser, "desk@championsclub.test", STAFF_PW);
+  expect(STAFF_PW.length, "set SEED_STAFF_PASSWORD / SEED_MEMBER_PASSWORD (as used by seed:demo)").toBeGreaterThanOrEqual(8);
+  ownerSession = await loginUi(browser, "owner@championsclub.example", STAFF_PW);
+  const rows = await call<Array<{ key: string; value: unknown }>>(ownerSession.ctx.request, "GET", "/api/settings");
+  savedPaymentMethods = rows.data.find((r) => r.key === "payment_methods")?.value ?? null;
+  const put = await ownerSession.ctx.request.fetch("/api/settings/payment_methods", { method: "PUT", data: { value: { card_enabled: true, upi_vpa: "e2e.check@upi", upi_confirmed: true } } });
+  expect(put.status()).toBe(200);
+  desk = await loginUi(browser, "desk@championsclub.example", STAFF_PW);
+  await ensureDrawer(desk, "DESK");
   rahul = await loginUi(browser, "9811000001", MEMBER_PW);
 });
 
 test.afterAll(async () => {
+  for (const u of drawerUsers) {
+    const d = await call<{ open: { cashExpected: number } | null }>(u.ctx.request, "GET", "/api/drawer");
+    if (d.data.open) await call(u.ctx.request, "POST", "/api/drawer/close", { cashCounted: d.data.open.cashExpected, note: "e2e run" });
+  }
+  if (ownerSession && savedPaymentMethods) await ownerSession.ctx.request.fetch("/api/settings/payment_methods", { method: "PUT", data: { value: savedPaymentMethods } });
+  await ownerSession?.ctx.close();
   await desk?.ctx.close();
   await rahul?.ctx.close();
 });
@@ -80,18 +110,19 @@ test("1. Front desk signs up Kiran on Silver with UPI → member card QR and a t
   await page.locator('input[name="dob"]').fill("1996-04-12");
   await page.locator('input[name="password"]').fill(MEMBER_PW);
   await page.getByRole("button", { name: /Silver/ }).click();
-  await page.locator('input[name="reference"]').fill("UTR-KIRAN-1");
+  await page.locator('select[name="method"]').selectOption("UPI");
+  await page.locator('input[name="reference"]').fill(utr());
+  await page.getByTestId("member-consent").check();
   await page.getByTestId("signup-submit").click();
   await expect(page.getByText(/is registered as CC-\d{6}/)).toBeVisible();
   await expect(page.getByTestId("member-card")).toBeVisible();
   const found = await call<Array<{ id: string; status: { tier: string } }>>(desk.ctx.request, "GET", `/api/members?q=${kiranPhone}`);
   S.kiran = found.data[0].id;
   expect(found.data[0].status.tier).toBe("SILVER");
-  const owner = await loginUi(browser, "owner@championsclub.test", STAFF_PW);
-  const inv = await call<Array<{ number: string; kind: string; status: string }>>(owner.ctx.request, "GET", `/api/invoices?memberId=${S.kiran}`);
+  const inv = await call<Array<{ number: string; kind: string; status: string }>>(ownerSession.ctx.request, "GET", `/api/invoices?memberId=${S.kiran}`);
   expect(inv.data[0]).toMatchObject({ kind: "MEMBERSHIP", status: "PAID" });
   expect(inv.data[0].number).toMatch(/^CC\/\d{4}-\d{2}\/\d{5}$/);
-  await owner.ctx.close();
+  void browser;
 });
 
 test("2. Court booking for Kiran + a walk-in friend: quote ₹150 + ₹400 = ₹550 with explanations", async () => {
@@ -103,7 +134,7 @@ test("2. Court booking for Kiran + a walk-in friend: quote ₹150 + ₹400 = ₹
   expect(q.data.total).toBe(55000);
   expect(q.data.players[0].explanation).toMatch(/Silver member/);
   expect(q.data.players[1].explanation).toMatch(/Walk-in/);
-  const b = await call<{ bookingCode: string; bookingId: string; total: number }>(desk.ctx.request, "POST", "/api/bookings", { courtId: S.courtId, date: demoDate, startTime: S.t0, players, channel: "FRONT_DESK", payment: { kind: "COUNTER", method: "UPI", reference: "UTR-K2" } }, `demo-${kiranPhone}-1`);
+  const b = await call<{ bookingCode: string; bookingId: string; total: number }>(desk.ctx.request, "POST", "/api/bookings", { courtId: S.courtId, date: demoDate, startTime: S.t0, players, channel: "FRONT_DESK", payment: { kind: "COUNTER", method: "UPI", reference: utr() } }, `demo-${kiranPhone}-1`);
   expect(b.status).toBe(200);
   S.kiranBooking = b.data.bookingId;
   S.kiranCode = b.data.bookingCode;
@@ -143,7 +174,7 @@ test("5. npm run demo:race → 20 simultaneous requests, exactly 1 success and 1
 });
 
 test("6. Social play: a member and a guest join; a regular booking over it is rejected", async ({ browser }) => {
-  const mgr = await loginUi(browser, "manager@championsclub.test", STAFF_PW);
+  const mgr = await loginUi(browser, "manager@championsclub.example", STAFF_PW);
   const blk = await freeBlock(mgr.ctx.request, demoDate, 4, Math.max(minStart, 18 * 60));
   const ses = await call<{ sessions: Array<{ id: string }> }>(mgr.ctx.request, "POST", "/api/social", { title: "Demo Social", courtIds: [blk.courtId], date: demoDate, startTime: blk.start, endTime: hhmm(toMin(blk.start) + 120), capacityPerCourt: 12 });
   expect(ses.status).toBe(200);
@@ -151,7 +182,7 @@ test("6. Social play: a member and a guest join; a regular booking over it is re
   const neha = await call<Array<{ id: string }>>(desk.ctx.request, "GET", "/api/members?q=9811000002");
   const m = await call<{ fee: number }>(desk.ctx.request, "POST", `/api/social/${id}/join`, { player: { memberId: neha.data[0].id }, payment: { kind: "COUNTER", method: "CASH" } }, `soc-m-${kiranPhone}`);
   expect([m.status, m.data.fee]).toEqual([200, 10000]);
-  const g = await call<{ fee: number }>(desk.ctx.request, "POST", `/api/social/${id}/join`, { player: { guest: { name: "Social Guest" } }, payment: { kind: "COUNTER", method: "UPI" } }, `soc-g-${kiranPhone}`);
+  const g = await call<{ fee: number }>(desk.ctx.request, "POST", `/api/social/${id}/join`, { player: { guest: { name: "Social Guest" } }, payment: { kind: "COUNTER", method: "UPI", reference: utr() } }, `soc-g-${kiranPhone}`);
   expect([g.status, g.data.fee]).toEqual([200, 25000]);
   const clash = await call(desk.ctx.request, "POST", "/api/bookings", { courtId: blk.courtId, date: demoDate, startTime: hhmm(toMin(blk.start) + 30), players: [{ guest: { name: "Clasher" } }], channel: "WALK_IN", payment: { kind: "LATER" } });
   expect(clash.status).toBe(409);
@@ -165,8 +196,9 @@ test("7. Shop: Rahul orders the last racket online → reserved; the counter can
   expect(racket.variants[0].available).toBe(1);
   const order = await call<{ status: string }>(rahul.ctx.request, "POST", "/api/shop/checkout", { items: [{ variantId: racket.variants[0].id, qty: 1 }], fulfilment: "PICKUP", paymentOption: "PAY_AT_PICKUP" }, `order-${kiranPhone}`);
   expect([order.status, order.data.status]).toEqual([200, "CONFIRMED"]);
-  const shop = await loginUi(browser, "shop@championsclub.test", STAFF_PW);
-  const sale = await call(shop.ctx.request, "POST", "/api/shop/counter-sale", { items: [{ variantId: racket.variants[0].id, qty: 1 }], payments: [{ method: "CARD" }] }, `sale-${kiranPhone}`);
+  const shop = await loginUi(browser, "shop@championsclub.example", STAFF_PW);
+  await ensureDrawer(shop, "SHOP");
+  const sale = await call(shop.ctx.request, "POST", "/api/shop/counter-sale", { items: [{ variantId: racket.variants[0].id, qty: 1 }], payments: [{ method: "CARD", ...CARD }] }, `sale-${kiranPhone}`);
   expect(sale.status).toBe(409);
   expect(sale.error).toMatchObject({ code: "INSUFFICIENT_STOCK" });
   expect(sale.error!.message).toMatch(/reserved for online orders/);
@@ -174,11 +206,11 @@ test("7. Shop: Rahul orders the last racket online → reserved; the counter can
   expect(notes.data.items.some((n) => n.type === "LOW_STOCK" && n.title.includes("Pro Staff 97"))).toBe(true);
   await shop.page.goto("/app/shop/stock?filter=low");
   await expect(shop.page.getByText(/Pro Staff 97/).first()).toBeVisible();
-  await shop.ctx.close();
 });
 
 test("8. Bar: Kiran's tab at Table 4 gets 10% off; a beer for Aarav is refused; KDS shows Table 4 · Kiran; split settle", async ({ browser }) => {
-  const bar = await loginUi(browser, "bar@championsclub.test", STAFF_PW);
+  const bar = await loginUi(browser, "bar@championsclub.example", STAFF_PW);
+  await ensureDrawer(bar, "BAR");
   const r = bar.ctx.request;
   const tables = await call<{ tables: Array<{ id: string; number: number }> }>(r, "GET", "/api/bar/tables");
   const t4 = tables.data.tables.find((t) => t.number === 4)!;
@@ -209,9 +241,8 @@ test("8. Bar: Kiran's tab at Table 4 gets 10% off; a beer for Aarav is refused; 
   const ready = await call<Array<{ payer: string; table: number }>>(r, "GET", "/api/bar/ready");
   expect(ready.data.some((x) => x.payer.startsWith("Kiran") && x.table === 4)).toBe(true);
   const total = lines.data.total;
-  const settle = await call<{ status: string; due: number }>(r, "POST", `/api/bar/tabs/${tab.data.tabId}/settle`, { payments: [{ method: "CASH", amount: 20000, tendered: 20000 }, { method: "UPI", amount: total - 20000, reference: "UTR-BAR" }] }, `settle-${kiranPhone}`);
+  const settle = await call<{ status: string; due: number }>(r, "POST", `/api/bar/tabs/${tab.data.tabId}/settle`, { payments: [{ method: "CASH", amount: 20000, tendered: 20000 }, { method: "UPI", amount: total - 20000, reference: utr() }] }, `settle-${kiranPhone}`);
   expect([settle.data.status, settle.data.due]).toEqual(["SETTLED", 0]);
-  await bar.ctx.close();
 });
 
 test("9. Public site: availability shows Booked; a visitor books a trial → CRM lead + notification; quote → interested → convert", async ({ browser, request }) => {
@@ -222,10 +253,12 @@ test("9. Public site: availability shows Booked; a visitor books a trial → CRM
   const vp = await visitor.newPage();
   await vp.goto("/availability");
   await expect(vp.getByText(/Booked/).first()).toBeVisible();
-  const slot = await freeBlock(request, now.minutes < 20 * 60 ? now.date : addDays(now.date, 1), 2, now.minutes < 20 * 60 ? Math.ceil((now.minutes + 60) / 60) * 60 : 8 * 60);
-  const trialDate = now.minutes < 20 * 60 ? now.date : addDays(now.date, 1);
+  // Trials follow the walk-in window (today or tomorrow); late in the day the evening is full, so use tomorrow.
+  const trialToday = now.minutes < 17 * 60;
+  const trialDate = trialToday ? now.date : addDays(now.date, 1);
+  const slot = await freeBlock(request, trialDate, 2, trialToday ? Math.ceil((now.minutes + 60) / 60) * 60 : 8 * 60);
   const trialPhone = `97${String(Date.now()).slice(-8)}`;
-  const trial = await call<{ bookingCode: string; leadCode: string; fee: number }>(request, "POST", "/api/trial", { name: "Visitor Vasu", phone: trialPhone, email: "vasu@example.com", courtId: slot.courtId, date: trialDate, startTime: slot.start });
+  const trial = await call<{ bookingCode: string; leadCode: string; fee: number }>(request, "POST", "/api/trial", { consent: true, name: "Visitor Vasu", phone: trialPhone, email: "vasu@example.com", courtId: slot.courtId, date: trialDate, startTime: slot.start });
   expect(trial.status).toBe(200);
   const leads = await call<Array<{ id: string; code: string; source: string }>>(desk.ctx.request, "GET", `/api/crm/leads?q=${trial.data.leadCode}`);
   const lead = leads.data.find((l) => l.code === trial.data.leadCode)!;
@@ -236,7 +269,7 @@ test("9. Public site: availability shows Booked; a visitor books a trial → CRM
   await vp.goto(quote.data.link);
   await vp.getByRole("button", { name: /interested/i }).click();
   await expect(vp.getByText(/thank/i).first()).toBeVisible();
-  const conv = await call<{ membershipStatus: string }>(desk.ctx.request, "POST", "/api/members", { name: "Visitor Vasu", phone: trialPhone, dob: "1992-02-02", leadId: lead.id, plan: { code: "SILVER", months: 3, payment: { method: "UPI", reference: "UTR-VASU" } } }, `conv-${trialPhone}`);
+  const conv = await call<{ membershipStatus: string }>(desk.ctx.request, "POST", "/api/members", { name: "Visitor Vasu", phone: trialPhone, dob: "1992-02-02", leadId: lead.id, plan: { code: "SILVER", months: 3, payment: { method: "UPI", reference: utr() } } }, `conv-${trialPhone}`);
   expect(conv.data.membershipStatus).toBe("ACTIVE");
   const after = await call<{ status: string }>(desk.ctx.request, "GET", `/api/crm/leads/${lead.id}`);
   expect(after.data.status).toBe("WON");
@@ -244,7 +277,7 @@ test("9. Public site: availability shows Booked; a visitor books a trial → CRM
 });
 
 test("10–11. Owner dashboard Today reconciles; Courts drill-down sums to the KPI; share link; audit shows who did it", async ({ browser, request }) => {
-  const owner = await loginUi(browser, "owner@championsclub.test", STAFF_PW);
+  const owner = ownerSession;
   const r = owner.ctx.request;
   const d = await call<{ money: { collected: { value: number }; bySource: Record<string, { value: number }>; byMethod: Record<string, { value: number }> } }>(r, "GET", "/api/reports/dashboard?period=TODAY");
   const sources = Object.values(d.data.money.bySource).reduce((a, x) => a + x.value, 0);
@@ -261,11 +294,11 @@ test("10–11. Owner dashboard Today reconciles; Courts drill-down sums to the K
   expect(shared.status).toBe(200);
   const audit = await call<Array<{ action: string; actorLabel: string }>>(r, "GET", `/api/audit?entity=booking&entityId=${S.kiranBooking}`);
   expect(audit.data.some((a) => a.action === "booking.create" && a.actorLabel.includes("FRONT_DESK"))).toBe(true);
-  await owner.ctx.close();
+  void browser;
 });
 
 test("12. Bar staff opening Finance → 403", async ({ browser }) => {
-  const bar = await loginUi(browser, "bar@championsclub.test", STAFF_PW);
+  const bar = await loginUi(browser, "bar@championsclub.example", STAFF_PW);
   const res = await bar.page.goto("/app/finance/invoices");
   expect(res?.status()).toBe(403);
   await expect(bar.page.getByText(/403/).first()).toBeVisible();
