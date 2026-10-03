@@ -10,6 +10,7 @@ import type { Actor } from "../rbac/actor";
 import { assertCan } from "../rbac/permissions";
 import { DomainError } from "../errors";
 import { audit } from "./audit";
+import { WA_TEMPLATE_NAMES } from "./whatsapp/templates";
 
 const sportFees = z.object({
   TENNIS: z.number().int().min(0),
@@ -72,6 +73,21 @@ export const SETTINGS_SCHEMA = {
   // v3 §6.3: approved WhatsApp Cloud API templates per event, and when a test message last succeeded.
   whatsapp_templates: z.record(z.string(), z.object({ name: z.string().trim().min(1).max(100), language: z.string().trim().min(2).max(10) })),
   whatsapp_verified_at: z.string().nullable(),
+  // v4 §5.1 (WHATSAPP): per WhatsApp template (whatsapp/templates.ts) the name + language submitted in WhatsApp
+  // Manager and Meta's last known status from "Fetch templates"; and the connection checks shown in Settings.
+  whatsapp_template_map: z.partialRecord(z.enum(WA_TEMPLATE_NAMES), z.object({
+    name: z.string().trim().regex(/^[a-z0-9_]{1,512}$/, "Template names use lowercase letters, digits and _"),
+    language: z.string().trim().regex(/^[A-Za-z]{2,3}(_[A-Za-z]{2,4})?$/, "Language code like en or en_US"),
+    status: z.string().max(30).nullable(),
+    checked_at: z.string().nullable(),
+  })),
+  whatsapp_health: z.object({
+    token_ok: z.boolean().nullable(),
+    token_checked_at: z.string().nullable(),
+    token_reason: z.string().max(300).nullable(),
+    phone_display: z.string().max(60).nullable(),
+    webhook_verified_at: z.string().nullable(),
+  }),
   overtime_threshold_minutes: z.number().int().min(0).max(600),
   missing_clockout_hours: z.number().int().min(1).max(48),
   invoice_terms_days: z.number().int().min(0).max(365),
@@ -108,6 +124,13 @@ export const SETTINGS_SCHEMA = {
     DELIVERY: z.string(),
     BUSINESS_SERVICE: z.string(),
   }),
+  // v4 §2 (DRAWER): cash drawer counting and closing rules (§2.3 denominations, CD-5 blind close, CD-6 tolerance).
+  cash_denominations: z.object({
+    notes: z.array(z.number().int().positive()).min(1).max(12),
+    coins: z.array(z.number().int().positive()).max(12),
+  }),
+  blind_close: z.boolean(),
+  drawer_variance_tolerance: z.number().int().min(0).max(10_000_000),
   dev_clock_offset_ms: z.number().int(),
 } as const;
 
@@ -161,6 +184,8 @@ export const DEFAULT_SETTINGS: StoredSettings = {
   dues_reminder_days: 3,
   whatsapp_templates: {},
   whatsapp_verified_at: null,
+  whatsapp_template_map: {},
+  whatsapp_health: { token_ok: null, token_checked_at: null, token_reason: null, phone_display: null, webhook_verified_at: null },
   overtime_threshold_minutes: 30,
   missing_clockout_hours: 4,
   invoice_terms_days: 15,
@@ -184,6 +209,10 @@ export const DEFAULT_SETTINGS: StoredSettings = {
     BUSINESS_SERVICE: 18,
   },
   sac_codes: { COURT: "999652", MEMBERSHIP: "999652", DELIVERY: "996812", BUSINESS_SERVICE: "999652" },
+  // v4 §2 (DRAWER): ₹500, 200, 100, 50, 20, 10 notes; ₹20, 10, 5, 2, 1 coins (paise). Blind count on; ₹50 tolerance.
+  cash_denominations: { notes: [R(500), R(200), R(100), R(50), R(20), R(10)], coins: [R(20), R(10), R(5), R(2), R(1)] },
+  blind_close: true,
+  drawer_variance_tolerance: R(50),
   dev_clock_offset_ms: 0,
 };
 

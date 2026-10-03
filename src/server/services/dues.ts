@@ -50,6 +50,7 @@ export async function runDuesReminders() {
         body: `Hi ${member.name.split(" ")[0]}, ${formatINR(due)} is still due for your ${what} (${days} days). Pay at the club${bill.sourceType === "MEMBERSHIP" ? " or online in the member portal" : ""}${seq < 3 ? "" : " — this is the last reminder"}.`,
         link: bill.sourceType === "MEMBERSHIP" || bill.sourceType === "INVOICE" ? BILL_PORTAL_LINK[bill.sourceType] : "/portal", dedupeKey: `dues:${bill.id}:${seq}`,
         params: [member.name, formatINR(due), what, String(days)],
+        wa: { template: "dues_reminder", vars: { name: member.name.split(" ")[0], amount: formatINR(due).replace("₹", ""), whatFor: what } }, // v4 §4.1 optional template
       });
       return true;
     });
@@ -94,6 +95,7 @@ export async function runInvoiceDueReminders() {
         const r = await notifyMember(tx, {
           event: "DUES_REMINDER", userId: a.userId, memberId: member.id, actor: SYSTEM, title, body, link: "/portal/invoices",
           dedupeKey: `invoice-due:${inv.id}:${step}${i ? `:${a.userId}` : ""}`, params: [member.name, formatINR(due), label, days],
+          wa: { template: "dues_reminder", vars: { name: member.name.split(" ")[0], amount: formatINR(due).replace("₹", ""), whatFor: label } }, // v4 §4.1 optional template
         });
         if (r.length) made++;
       }

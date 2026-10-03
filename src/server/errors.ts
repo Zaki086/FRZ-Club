@@ -42,6 +42,17 @@ export const REJECTION_CODES = [
   "CAPABILITY_DISABLED",
   "RATE_LIMITED",
   "DRAWER_NOT_OPEN",
+  // v4 §2 Cash Drawer v2 (CD-4, RF-9).
+  "INSUFFICIENT_CHANGE",
+  "INSUFFICIENT_CASH_IN_DRAWER",
+  "DRAWER_IN_USE",
+  // v4 §3 Refunds v2 (RF-8, RF-9): pay-out needs the identity check; a refund QR must be authentic.
+  "IDENTITY_NOT_CHECKED",
+  "INVALID_REFUND_QR",
+  // v4 §5.3 signed action links (/r/<token>): forged, past the deadline, or already used.
+  "LINK_INVALID",
+  "LINK_EXPIRED",
+  "LINK_USED",
   // Transport-level codes (not business rules) — see DECISIONS.md D-03.
   "NOT_FOUND",
   "UNAUTHENTICATED",

@@ -7,10 +7,10 @@ import { istDate } from "@/lib/time";
 import { prisma } from "../db";
 import type { Actor, UserActor } from "../rbac/actor";
 import { assertCan, can } from "../rbac/permissions";
+import { safeBalanceTx } from "./drawers";
 import { listStock } from "./inventory";
 import { isOverdue } from "./invoices";
 import { BILL_CAPABILITY } from "./payments";
-import { getSettings } from "./settings";
 
 export type TodoHome = "dashboard" | "shop" | "bar" | "finance";
 export type TodoItem = { key: string; label: string; count: number; amount?: number; href: string; hint?: string };
@@ -31,58 +31,14 @@ type Def = { key: string; when: (a: UserActor) => boolean; get: (a: UserActor) =
 
 const own = (a: UserActor) => a.userId;
 
-/** Refund requests this person may decide: not their own, and a Manager only up to the limit (RF-3). */
-const refundsToApprove: Def = {
-  key: "refundsToApprove",
-  when: (a) => can(a, "refunds.approve"),
-  get: async (a) => {
-    const s = await getSettings();
-    const rows = await prisma.refundRequest.findMany({
-      where: {
-        status: "REQUESTED",
-        OR: [{ requestedBy: null }, { requestedBy: { not: own(a) } }],
-        ...(a.role === "OWNER" ? {} : { amount: { lte: s.refund_manager_limit } }),
-      },
-      select: { amount: true },
-    });
-    return { label: "Refunds to approve", count: rows.length, amount: rows.reduce((x, r) => x + r.amount, 0), href: "/app/refunds?status=REQUESTED" };
-  },
-};
-
-/** Leave requests waiting for a decision (nobody decides their own). */
-const leaveToApprove: Def = {
-  key: "leaveToApprove",
-  when: (a) => can(a, "leave.approve"),
-  get: async (a) => ({
-    label: "Leave to approve",
-    count: await prisma.leaveRequest.count({ where: { status: "PENDING", ...(a.employeeId ? { employeeId: { not: a.employeeId } } : {}) } }),
-    href: "/app/staff/leave?status=PENDING",
-  }),
-};
-
-/** Price rules (promotions, bands) waiting for approval that this person may approve (PR-11 guardrails). */
+/** Price rules (shop-staff discounts above their limit, flat promotions) waiting for the Owner (PR-11; v4 RN-3: Owner only). */
 const priceRulesToApprove: Def = {
   key: "priceRulesToApprove",
   when: (a) => can(a, "pricing.manage"),
-  get: async (a) => {
-    const rows = await prisma.priceRule.findMany({
-      where: { status: "PENDING_APPROVAL", OR: [{ createdBy: null }, { createdBy: { not: own(a) } }] },
-      select: { adjustType: true, adjustPct: true },
-    });
-    const limit = (await getSettings()).max_manager_discount_pct;
-    const mine = a.role === "OWNER" ? rows : rows.filter((r) => r.adjustType !== "FLAT" && (r.adjustPct ?? 0) <= limit);
-    return { label: "Price rules to approve", count: mine.length, href: "/app/pricing" };
-  },
-};
-
-/** AT-4: shifts flagged for a missing clock-out that still have no clock-out. */
-const missingClockOuts: Def = {
-  key: "missingClockOuts",
-  when: (a) => can(a, "attendance.correct"),
-  get: async () => ({
-    label: "Missing clock-outs",
-    count: await prisma.attendance.count({ where: { clockOut: null, missingFlaggedAt: { not: null } } }),
-    href: "/app/staff/attendance",
+  get: async (a) => ({
+    label: "Price rules to approve",
+    count: await prisma.priceRule.count({ where: { status: "PENDING_APPROVAL", OR: [{ createdBy: null }, { createdBy: { not: own(a) } }] } }),
+    href: "/app/pricing",
   }),
 };
 
@@ -105,13 +61,24 @@ const payrollToPay: Def = {
   get: async () => ({ label: "Approved payroll to pay", count: await prisma.payrollRun.count({ where: { status: "APPROVED" } }), href: "/app/finance/payroll" }),
 };
 
-/** Closed drawers whose counted cash has not been banked yet (recordDeposit). */
+/** Closed pre-v4 drawers whose counted cash was never banked (recordDeposit). Since v4 §2.5 the cash goes from the
+ *  till to the safe at close (cash_dropped is set), so those sessions are counted in the safe below instead. */
 const drawersToBank: Def = {
   key: "drawersToBank",
   when: (a) => can(a, "cash.reconcile"),
   get: async () => {
-    const rows = await prisma.cashDrawerSession.findMany({ where: { closedAt: { not: null }, depositedAt: null, cashCounted: { gt: 0 } }, select: { cashCounted: true } });
+    const rows = await prisma.cashDrawerSession.findMany({ where: { closedAt: { not: null }, depositedAt: null, cashDropped: null, cashCounted: { gt: 0 } }, select: { cashCounted: true } });
     return { label: "Drawer cash to bank", count: rows.length, amount: rows.reduce((x, r) => x + (r.cashCounted ?? 0), 0), href: "/app/finance/drawers" };
+  },
+};
+
+/** v4 §2.6: cash dropped into the safe and not yet deposited at the bank. */
+const safeToBank: Def = {
+  key: "safeToBank",
+  when: (a) => can(a, "cash.reconcile"),
+  get: async () => {
+    const amount = await safeBalanceTx(prisma);
+    return { label: "Cash in the safe to bank", count: amount > 0 ? 1 : 0, amount, href: "/app/finance/drawers" };
   },
 };
 
@@ -194,14 +161,15 @@ const refundsToPayOut: Def = {
 };
 
 /**
- * Per home: what waits for that person. The Owner/Manager dashboard already shows low stock, open orders, overdue
- * lead follow-ups and pending club cancellations in its own sections, so its panel is the approvals only.
+ * Per home: what waits for that person. On the Owner/Manager dashboard, refunds, leave, missing clock-outs and drawer
+ * variances are decided row by row in "Needs your approval" (v4 RN-4, services/approvals.ts); this panel keeps the
+ * Owner's other decisions (price rules, payroll, data requests).
  */
 const HOME_ITEMS: Record<TodoHome, Def[]> = {
-  dashboard: [refundsToApprove, leaveToApprove, priceRulesToApprove, missingClockOuts, payrollToApprove, dataRequests],
+  dashboard: [priceRulesToApprove, payrollToApprove, dataRequests],
   shop: [ordersToPrepare, ordersToHandOver, restringOpen, lowStock, deliveriesToReceive, refundsToPayOut],
   bar: [readyToServe, refundsToPayOut],
-  finance: [drawersToBank, supplierBills, overdueInvoices, payrollToPay],
+  finance: [drawersToBank, safeToBank, supplierBills, overdueInvoices, payrollToPay],
 };
 
 /** The keys a role's panel can show (before the capability check), for tests and docs. */

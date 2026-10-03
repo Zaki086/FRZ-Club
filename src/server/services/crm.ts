@@ -116,9 +116,11 @@ export const leadSchema = z.object({
 export const publicFormSchema = z.object({
   consent: z.literal(true, { message: "Please agree to be contacted about your enquiry." }),
   website: z.string().max(0, "Please leave the last field empty.").optional(),
+  // v4 §5.1: a separate, optional tick — "Send me booking and refund updates on WhatsApp" (stored with the time).
+  whatsappOptIn: z.boolean().optional(),
 });
 
-export async function createLeadTx(tx: Tx, actor: Actor, raw: z.input<typeof leadSchema>, extra: { guestId?: string; bookingId?: string; consentAt?: Date | null } = {}) {
+export async function createLeadTx(tx: Tx, actor: Actor, raw: z.input<typeof leadSchema>, extra: { guestId?: string; bookingId?: string; consentAt?: Date | null; whatsappOptInAt?: Date | null } = {}) {
   const input = leadSchema.parse(raw);
   if (!input.phone && !input.email) throw new DomainError("VALIDATION_FAILED", "Please give a phone number or an email so we can get back to you.");
   const s = await getSettings(tx);
@@ -132,6 +134,7 @@ export async function createLeadTx(tx: Tx, actor: Actor, raw: z.input<typeof lea
       assignmentReason: assignee?.reason ?? null, assignedAt: assignee ? now : null,
       nextFollowUpAt: new Date(now.getTime() + s.lead_follow_up_hours * HOUR), guestId: extra.guestId ?? null, bookingId: extra.bookingId ?? null,
       consentAt: extra.consentAt ?? null,
+      whatsappOptInAt: extra.whatsappOptInAt ?? null,
     },
   });
   await tx.leadActivity.create({
@@ -141,7 +144,7 @@ export async function createLeadTx(tx: Tx, actor: Actor, raw: z.input<typeof lea
     await tx.leadActivity.create({ data: { leadId: lead.id, type: "ASSIGNED", note: `Assigned to ${assignee.name} — ${assignee.reason}`, byUserId: actorId(actor), at: now } });
     await tellAssignee(tx, actor, lead, assignee, `lead-assigned:${lead.id}:${assignee.id}:0`);
   }
-  await audit(tx, actor, "lead.create", "lead", lead.id, { after: { code, name: lead.name, source: lead.source, assignedTo: assignee?.name ?? null } });
+  await audit(tx, actor, "lead.create", "lead", lead.id, { after: { code, name: lead.name, source: lead.source, assignedTo: assignee?.name ?? null, whatsappOptIn: !!lead.whatsappOptInAt } });
   // CR-3: every front desk and manager hears about it; the assignee also gets an email.
   await notify(tx, {
     roles: ["FRONT_DESK", "MANAGER"], type: "NEW_LEAD", title: `New lead ${code}: ${lead.name}`,
@@ -158,7 +161,7 @@ export async function createLeadTx(tx: Tx, actor: Actor, raw: z.input<typeof lea
 export async function createEnquiry(raw: z.input<typeof leadSchema> & z.input<typeof publicFormSchema>) {
   publicFormSchema.parse(raw);
   return withTx(async (tx) => {
-    const lead = await createLeadTx(tx, PUBLIC, { ...raw, source: "WEBSITE_ENQUIRY" }, { consentAt: clock.now() });
+    const lead = await createLeadTx(tx, PUBLIC, { ...raw, source: "WEBSITE_ENQUIRY" }, { consentAt: clock.now(), whatsappOptInAt: raw.whatsappOptIn ? clock.now() : null });
     return { leadCode: lead.code };
   });
 }
@@ -384,6 +387,11 @@ export async function createTrialBooking(raw: z.input<typeof trialSchema>) {
     if (member) throw new DomainError("TRIAL_ALREADY_USED", "This phone number already belongs to a member — log in to book a court.");
     const guest = await findOrCreateGuest(tx, { name: input.name, phone: input.phone, email: input.email ?? null });
     await tx.$queryRaw`SELECT id FROM guests WHERE id = ${guest.id} FOR UPDATE`;
+    // v4 §5.1: the WhatsApp tick is stored with the time on the guest (who gets the booking messages) and the lead.
+    if (input.whatsappOptIn) {
+      await tx.guest.update({ where: { id: guest.id }, data: { whatsappOptInAt: clock.now() } });
+      await audit(tx, PUBLIC, "whatsapp.opt_in", "guest", guest.id, { after: { optedIn: true, via: "trial form" } });
+    }
     const used = await tx.booking.findFirst({ where: { primaryGuestId: guest.id, channel: "ONLINE_TRIAL", status: { notIn: ["CANCELLED", "CANCELLED_BY_CLUB"] } } });
     if (used) throw new DomainError("TRIAL_ALREADY_USED", `A trial was already booked with ${input.phone} (${used.bookingCode}). Each phone number gets one trial.`);
     const booking = await createBookingTx(tx, PUBLIC, {
@@ -392,7 +400,7 @@ export async function createTrialBooking(raw: z.input<typeof trialSchema>) {
     const lead = await createLeadTx(tx, PUBLIC, {
       name: input.name, phone: input.phone, email: input.email, source: "TRIAL_BOOKING", interest: "Trial session",
       message: `Trial booked: ${booking.court} ${fmtDateTime(booking.startAt)} (${booking.bookingCode})`,
-    }, { guestId: guest.id, bookingId: booking.bookingId, consentAt: clock.now() });
+    }, { guestId: guest.id, bookingId: booking.bookingId, consentAt: clock.now(), whatsappOptInAt: input.whatsappOptIn ? clock.now() : null });
     if (input.email) {
       await queueEmail(tx, { to: input.email, subject: `Trial confirmed: ${booking.court} ${fmtDateTime(booking.startAt)}`, body: `Hi ${input.name}, your trial ${booking.bookingCode} is booked. ${booking.total ? `The trial fee of ${formatINR(booking.total)} is paid at the desk.` : "The trial is free."} See you soon!`, dedupeKey: `trial:${booking.bookingId}` });
     }

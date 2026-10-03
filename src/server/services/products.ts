@@ -191,7 +191,8 @@ export async function restoreProduct(actor: Actor, id: string) {
 
 // ───────── shop discounts: price-book promotions on shop products (same model and guardrails as the price book) ─────────
 // D-79: shop staff (`shop.pricing`) create and end them for one product, some categories or the whole shop; up to
-// `max_staff_discount_pct` they start at once, above it they wait for a Manager/Owner (decideRule). Never another scope.
+// `max_staff_discount_pct` they start at once, above it they wait for the Owner (decideRule; v4 RN-3 — no manager
+// approvals). Never another scope.
 
 export const productPromotionSchema = z.object({
   name: z.string().trim().min(2).max(60),

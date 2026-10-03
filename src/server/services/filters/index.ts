@@ -5,7 +5,7 @@ import { listCsv, runList, type ListDef } from "./core";
 import { bookingsList } from "./bookings";
 import { leadsList } from "./leads";
 import { membersList } from "./members";
-import { drawersList } from "./drawers";
+import { drawersList, myDrawerMovementsList } from "./drawers";
 import { productsList } from "./products";
 import { tabsList } from "./tabs";
 import { barDaysList } from "./bar-days";
@@ -17,7 +17,7 @@ import { leaveList } from "./leave";
 import { auditList } from "./audit";
 import { usersList } from "./users";
 import { dataRequestsList } from "./data-requests";
-import { messagesList } from "./messages";
+import { messagesList, whatsappLogList } from "./messages";
 import { ordersList } from "./orders";
 import { salesList } from "./sales";
 import { stockList } from "./stock";
@@ -40,6 +40,7 @@ export const LISTS: Record<string, ListDef> = {
   [employeesList.name]: employeesList,
   [refundsList.name]: refundsList,
   [drawersList.name]: drawersList,
+  [myDrawerMovementsList.name]: myDrawerMovementsList,
   [productsList.name]: productsList,
   [tabsList.name]: tabsList,
   [barDaysList.name]: barDaysList,
@@ -52,6 +53,7 @@ export const LISTS: Record<string, ListDef> = {
   [usersList.name]: usersList,
   [dataRequestsList.name]: dataRequestsList,
   [messagesList.name]: messagesList,
+  [whatsappLogList.name]: whatsappLogList,
   [ordersList.name]: ordersList,
   [salesList.name]: salesList,
   [stockList.name]: stockList,

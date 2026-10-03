@@ -1,4 +1,7 @@
 // v3 RF-6: the refunds queue — every refund request with its stage, who asked, who decided and how it was paid.
+// v4 §3.5: the front desk page puts tabs on the status / "asked by" facets (Ready to pay out · Awaiting approval ·
+// Requested by members · Completed · Rejected); the summary strip ignores those two facets so it reads the same on
+// every tab: Ready to collect (count, ₹) · Awaiting approval · Paid out today · Oldest unclaimed (days).
 import { Prisma } from "@prisma/client";
 import { can } from "../../rbac/permissions";
 import { BILL_CAPABILITY } from "../payments";
@@ -19,6 +22,11 @@ export const refundsList: ListDef = {
       SELECT r.id, r.code, r.created_at, r.bill_id, r.decided_by, b.customer_name AS customer, b.source_type::text AS source, b.member_id,
         r.amount, r.reason, r.note, r.status, r.auto_approved, r.policy, r.requested_via, r.requested_by,
         ru.name AS requested_by_name, du.name AS decided_by_name, r.decided_at, r.decision_note, r.completed_at, r.failure_reason,
+        r.collect_status, r.ready_at, r.identity_method, iu.name AS identity_checked_by_name, r.reminders_sent,
+        CASE WHEN r.collect_status = 'READY_TO_COLLECT' THEN floor(extract(epoch FROM (app_now() - r.ready_at)) / 86400)::int END AS days_waiting,
+        COALESCE((SELECT x.booking_code FROM bookings x WHERE x.bill_id = r.bill_id), (SELECT x.code FROM shop_orders x WHERE x.bill_id = r.bill_id),
+                 (SELECT x.code FROM counter_sales x WHERE x.bill_id = r.bill_id), (SELECT x.code FROM tabs x WHERE x.bill_id = r.bill_id),
+                 (SELECT x.code FROM service_tickets x WHERE x.bill_id = r.bill_id LIMIT 1), (SELECT x.number FROM invoices x WHERE x.bill_id = r.bill_id)) AS source_code,
         r.amount > COALESCE((SELECT (value #>> '{}')::int FROM settings WHERE key = 'refund_manager_limit'), 500000) AS needs_owner,
         COALESCE(pp.pending, 0) AS pending_amount, pp.paid_methods,
         (SELECT array_agg(DISTINCT p.method::text) FROM payments p WHERE p.bill_id = r.bill_id AND p.type = 'PAYMENT' AND p.status = 'SUCCEEDED') AS original_methods
@@ -26,12 +34,14 @@ export const refundsList: ListDef = {
       JOIN bills b ON b.id = r.bill_id
       LEFT JOIN users ru ON ru.id = r.requested_by
       LEFT JOIN users du ON du.id = r.decided_by
+      LEFT JOIN users iu ON iu.id = r.identity_checked_by
       LEFT JOIN LATERAL (SELECT sum(p.amount) FILTER (WHERE p.status = 'PENDING') AS pending,
                                 string_agg(DISTINCT p.method::text, ', ') FILTER (WHERE p.status = 'SUCCEEDED') AS paid_methods
                            FROM payments p WHERE p.refund_request_id = r.id AND p.type = 'REFUND') pp ON TRUE
       WHERE b.source_type::text = ANY(${sources}::text[])`;
   },
-  search: ["b.code", "b.customer", "b.note"],
+  search: ["b.code", "b.customer", "b.note", "b.source_code"],
+  summaryIgnores: ["status", "via"],
   dateColumn: { expr: "b.created_at", label: "Asked", kind: "timestamp" },
   facets: [
     { key: "status", label: "Status", expr: "b.status", options: [
@@ -64,12 +74,15 @@ export const refundsList: ListDef = {
     stage: { label: "To do first", sql: "CASE b.status WHEN 'REQUESTED' THEN 0 WHEN 'APPROVED' THEN 1 WHEN 'FAILED' THEN 2 ELSE 3 END, b.created_at DESC" },
     newest: { label: "Newest first", sql: "b.created_at DESC" },
     amount: { label: "Largest first", sql: "b.amount DESC, b.created_at DESC" },
+    oldest: { label: "Waiting longest", sql: "b.ready_at ASC NULLS LAST, b.created_at ASC" },
   },
   defaultSort: "stage",
   summary: [
+    { key: "ready", label: "Ready to collect", sql: "count(*) FILTER (WHERE b.status = 'APPROVED')", format: "count", apply: { status: "APPROVED" } },
+    { key: "ready_amount", label: "Ready to collect ₹", sql: "COALESCE(sum(b.pending_amount) FILTER (WHERE b.status = 'APPROVED'), 0)", format: "money", apply: { status: "APPROVED" } },
     { key: "awaiting", label: "Awaiting approval", sql: "count(*) FILTER (WHERE b.status = 'REQUESTED')", format: "count", apply: { status: "REQUESTED" } },
-    { key: "ready", label: "Ready to pay out", sql: "count(*) FILTER (WHERE b.status = 'APPROVED')", format: "count", apply: { status: "APPROVED" } },
-    { key: "today", label: "Completed today", sql: "COALESCE(sum(b.amount) FILTER (WHERE b.status = 'COMPLETED' AND (b.completed_at AT TIME ZONE 'Asia/Kolkata')::date = (app_now() AT TIME ZONE 'Asia/Kolkata')::date), 0)", format: "money", apply: { status: "COMPLETED", range: "TODAY" } },
+    { key: "today", label: "Paid out today", sql: "COALESCE(sum(b.amount) FILTER (WHERE b.status = 'COMPLETED' AND (b.completed_at AT TIME ZONE 'Asia/Kolkata')::date = (app_now() AT TIME ZONE 'Asia/Kolkata')::date), 0)", format: "money", apply: { status: "COMPLETED", range: "TODAY" } },
+    { key: "oldest", label: "Oldest unclaimed (days)", sql: "COALESCE(max(b.days_waiting), 0)", format: "count", apply: { status: "APPROVED" } },
     { key: "failed", label: "Failed", sql: "count(*) FILTER (WHERE b.status = 'FAILED')", format: "count", apply: { status: "FAILED" } },
   ],
   csv: [
@@ -77,5 +90,6 @@ export const refundsList: ListDef = {
     { key: "source", label: "For" }, { key: "amount", label: "Amount (₹)", format: "money" }, { key: "reason", label: "Reason" }, { key: "note", label: "Note" },
     { key: "status", label: "Status" }, { key: "requested_by_name", label: "Asked by" }, { key: "decided_by_name", label: "Decided by" },
     { key: "paid_methods", label: "Paid by" }, { key: "completed_at", label: "Completed", format: "datetime" },
+    { key: "source_code", label: "Original bill" }, { key: "ready_at", label: "Ready to collect since", format: "datetime" }, { key: "identity_checked_by_name", label: "Identity checked by" },
   ],
 };

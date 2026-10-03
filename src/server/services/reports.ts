@@ -19,6 +19,7 @@ import { getSettings } from "./settings";
 import { INDIAN_STATES } from "@/lib/states";
 import { resolveRange, type DatePreset } from "./filters/core";
 import { assertCapability } from "./capabilities";
+import { refundsPayableSummary } from "./refunds";
 
 export const INCOME_SOURCES: LedgerSource[] = ["COURTS", "SOCIAL", "SHOP", "BAR", "MEMBERSHIP", "INVOICE"];
 export const METHODS: PaymentMethod[] = ["CASH", "CARD", "UPI", "BANK_TRANSFER", "ONLINE"];
@@ -88,15 +89,20 @@ async function receivables() {
   return { total: counted.reduce((a, b) => a + billDue(b), 0), count: counted.length, rows: counted };
 }
 
-/** "What we owe" (EX-2): unpaid expense bills + approved unpaid payroll + GST collected this period (estimate). */
+/** "What we owe" (EX-2): unpaid expense bills + approved unpaid payroll + GST collected this period (estimate)
+ *  + v4 RF-10 refunds payable (approved refunds waiting to be collected at the desk; they never expire). */
 async function payables(gstThisPeriod: number) {
-  const [exp, runs] = await Promise.all([
+  const [exp, runs, rf] = await Promise.all([
     prisma.expenseBill.findMany({ where: { status: "UNPAID" } }),
     prisma.payrollRun.findMany({ where: { status: "APPROVED" }, include: { payslips: true } }),
+    refundsPayableSummary(),
   ]);
   const expenses = exp.reduce((a, e) => a + e.amount, 0);
   const payroll = runs.reduce((a, r) => a + r.payslips.reduce((x, p) => x + p.net, 0), 0);
-  return { total: expenses + payroll + gstThisPeriod, expenses, payroll, gst: gstThisPeriod, expenseCount: exp.length, payrollRuns: runs.length };
+  return {
+    total: expenses + payroll + gstThisPeriod + rf.amountPaise, expenses, payroll, gst: gstThisPeriod, expenseCount: exp.length, payrollRuns: runs.length,
+    refunds: rf.amountPaise, refundCount: rf.count, refundOldestDays: rf.oldestDays,
+  };
 }
 
 // ───────────── operational aggregates ─────────────
@@ -109,7 +115,7 @@ async function bookingStats(from: string, to: string) {
 }
 
 /** Booked court-hours ÷ open court-hours (social counts as booked; maintenance does not count either way). */
-async function utilization(from: string, to: string) {
+export async function utilization(from: string, to: string) {
   const s = await getSettings();
   const courts = await prisma.court.findMany({ where: { active: true, archivedAt: null } });
   const openMin = timeToMinutes(s.opening_hours.close) - timeToMinutes(s.opening_hours.open);

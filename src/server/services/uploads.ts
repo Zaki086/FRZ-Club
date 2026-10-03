@@ -12,7 +12,7 @@ import { audit } from "./audit";
 import { assertCapability } from "./capabilities";
 
 export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
-export const UPLOAD_KINDS = ["product", "expense"] as const;
+export const UPLOAD_KINDS = ["product", "expense", "deposit"] as const;
 export type UploadKind = (typeof UPLOAD_KINDS)[number];
 
 const TYPES: Record<string, { ext: string; sig: (b: Buffer) => boolean }> = {
@@ -21,7 +21,12 @@ const TYPES: Record<string, { ext: string; sig: (b: Buffer) => boolean }> = {
   "image/webp": { ext: "webp", sig: (b) => b.subarray(0, 4).toString() === "RIFF" && b.subarray(8, 12).toString() === "WEBP" },
   "application/pdf": { ext: "pdf", sig: (b) => b.subarray(0, 5).toString() === "%PDF-" },
 };
-const ALLOWED: Record<UploadKind, string[]> = { product: ["image/png", "image/jpeg", "image/webp"], expense: ["image/png", "image/jpeg", "image/webp", "application/pdf"] };
+const ALLOWED: Record<UploadKind, string[]> = {
+  product: ["image/png", "image/jpeg", "image/webp"],
+  expense: ["image/png", "image/jpeg", "image/webp", "application/pdf"],
+  // v4 §2.6: bank deposit slips (Owner, Manager, Accountant).
+  deposit: ["image/png", "image/jpeg", "image/webp", "application/pdf"],
+};
 const NAME_RE = /^[a-z0-9]{24}\.(png|jpg|webp|pdf)$/;
 
 export const uploadDir = () => path.resolve(/* turbopackIgnore: true */ process.cwd(), process.env.UPLOAD_DIR ?? "uploads");
@@ -34,13 +39,13 @@ function detect(data: Buffer): string | null {
 export async function saveUpload(actor: Actor, kind: string, data: Buffer) {
   if (!(UPLOAD_KINDS as readonly string[]).includes(kind)) throw new DomainError("VALIDATION_FAILED", "Unknown upload kind.");
   const k = kind as UploadKind;
-  assertCan(actor, k === "product" ? "shop.stock" : "expenses.manage");
+  assertCan(actor, k === "product" ? "shop.stock" : k === "deposit" ? "cash.reconcile" : "expenses.manage");
   await assertCapability("photos.upload");
   if (data.length === 0) throw new DomainError("VALIDATION_FAILED", "The file is empty.");
   if (data.length > MAX_UPLOAD_BYTES) throw new DomainError("VALIDATION_FAILED", `The file is ${(data.length / 1_048_576).toFixed(1)} MB; the limit is 2 MB.`);
   const type = detect(data);
   if (!type || !ALLOWED[k].includes(type)) {
-    throw new DomainError("VALIDATION_FAILED", k === "product" ? "Upload a PNG, JPEG or WebP image." : "Upload a photo (PNG, JPEG, WebP) or a PDF of the bill.");
+    throw new DomainError("VALIDATION_FAILED", k === "product" ? "Upload a PNG, JPEG or WebP image." : `Upload a photo (PNG, JPEG, WebP) or a PDF of the ${k === "deposit" ? "deposit slip" : "bill"}.`);
   }
   const name = `${randomBytes(12).toString("hex")}.${TYPES[type].ext}`;
   const dir = path.join(uploadDir(), k);
@@ -55,6 +60,7 @@ export async function saveUpload(actor: Actor, kind: string, data: Buffer) {
 export async function readUpload(actor: Actor, kind: string, name: string): Promise<{ data: Buffer; type: string }> {
   if (!(UPLOAD_KINDS as readonly string[]).includes(kind) || !NAME_RE.test(name)) throw new DomainError("NOT_FOUND", "File was not found.");
   if (kind === "expense" && !can(actor, "expenses.view")) throw new DomainError("FORBIDDEN", "Not allowed: expense bills are for finance staff.");
+  if (kind === "deposit" && !can(actor, "cash.reconcile")) throw new DomainError("FORBIDDEN", "Not allowed: deposit slips are for finance staff.");
   const p = path.join(uploadDir(), kind, name);
   if (!(await stat(p).catch(() => null))) throw new DomainError("NOT_FOUND", "File was not found.");
   const data = await readFile(p);

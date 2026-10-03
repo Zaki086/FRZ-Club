@@ -19,6 +19,7 @@ import { recordPaymentTx, refundTx, startOnlinePaymentTx } from "./payments";
 import { entitlementsFor, quoteSocial } from "./pricing";
 import { getSettings } from "./settings";
 import { normalisePhone } from "@/lib/codes";
+import { waAmount, waDate, waFirstName, waTime, type WaMessage } from "./whatsapp/templates";
 
 export const createSessionSchema = z.object({
   title: z.string().trim().min(3).max(80).default("Friday Social"),
@@ -112,13 +113,27 @@ export async function notifySocialCancelled(tx: Tx, actor: Actor, r: Awaited<Ret
       : " Nothing is owed.";
     const body = `“${r.title}” on ${when} is cancelled. Reason: ${why}.${money}`;
     const params = [title, r.title, when, why, "/portal/social"];
+    // v4 §5.2 booking_cancelled_refund: the session and what happens to the money; the button opens the refund.
+    const refundCode = p.refundRequestId ? (await tx.refundRequest.findUnique({ where: { id: p.refundRequestId }, select: { code: true } }))?.code ?? null : null;
+    const outcome = p.refunded
+      ? p.pending
+        ? `₹${waAmount(p.pending)} to collect at the front desk${p.refunded > p.pending ? `, ₹${waAmount(p.refunded - p.pending)} refunded` : ""}`
+        : `₹${waAmount(p.refunded)} refunded`
+      : "nothing was charged";
+    const wa = (name: string | null | undefined): WaMessage => ({
+      template: "booking_cancelled_refund",
+      vars: { name: waFirstName(name), booking: r.title, date: waDate(r.startAt), time: waTime(r.startAt), refund: outcome },
+      button: { ref: refundCode ?? r.sessionId },
+    });
     if (p.memberId) {
       const audience = await memberAudience(tx, [p.memberId]);
       for (const [i, a] of audience.entries()) {
-        await notifyMember(tx, { event: "BOOKING_CANCELLED_BY_CLUB", userId: a.userId, memberId: a.memberId, actor, title, body, link: "/portal/social", dedupeKey: `club-cancel-social:${p.id}${i ? `:${a.userId}` : ""}`, params });
+        const recipient = await tx.user.findUnique({ where: { id: a.userId }, select: { name: true } });
+        await notifyMember(tx, { event: "BOOKING_CANCELLED_BY_CLUB", userId: a.userId, memberId: a.memberId, actor, title, body, sessionAt: r.startAt, link: "/portal/social", dedupeKey: `club-cancel-social:${p.id}${i ? `:${a.userId}` : ""}`, params, wa: wa(recipient?.name) });
       }
     } else if (p.guestId) {
-      await notifyGuest(tx, { event: "BOOKING_CANCELLED_BY_CLUB", guestId: p.guestId, title, body, dedupeKey: `club-cancel-social:${p.id}`, params, actor });
+      const guest = await tx.guest.findUnique({ where: { id: p.guestId }, select: { name: true } });
+      await notifyGuest(tx, { event: "BOOKING_CANCELLED_BY_CLUB", guestId: p.guestId, title, body, dedupeKey: `club-cancel-social:${p.id}`, params, actor, wa: wa(guest?.name) });
     }
   }
 }
@@ -131,19 +146,24 @@ export async function cancelSocialSessionTx(tx: Tx, actor: Actor, sessionId: str
   const ss = await tx.socialSession.findUnique({ where: { id: sessionId }, include: { courts: true, participants: true } });
   if (!ss) throw new DomainError("NOT_FOUND", "Social session was not found.");
   if (ss.status !== "SCHEDULED") throw new DomainError("CANCEL_NOT_ALLOWED", "Only scheduled sessions can be cancelled.");
-  const affected: Array<{ id: string; memberId: string | null; guestId: string | null; refunded: number; pending: number }> = [];
+  const affected: Array<{ id: string; memberId: string | null; guestId: string | null; refunded: number; pending: number; refundRequestId: string | null }> = [];
   for (const p of ss.participants.filter((x) => x.status === "JOINED")) {
     let refunded = 0;
     let pending = 0;
+    let refundRequestId: string | null = null;
     if (p.billId) {
       const bill = await tx.bill.findUniqueOrThrow({ where: { id: p.billId } });
       refunded = netPaid(bill);
       // quiet: the cancellation message (notifySocialCancelled) says what happens to the money.
-      if (refunded > 0) pending = (await refundTx(tx, actor, bill.id, refunded, { reason: `Social session cancelled by the club: ${reason}`, category: "CLUB_CANCELLATION", policy: opts.byClub ? "CC-2" : "SOCIAL_CANCELLED_BY_CLUB", quiet: true })).pending;
+      if (refunded > 0) {
+        const r = await refundTx(tx, actor, bill.id, refunded, { reason: `Social session cancelled by the club: ${reason}`, category: "CLUB_CANCELLATION", policy: opts.byClub ? "CC-2" : "SOCIAL_CANCELLED_BY_CLUB", quiet: true });
+        pending = r.pending;
+        refundRequestId = r.requestId;
+      }
       await closeBill(tx, bill.id, "Social session cancelled by the club", clock.now());
     }
     await tx.socialParticipant.update({ where: { id: p.id }, data: { status: opts.byClub ? "CANCELLED_BY_CLUB" : "LEFT", leftAt: clock.now() } });
-    affected.push({ id: p.id, memberId: p.memberId, guestId: p.guestId, refunded, pending });
+    affected.push({ id: p.id, memberId: p.memberId, guestId: p.guestId, refunded, pending, refundRequestId });
   }
   await tx.courtReservation.updateMany({ where: { id: { in: ss.courts.map((c) => c.reservationId) } }, data: { status: "CANCELLED" } });
   await tx.socialSession.update({ where: { id: ss.id }, data: { status: "CANCELLED" } });

@@ -57,6 +57,8 @@ export type ListDef = {
   csv: Array<{ key: string; label: string; format?: "money" | "date" | "datetime" }>;
   /** Default query when the list is opened with no parameters. */
   defaults?: (actor: Actor) => Record<string, string>;
+  /** Facets the summary strip ignores, so its figures stay the same across tabs built on them (v4 §3.5). */
+  summaryIgnores?: string[];
 };
 
 export type ListQuery = { q: string; range: DatePreset | null; from: string | null; to: string | null; sort: string; page: number; size: number; facets: Record<string, string[]> };
@@ -123,7 +125,7 @@ function facetCond(f: FacetDef, values: string[], ctx: ListCtx): Prisma.Sql {
   return f.multi ? Prisma.sql`(${Prisma.raw(f.expr)}) && ${vals}::text[]` : Prisma.sql`(${Prisma.raw(f.expr)})::text = ANY(${vals}::text[])`;
 }
 
-function conditions(def: ListDef, q: ListQuery, ctx: ListCtx, skip?: string): Prisma.Sql {
+function conditions(def: ListDef, q: ListQuery, ctx: ListCtx, skip?: string | string[]): Prisma.Sql {
   const parts: Prisma.Sql[] = [Prisma.sql`TRUE`];
   if (q.q && def.search.length) {
     const like = `%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
@@ -140,7 +142,7 @@ function conditions(def: ListDef, q: ListQuery, ctx: ListCtx, skip?: string): Pr
     }
   }
   for (const f of def.facets) {
-    if (f.key === skip) continue;
+    if (Array.isArray(skip) ? skip.includes(f.key) : f.key === skip) continue;
     const v = q.facets[f.key];
     if (v?.length) parts.push(facetCond(f, v, ctx));
   }
@@ -205,7 +207,7 @@ export async function runList(def: ListDef, actor: Actor, params: Record<string,
       facets.push({ key: f.key, label: f.label, options });
     }
     const summaryRow = def.summary.length
-      ? (await tx.$queryRaw<Record<string, unknown>[]>(Prisma.sql`SELECT ${Prisma.join(def.summary.map((s) => Prisma.sql`(${Prisma.raw(s.sql)}) AS ${Prisma.raw(`"${s.key}"`)}`), ", ")} FROM ${baseTable(def)} b WHERE ${where}`))[0]
+      ? (await tx.$queryRaw<Record<string, unknown>[]>(Prisma.sql`SELECT ${Prisma.join(def.summary.map((s) => Prisma.sql`(${Prisma.raw(s.sql)}) AS ${Prisma.raw(`"${s.key}"`)}`), ", ")} FROM ${baseTable(def)} b WHERE ${def.summaryIgnores?.length ? conditions(def, q, ctx, def.summaryIgnores) : where}`))[0]
       : {};
     return {
       list: def.name,

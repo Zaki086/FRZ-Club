@@ -18,10 +18,10 @@ import { addBillLines, billDue, closeBill, createBill, netPaid, refreshBill, voi
 import { findOrCreateGuest } from "./guests";
 import { idempotent } from "./idempotency";
 import { memberAudience, notifyGuest, notifyMember } from "./channels";
-import { notify } from "./notifications";
 import { recordPaymentTx, refundTx, startOnlinePaymentTx } from "./payments";
 import { entitlementsFor, priceLine, quoteCourt, type PlayerRef, type Tier } from "./pricing";
 import { getSettings, type Settings } from "./settings";
+import { waDate, waFirstName, waTime, waAmount, type WaMessage } from "./whatsapp/templates";
 
 export const SESSION_MINUTES = 60;
 const STAFF_CHANNELS: BookingChannel[] = ["FRONT_DESK", "PHONE", "MESSAGE", "WALK_IN"];
@@ -402,17 +402,16 @@ export async function createBookingTx(
     payment = { redirectUrl: p.redirectUrl, paymentId: p.paymentId };
   }
 
-  // E-16: notify member players
-  const memberUsers = await tx.member.findMany({ where: { id: { in: players.map((p) => p.memberId).filter((x): x is string => !!x) } }, select: { userId: true } });
-  await notify(tx, {
-    userIds: memberUsers.map((m) => m.userId).filter((x): x is string => !!x),
-    type: "BOOKING_CONFIRMED",
-    title: `Booked: ${court.name} ${timeLabel}`,
-    body: `${code} · players: ${players.map((p) => p.name).join(", ")} · total ${formatINR(quote.total)}${billDue(billNow) > 0 ? ` (${formatINR(billDue(billNow))} due)` : ""}`,
-    link: "/portal/bookings",
-    dedupeKey: `booking-confirmed:${booking.id}`,
-    email: true,
-  });
+  // E-16 / v4 §4.1: every member player (and a Junior's guardian) — in-app, push and email. A booking that moves a
+  // club-cancelled one is confirmed by the "rescheduled" message, so this one stays in the app.
+  for (const a of await memberAudience(tx, players.map((p) => p.memberId))) {
+    await notifyMember(tx, {
+      event: "BOOKING_CONFIRMED", userId: a.userId, memberId: a.memberId, actor, channels: opts.reschedule ? [] : undefined,
+      title: `Booked: ${court.name} ${timeLabel}`,
+      body: `${code} · players: ${players.map((p) => p.name).join(", ")} · total ${formatINR(quote.total)}${billDue(billNow) > 0 ? ` (${formatINR(billDue(billNow))} due)` : ""}`,
+      link: "/portal/bookings", dedupeKey: `booking-confirmed:${booking.id}:${a.userId}`,
+    });
+  }
 
   return {
     bookingId: booking.id, bookingCode: code, court: court.name, startAt: start.toISOString(), endAt: end.toISOString(),
@@ -489,6 +488,7 @@ export async function cancelBookingTx(tx: Tx, actor: Actor, bookingId: string, r
   const fullRefund = hoursBefore >= s.cancel_full_refund_hours;
   let refunded = 0;
   let refundPending = 0;
+  let refundRequestId: string | null = null;
   if (b.billId) {
     const bill = await tx.bill.findUniqueOrThrow({ where: { id: b.billId } });
     if (fullRefund) {
@@ -497,6 +497,7 @@ export async function cancelBookingTx(tx: Tx, actor: Actor, bookingId: string, r
         const r = await refundTx(tx, actor, bill.id, paid, { method: input.refundMethod, reference: input.refundReference, approvalCode: input.refundReference, reason: `Booking ${b.bookingCode} cancelled ${hoursBefore.toFixed(1)}h before start`, category: "POLICY_CANCELLATION", policy: "BK-7", quiet: true }); // the cancellation message below says what happens to the money
         refunded = r.refunded;
         refundPending = r.pending;
+        refundRequestId = r.requestId;
       }
       await closeBill(tx, bill.id, `Booking ${b.bookingCode} cancelled in time — nothing due`, now);
     }
@@ -514,34 +515,33 @@ export async function cancelBookingTx(tx: Tx, actor: Actor, bookingId: string, r
   });
   const slot = `${b.reservation.court.name} ${fmtDate(istDate(b.reservation.startAt))} ${fmtRange(b.reservation.startAt, b.reservation.endAt)}`;
   const money = `${refunded ? `${formatINR(refunded)} refunded.` : ""}${refundPending ? ` ${formatINR(refundPending)} will be refunded at the front desk.` : ""}${!refunded && !refundPending ? (fullRefund ? "Nothing was charged." : `Cancelled less than ${s.cancel_full_refund_hours}h before start — no refund.`) : ""}`;
+  // v4 §4.1: a cancelled booking (by the member or by the club's staff) reaches every player on every channel —
+  // members, a Junior's guardian, guests — with the refund outcome; WhatsApp uses booking_cancelled_refund.
   const selfService = actor.kind === "USER" && actor.role === "MEMBER";
-  if (selfService) {
-    // The member cancelled it themselves: a confirmation in the app and by email is enough.
-    const memberUsers = await tx.member.findMany({ where: { id: { in: b.players.filter((p) => !p.removedAt).map((p) => p.memberId).filter((x): x is string => !!x) } }, select: { userId: true } });
-    await notify(tx, {
-      userIds: memberUsers.map((m) => m.userId).filter((x): x is string => !!x),
-      type: "BOOKING_CANCELLED",
-      title: `Cancelled: ${slot}`,
-      body: `${b.bookingCode} was cancelled. ${money}`,
-      link: "/portal/bookings",
-      dedupeKey: `booking-cancelled:${b.id}`,
-      email: true,
-    });
-  } else {
-    // Cancelled by the club's staff: every player hears it on every channel (members, a Junior's guardian, guests).
-    const title = `Cancelled: ${slot}`;
-    const body = `Your booking ${b.bookingCode} (${slot}) was cancelled by the club${input.reason ? `. Reason: ${input.reason}` : ""}. ${money}`;
-    const params = (name: string) => [name, b.reservation.court.name, `${fmtDate(istDate(b.reservation.startAt))} ${fmtRange(b.reservation.startAt, b.reservation.endAt)}`, money];
-    const players = b.players.filter((p) => !p.removedAt);
-    const audience = await memberAudience(tx, [b.primaryMemberId, ...players.map((p) => p.memberId)]);
-    for (const a of audience) {
-      const m = await tx.member.findUnique({ where: { id: a.memberId }, select: { name: true } });
-      await notifyMember(tx, { event: "BOOKING_CANCELLED", userId: a.userId, memberId: a.memberId, actor, title, body, link: "/portal/bookings", dedupeKey: `booking-cancelled:${b.id}:${a.memberId}:${a.userId}`, params: params(m?.name ?? "") });
-    }
-    for (const g of [...new Set([b.primaryGuestId, ...players.map((p) => p.guestId)].filter((x): x is string => !!x))]) {
-      const guest = await tx.guest.findUnique({ where: { id: g }, select: { name: true } });
-      await notifyGuest(tx, { event: "BOOKING_CANCELLED", guestId: g, title, body, actor, dedupeKey: `booking-cancelled:${b.id}:${g}`, params: params(guest?.name ?? "") });
-    }
+  const title = `Cancelled: ${slot}`;
+  const body = selfService
+    ? `Your booking ${b.bookingCode} (${slot}) was cancelled. ${money}`
+    : `Your booking ${b.bookingCode} (${slot}) was cancelled by the club${input.reason ? `. Reason: ${input.reason}` : ""}. ${money}`;
+  const params = (name: string) => [name, b.reservation.court.name, `${fmtDate(istDate(b.reservation.startAt))} ${fmtRange(b.reservation.startAt, b.reservation.endAt)}`, money];
+  const players = b.players.filter((p) => !p.removedAt);
+  const audience = await memberAudience(tx, [b.primaryMemberId, ...players.map((p) => p.memberId)]);
+  // v4 §5.2 booking_cancelled_refund: {{5}} is the refund outcome; the button opens portal/refunds?ref=<refund code>.
+  const refundCode = refundRequestId ? (await tx.refundRequest.findUnique({ where: { id: refundRequestId }, select: { code: true } }))?.code ?? null : null;
+  const refundOutcome = refundPending
+    ? `₹${waAmount(refundPending)} to collect at the front desk${refunded ? `, ₹${waAmount(refunded)} refunded` : ""}`
+    : refunded ? `₹${waAmount(refunded)} refunded` : fullRefund ? "nothing was charged" : `none (cancelled less than ${s.cancel_full_refund_hours}h before start)`;
+  const wa = (name: string | null | undefined): WaMessage => ({
+    template: "booking_cancelled_refund",
+    vars: { name: waFirstName(name), booking: b.bookingCode, date: waDate(b.reservation.startAt), time: waTime(b.reservation.startAt), refund: refundOutcome },
+    button: { ref: refundCode ?? b.bookingCode },
+  });
+  for (const a of audience) {
+    const m = await tx.member.findUnique({ where: { id: a.memberId }, select: { name: true } });
+    await notifyMember(tx, { event: "BOOKING_CANCELLED", userId: a.userId, memberId: a.memberId, actor, title, body, link: "/portal/bookings", dedupeKey: `booking-cancelled:${b.id}:${a.memberId}:${a.userId}`, params: params(m?.name ?? ""), wa: wa((await tx.user.findUnique({ where: { id: a.userId }, select: { name: true } }))?.name ?? m?.name) });
+  }
+  for (const g of [...new Set([b.primaryGuestId, ...players.map((p) => p.guestId)].filter((x): x is string => !!x))]) {
+    const guest = await tx.guest.findUnique({ where: { id: g }, select: { name: true } });
+    await notifyGuest(tx, { event: "BOOKING_CANCELLED", guestId: g, title, body, actor, dedupeKey: `booking-cancelled:${b.id}:${g}`, params: params(guest?.name ?? ""), wa: wa(guest?.name) });
   }
   return { bookingId: b.id, bookingCode: b.bookingCode, status: "CANCELLED" as const, refunded, refundPending, fullRefund };
 }
@@ -617,16 +617,15 @@ export async function changePlayers(actor: Actor, bookingId: string, raw: z.infe
       before: { players: current.map((p) => p.memberId ?? p.guestId) },
       after: { added: added.map((p) => p.name), removed: removed.map((p) => p.memberId ?? p.guestId), refunded, refundPending, total: after.total },
     });
-    const users = await tx.member.findMany({ where: { id: { in: added.map((p) => p.memberId).filter((x): x is string => !!x) } }, select: { userId: true } });
-    await notify(tx, {
-      userIds: users.map((u) => u.userId).filter((x): x is string => !!x),
-      type: "BOOKING_PLAYER_ADDED",
-      title: `You were added to ${b.bookingCode}`,
-      body: `${court.name} ${fmtDate(date)} ${fmtRange(b.reservation.startAt, b.reservation.endAt)}`,
-      link: "/portal/bookings",
-      dedupeKey: `booking-player-added:${b.id}:${added.map((a) => a.memberId ?? a.guestId).join(",")}`,
-      email: true,
-    });
+    // v4 §4.1: added member players (and a Junior's guardian) — in-app, push and email.
+    for (const a of await memberAudience(tx, added.map((p) => p.memberId))) {
+      await notifyMember(tx, {
+        event: "BOOKING_PLAYER_ADDED", userId: a.userId, memberId: a.memberId, actor,
+        title: `You were added to ${b.bookingCode}`,
+        body: `${court.name} ${fmtDate(date)} ${fmtRange(b.reservation.startAt, b.reservation.endAt)}`,
+        link: "/portal/bookings", dedupeKey: `booking-player-added:${b.id}:${a.memberId}:${a.userId}`,
+      });
+    }
     return { bookingId: b.id, added: added.length, removed: removed.length, refunded, refundPending, due: billDue(after) };
   });
 }
