@@ -6,7 +6,7 @@ import { api, ApiError } from "./api";
 import { Money } from "./money";
 import { RejectionBanner } from "./states";
 
-export type CatalogueVariant = { id: string; sku: string; label: string; price: number; available: number | null; stockLabel: string; inStock: boolean };
+export type CatalogueVariant = { id: string; sku: string; barcode?: string | null; label: string; price: number; available: number | null; stockLabel: string; inStock: boolean };
 export type CatalogueProduct = {
   id: string;
   name: string;

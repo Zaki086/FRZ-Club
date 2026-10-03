@@ -4,17 +4,19 @@ import { useState } from "react";
 import { api, useApi } from "@/components/api";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Field, Input, Select } from "@/components/ui/input";
+import { Field, Input } from "@/components/ui/input";
 import { DataState, RejectionBanner } from "@/components/states";
 import { StatusBadge, TierBadge } from "@/components/badges";
 import { Money } from "@/components/money";
 import { PaymentPanel } from "@/components/payment-panel";
+import { emptyRefund, RefundFields, refundBody, refundSummary, type RefundDraft } from "@/components/tender-fields";
 import { ConfirmButton } from "@/components/confirm";
 import { fmtDateTime, fmtRange } from "@/lib/time";
 import { formatINR } from "@/lib/money";
 import { PlayerPicker } from "./player-picker";
 import { useNow } from "./use-now";
 import { errorOf, type BookingView, type PickedPlayer } from "./types";
+import { WhatsAppButton } from "@/components/whatsapp-button";
 
 function CheckIn({ id, onDone }: { id: string; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -54,28 +56,23 @@ function ChangePlayers({ booking, onDone }: { booking: BookingView; onDone: () =
     input: p.memberId ? { memberId: p.memberId } : { guestId: p.guestId! },
   }));
   const [players, setPlayers] = useState<PickedPlayer[]>(initial);
-  const [refundMethod, setRefundMethod] = useState("");
+  const [refund, setRefund] = useState<RefundDraft>(emptyRefund);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
-  const [result, setResult] = useState<{ added: number; removed: number; refunded: number; due: number } | null>(null);
+  const [result, setResult] = useState<{ added: number; removed: number; refunded: number; refundPending: number; due: number } | null>(null);
   const locked = primaryKey ? [primaryKey] : [];
   return (
     <div className="flex flex-col gap-2 rounded-md border p-3">
       <p className="text-sm font-semibold">Change players</p>
       <p className="text-xs text-muted-foreground">New players are checked for the daily limit and time conflicts and priced by their tier. Removing a player 2 h+ before start refunds their fee.</p>
       <PlayerPicker players={players} onChange={setPlayers} max={8} lockedKeys={locked} />
-      <Field label="Refund method if money goes back (counter payments)">
-        <Select value={refundMethod} onChange={(e) => setRefundMethod(e.target.value)}>
-          <option value="">Same as original payment</option>
-          <option value="CASH">Cash</option>
-          <option value="CARD">Card</option>
-          <option value="UPI">UPI</option>
-        </Select>
+      <Field label="Refund if money goes back">
+        <RefundFields value={refund} onChange={setRefund} />
       </Field>
       <RejectionBanner error={error} />
       {result ? (
         <p className="text-sm text-green-800">
-          Updated: +{result.added} / −{result.removed} players{result.refunded ? ` · refunded ${formatINR(result.refunded)}` : ""}{result.due ? ` · ${formatINR(result.due)} now due` : ""}.
+          Updated: +{result.added} / −{result.removed} players{result.refunded || result.refundPending ? ` · ${refundSummary(result.refunded, result.refundPending)}` : ""}{result.due ? ` · ${formatINR(result.due)} now due` : ""}.
         </p>
       ) : null}
       <Button
@@ -85,8 +82,8 @@ function ChangePlayers({ booking, onDone }: { booking: BookingView; onDone: () =
           setBusy(true);
           setError(null);
           try {
-            const r = await api<{ added: number; removed: number; refunded: number; due: number }>(`/api/bookings/${booking.id}/players`, {
-              body: { players: players.map((p) => p.input), refundMethod: refundMethod || undefined },
+            const r = await api<{ added: number; removed: number; refunded: number; refundPending: number; due: number }>(`/api/bookings/${booking.id}/players`, {
+              body: { players: players.map((p) => p.input), ...refundBody(refund) },
             });
             setResult(r);
             onDone();
@@ -114,7 +111,7 @@ export function BookingDetailDialog({ bookingId, onClose, onChanged, canManage =
   const now = useNow();
   const [showChange, setShowChange] = useState(false);
   const [cancelMsg, setCancelMsg] = useState<string | null>(null);
-  const [refundMethod, setRefundMethod] = useState("");
+  const [refund, setRefund] = useState<RefundDraft>(emptyRefund);
   const [reason, setReason] = useState("");
   const refresh = () => {
     void state.reload();
@@ -157,6 +154,9 @@ export function BookingDetailDialog({ bookingId, onClose, onChanged, canManage =
                   <span>Due <Money paise={b.due} className="font-semibold" /> <StatusBadge status={b.billStatus} /></span>
                 </div>
                 {b.billId && b.due > 0 && b.status !== "CANCELLED" ? <PaymentPanel billId={b.billId} onPaid={refresh} /> : null}
+                <div className="flex flex-wrap gap-2">
+                  <WhatsAppButton target={{ template: "BOOKING", bookingId: b.id }} />
+                </div>
                 {canManage && upcoming ? (
                   <div className="flex flex-wrap gap-2">
                     <Button variant="outline" size="sm" onClick={() => setShowChange(!showChange)}>
@@ -168,12 +168,12 @@ export function BookingDetailDialog({ bookingId, onClose, onChanged, canManage =
                       description="Cancelled 2 h or more before start: full refund. Later: no refund, and any unpaid balance stays due (BK-7). The court is freed immediately."
                       confirmLabel="Cancel booking"
                       onConfirm={async () => {
-                        const r = await api<{ refunded: number; fullRefund: boolean }>(`/api/bookings/${b.id}/cancel`, {
-                          body: { refundMethod: refundMethod || undefined, reason: reason || undefined },
+                        const r = await api<{ refunded: number; refundPending: number; fullRefund: boolean }>(`/api/bookings/${b.id}/cancel`, {
+                          body: { ...refundBody(refund), reason: reason || undefined },
                         });
                         setCancelMsg(
-                          r.refunded > 0
-                            ? `Cancelled. ${formatINR(r.refunded)} refunded.`
+                          r.refunded > 0 || r.refundPending > 0
+                            ? `Cancelled. ${refundSummary(r.refunded, r.refundPending)}.`
                             : r.fullRefund
                               ? "Cancelled. Nothing had been charged."
                               : "Cancelled late — no refund; any unpaid balance stays due.",
@@ -182,13 +182,8 @@ export function BookingDetailDialog({ bookingId, onClose, onChanged, canManage =
                       }}
                     >
                       <div className="grid grid-cols-2 gap-2">
-                        <Field label="Refund method (counter payments)">
-                          <Select value={refundMethod} onChange={(e) => setRefundMethod(e.target.value)}>
-                            <option value="">Same as original</option>
-                            <option value="CASH">Cash</option>
-                            <option value="CARD">Card</option>
-                            <option value="UPI">UPI</option>
-                          </Select>
+                        <Field label="Refund">
+                          <RefundFields value={refund} onChange={setRefund} />
                         </Field>
                         <Field label="Reason (optional)">
                           <Input value={reason} onChange={(e) => setReason(e.target.value)} />

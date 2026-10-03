@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { ConfirmButton } from "@/components/confirm";
 import { PaymentPanel } from "@/components/payment-panel";
+import { emptyTender, MethodSelect, ProofFields, tenderProof, useTenderMethods, type TenderDraft } from "@/components/tender-fields";
 import { StatusBadge, TierBadge } from "@/components/badges";
 import { Money } from "@/components/money";
 import { addDays, fmtDay, fmtRange, minutesToTime, timeToMinutes } from "@/lib/time";
@@ -108,7 +109,8 @@ function AddPlayer({ session, onDone }: { session: Session; onDone: () => void }
   const [open, setOpen] = useState(false);
   const [players, setPlayers] = useState<PickedPlayer[]>([]);
   const [payNow, setPayNow] = useState(false);
-  const [method, setMethod] = useState<"CASH" | "CARD" | "UPI">("UPI");
+  const methods = useTenderMethods() ?? ["CASH"];
+  const [tender, setTender] = useState<TenderDraft>(emptyTender("CASH"));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -120,9 +122,10 @@ function AddPlayer({ session, onDone }: { session: Session; onDone: () => void }
           <PlayerPicker players={players} onChange={setPlayers} max={1} />
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={payNow} onChange={(e) => setPayNow(e.target.checked)} /> Take payment now</label>
           {payNow ? (
-            <Select value={method} onChange={(e) => setMethod(e.target.value as typeof method)} aria-label="Payment method">
-              <option value="UPI">UPI</option><option value="CARD">Card</option><option value="CASH">Cash</option>
-            </Select>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <MethodSelect methods={methods} value={tender.method} onChange={(m) => setTender({ ...tender, method: m })} />
+              <ProofFields className="sm:col-span-2" value={tender} onChange={(patch) => setTender({ ...tender, ...patch })} />
+            </div>
           ) : null}
           <RejectionBanner error={error} />
           {done ? <p className="rounded-md border border-green-300 bg-green-50 p-2 text-sm">{done}</p> : null}
@@ -133,7 +136,7 @@ function AddPlayer({ session, onDone }: { session: Session; onDone: () => void }
               setError(null);
               try {
                 const r = await api<{ name: string; fee: number; explanation: string; due: number }>(`/api/social/${session.id}/join`, {
-                  body: { player: players[0].input, payment: payNow ? { kind: "COUNTER", method } : { kind: "LATER" } },
+                  body: { player: players[0].input, payment: payNow ? { kind: "COUNTER", ...tenderProof(tender) } : { kind: "LATER" } },
                   idempotencyKey: newIdempotencyKey(),
                 });
                 setDone(`${r.name} joined — ${r.explanation}${r.due > 0 ? " (fee due at check-in)" : ""}.`);
@@ -209,8 +212,8 @@ export function SocialBoard({ today, perms }: { today: string; perms: Perms }) {
                             <TD>{p.checkedInAt ? <span className="text-xs text-green-700">Checked in</span> : perms.checkin && s.status === "SCHEDULED" ? <CheckInSocial id={p.id} onDone={reload} /> : "—"}</TD>
                             <TD>
                               {perms.book && s.status === "SCHEDULED" && new Date(s.startAt).getTime() > now ? (
-                                <ConfirmButton trigger="Remove" title={`Remove ${p.name}?`} description="Leaving 2 h or more before start refunds the fee (BK-7)." confirmLabel="Remove player"
-                                  onConfirm={async () => { await api(`/api/social/participants/${p.id}/leave`, { body: {} }); reload(); }} />
+                                <ConfirmButton trigger="Remove" title={`Remove ${p.name}?`} description="Leaving 2 h or more before start refunds the fee in cash from your drawer (online payments go back online) (BK-7)." confirmLabel="Remove player"
+                                  onConfirm={async () => { await api(`/api/social/participants/${p.id}/leave`, { body: { refundMethod: "CASH" } }); reload(); }} />
                               ) : null}
                             </TD>
                           </TR>
