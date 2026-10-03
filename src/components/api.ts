@@ -30,6 +30,11 @@ export function newIdempotencyKey(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
+export const SESSION_ENDED_EVENT = "cc:session-ended";
+/** Fired after logging in again from the SessionGuard: every open useApi fetches again. */
+export const SESSION_RESTORED_EVENT = "cc:session-restored";
+const LOGIN_URL = "/api/auth/login";
+
 export async function api<T = unknown>(
   url: string,
   opts: { method?: string; body?: unknown; idempotencyKey?: string } = {},
@@ -56,6 +61,10 @@ export async function api<T = unknown>(
   }
   if (!res.ok || json.error) {
     const e = json.error ?? { code: "HTTP_" + res.status, message: `Request failed (${res.status}).`, details: null };
+    // v3 §6.1: a session that ended mid-use opens the "log in again" dialog (SessionGuard) instead of a dead page.
+    if (res.status === 401 && e.code === "UNAUTHENTICATED" && url !== LOGIN_URL && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(SESSION_ENDED_EVENT));
+    }
     throw new ApiError(e.code, e.message, res.status, e.details);
   }
   return json.data as T;
@@ -87,6 +96,12 @@ export function useApi<T>(url: string | null, opts: { pollMs?: number } = {}) {
       if (t) clearInterval(t);
     };
   }, [url, pollMs, tick]);
+
+  useEffect(() => {
+    const again = () => setTick((t) => t + 1);
+    window.addEventListener(SESSION_RESTORED_EVENT, again);
+    return () => window.removeEventListener(SESSION_RESTORED_EVENT, again);
+  }, []);
 
   const current = state.url === url ? state : { url, data: undefined, error: null };
   const reload = useCallback(async () => setTick((t) => t + 1), []);

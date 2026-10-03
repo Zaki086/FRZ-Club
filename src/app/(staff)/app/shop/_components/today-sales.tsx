@@ -12,7 +12,7 @@ import { StatusBadge } from "@/components/badges";
 import { Money } from "@/components/money";
 import { formatINR } from "@/lib/money";
 
-type Sale = {
+export type Sale = {
   id: string;
   code: string;
   at: string;
@@ -25,7 +25,7 @@ type Sale = {
   lines: Array<{ id: string; description: string; qty: number; netAmount: number; variantId: string | null }>;
 };
 
-function ReturnDialog({ sale, onDone }: { sale: Sale; onDone: () => void }) {
+export function ReturnDialog({ sale, onDone }: { sale: Sale; onDone: () => void }) {
   const returnable = sale.lines.filter((l) => l.variantId);
   const [open, setOpen] = useState(false);
   const [lineId, setLineId] = useState(returnable[0]?.id ?? "");

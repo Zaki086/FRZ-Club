@@ -28,7 +28,7 @@ export function PrivacyPanel() {
           <a href="/api/portal/my-data" download data-testid="download-my-data">Download my data</a>
         </Button>
         {openErase ? (
-          <p className="rounded-md border border-amber-300 bg-amber-50 p-2" data-testid="erasure-pending">Your erasure request of {fmtDateTime(openErase.createdAt)} is with the club.</p>
+          <p className="rounded-md border border-warning/50 bg-warning/15 p-2" data-testid="erasure-pending">Your erasure request of {fmtDateTime(openErase.createdAt)} is with the club.</p>
         ) : (
           <ConfirmButton
             trigger="Ask to erase my data"

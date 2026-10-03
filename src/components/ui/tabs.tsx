@@ -4,13 +4,13 @@ import { cn } from "./cn";
 
 export const Tabs = T.Root;
 export function TabsList({ className, ...props }: T.TabsListProps) {
-  return <T.List className={cn("inline-flex flex-wrap gap-1 rounded-lg bg-muted p-1", className)} {...props} />;
+  return <T.List className={cn("inline-flex flex-wrap gap-1 rounded-full bg-secondary p-1", className)} {...props} />;
 }
 export function TabsTrigger({ className, ...props }: T.TabsTriggerProps) {
   return (
     <T.Trigger
       className={cn(
-        "rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm cursor-pointer",
+        "rounded-full px-3.5 py-1.5 text-sm font-semibold text-secondary-foreground/80 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground cursor-pointer",
         className,
       )}
       {...props}

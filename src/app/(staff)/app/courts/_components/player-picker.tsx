@@ -50,7 +50,7 @@ export function PlayerPicker({
               <button
                 type="button"
                 onClick={() => onPrimary(i)}
-                className={cn("rounded p-1", primaryIndex === i ? "text-amber-500" : "text-muted-foreground hover:text-foreground")}
+                className={cn("rounded p-1", primaryIndex === i ? "text-gold" : "text-muted-foreground hover:text-foreground")}
                 aria-label={primaryIndex === i ? "Paying player" : "Make paying player"}
                 title={primaryIndex === i ? "Paying player" : "Make paying player"}
               >
@@ -61,7 +61,7 @@ export function PlayerPicker({
               <p className="font-medium">{p.name}</p>
               {p.detail ? <p className="text-xs text-muted-foreground">{p.detail}</p> : null}
             </div>
-            {primaryIndex === i ? <span className="text-xs font-semibold text-amber-600">pays</span> : null}
+            {primaryIndex === i ? <span className="text-xs font-semibold text-warning-text">pays</span> : null}
             {!lockedKeys.includes(p.key) ? (
               <Button
                 type="button"

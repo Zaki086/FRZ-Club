@@ -9,7 +9,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 type Row = { variantId: string; sku: string; product: string; label: string; onHand: number; reserved: number; trackStock: boolean };
 type Result = { code: string; changed: number; lines: Array<{ variantId: string; expected: number; counted: number; delta: number }> };
 
-export function StockTakeSheet() {
+export function StockTakeSheet({ onPosted }: { onPosted?: () => void } = {}) {
   const stock = useApi<Row[]>("/api/shop/stock");
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -55,6 +55,7 @@ export function StockTakeSheet() {
                   setResult(await api<Result>("/api/shop/stock-takes", { body: { lines } }));
                   setCounts({});
                   await stock.reload();
+                  onPosted?.();
                 } catch (e) {
                   setError(e instanceof ApiError ? { code: e.code, message: e.message } : { message: String(e) });
                 } finally {

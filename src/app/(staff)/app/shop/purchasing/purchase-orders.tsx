@@ -2,7 +2,9 @@
 import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { api, ApiError, useApi } from "@/components/api";
-import { DataState, Empty, RejectionBanner } from "@/components/states";
+import { RejectionBanner } from "@/components/states";
+import { FilteredList, useListReload } from "@/components/list/filtered-list";
+import { RelTime } from "@/components/rel-time";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/input";
@@ -95,36 +97,61 @@ function Actions({ po, onDone }: { po: Po; onDone: () => void }) {
   );
 }
 
+type ListPo = {
+  id: string; code: string; supplier: string; status: string; note: string | null; created_at: string; ordered_at: string | null; received_at: string | null;
+  created_by_name: string | null; total: number; units: number; lines: Po["lines"];
+};
+
+const STATUS_TONE: Record<string, "green" | "neutral" | "amber" | "blue"> = { RECEIVED: "green", CANCELLED: "neutral", ORDERED: "blue", DRAFT: "amber" };
+
+function RowActions({ po }: { po: ListPo }) {
+  const reload = useListReload();
+  return (
+    <div onClick={(e) => e.stopPropagation()}>
+      <Actions po={{ id: po.id, code: po.code, supplier: po.supplier, status: po.status, note: po.note, total: po.total, createdAt: po.created_at, receivedAt: po.received_at, lines: po.lines }} onDone={reload} />
+    </div>
+  );
+}
+
 export function PurchaseOrders({ canManage }: { canManage: boolean }) {
-  const state = useApi<Po[]>("/api/shop/purchase-orders");
+  // A new draft remounts the list so it shows straight away.
+  const [version, setVersion] = useState(0);
   return (
     <div className="flex flex-col gap-4">
-      {canManage ? <NewPo onDone={() => void state.reload()} /> : null}
-      <DataState state={state}>
-        {(pos) =>
-          pos.length === 0 ? (
-            <Empty title="No purchase orders yet" />
-          ) : (
-            <div className="flex flex-col gap-3">
-              {pos.map((po) => (
-                <Card key={po.id}>
-                  <CardContent className="flex flex-col gap-2 pt-4 text-sm">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span><span className="font-mono">{po.code}</span> · {po.supplier} · {fmtDateTime(po.createdAt)}</span>
-                      <span className="flex items-center gap-2"><Money paise={po.total} className="font-semibold" /><Badge tone={po.status === "RECEIVED" ? "green" : po.status === "CANCELLED" ? "neutral" : "amber"}>{po.status.toLowerCase()}</Badge></span>
-                    </div>
-                    <ul className="text-xs text-muted-foreground">
-                      {po.lines.map((l) => <li key={l.id}>{l.qty} × {l.name} ({l.sku}) @ <Money paise={l.unitCost} /></li>)}
-                    </ul>
-                    {po.note ? <p className="text-xs">{po.note}</p> : null}
-                    {canManage ? <Actions po={po} onDone={() => void state.reload()} /> : null}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )
-        }
-      </DataState>
+      {canManage ? <NewPo onDone={() => setVersion((v) => v + 1)} /> : null}
+      <FilteredList<ListPo>
+        key={version}
+        list="purchase-orders"
+        searchPlaceholder="PO code, supplier, item or note"
+        columns={[
+          { key: "code", header: "Order", cell: (po) => (
+            <span className="flex flex-col">
+              <span className="font-mono text-sm font-semibold">{po.code}</span>
+              <RelTime when={po.created_at} className="text-xs text-muted-foreground" />
+            </span>
+          ) },
+          { key: "supplier", header: "Supplier", cell: (po) => <span className="font-semibold">{po.supplier}</span> },
+          { key: "lines", header: "Items", cell: (po) => (
+            <ul className="text-xs text-muted-foreground">
+              {po.lines.map((l) => <li key={l.id}>{l.qty} × {l.name} ({l.sku}) @ <Money paise={l.unitCost} /></li>)}
+            </ul>
+          ) },
+          { key: "total", header: "Total", className: "text-right", cell: (po) => <Money paise={po.total} className="font-semibold" /> },
+          { key: "status", header: "Status", cell: (po) => <Badge tone={STATUS_TONE[po.status] ?? "neutral"}>{po.status.toLowerCase()}</Badge> },
+          ...(canManage ? [{ key: "next", header: "Next", cell: (po: ListPo) => <RowActions po={po} /> }] : []),
+        ]}
+        rowExtra={(po) => (
+          <div className="grid gap-1 text-sm sm:grid-cols-2">
+            <span>{po.note ?? "No note"}</span>
+            <span className="text-muted-foreground">
+              Created {fmtDateTime(po.created_at)}{po.created_by_name ? ` by ${po.created_by_name}` : ""}
+              {po.ordered_at ? ` · ordered ${fmtDateTime(po.ordered_at)}` : ""}
+              {po.received_at ? ` · received ${fmtDateTime(po.received_at)}` : ""}
+            </span>
+          </div>
+        )}
+        empty={{ title: "No purchase orders match these filters", hint: canManage ? "Create a draft above." : undefined }}
+      />
     </div>
   );
 }

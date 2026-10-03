@@ -39,7 +39,7 @@ export function ResetLinkButton({ url, label = "Password reset link" }: { url: s
           </a>
         </span>
       ) : null}
-      {error ? <span className="text-xs text-red-700">{error}</span> : null}
+      {error ? <span className="text-xs text-destructive">{error}</span> : null}
     </span>
   );
 }

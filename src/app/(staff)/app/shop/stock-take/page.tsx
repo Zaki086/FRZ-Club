@@ -3,7 +3,7 @@ import { forbidden } from "next/navigation";
 import { requireUser } from "@/server/auth/current";
 import { can } from "@/server/rbac/permissions";
 import { PageHeader } from "@/components/page";
-import { StockTakeSheet } from "./stock-take-sheet";
+import { StockTakes } from "./stock-takes";
 
 export const metadata: Metadata = { title: "Stock take" };
 
@@ -13,7 +13,7 @@ export default async function StockTakePage() {
   return (
     <div>
       <PageHeader title="Stock take" subtitle="Count what is on the shelf. Leave a row empty to skip it; differences are posted as stock adjustments." />
-      <StockTakeSheet />
+      <StockTakes />
     </div>
   );
 }

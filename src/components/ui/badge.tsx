@@ -2,23 +2,27 @@ import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "./cn";
 
-const badgeVariants = cva("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap", {
-  variants: {
-    tone: {
-      neutral: "bg-muted text-foreground",
-      green: "bg-green-100 text-green-800",
-      amber: "bg-amber-100 text-amber-800",
-      red: "bg-red-100 text-red-800",
-      blue: "bg-blue-100 text-blue-800",
-      purple: "bg-purple-100 text-purple-800",
-      gold: "bg-yellow-100 text-yellow-900 ring-1 ring-yellow-400",
-      silver: "bg-slate-200 text-slate-800 ring-1 ring-slate-400",
-      junior: "bg-sky-100 text-sky-800 ring-1 ring-sky-400",
-      dark: "bg-slate-800 text-white",
+// v3 design port: status chips are a dot + text on a tinted background (colour is never the only signal).
+const badgeVariants = cva(
+  "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap before:h-1.5 before:w-1.5 before:shrink-0 before:rounded-full before:bg-current before:content-['']",
+  {
+    variants: {
+      tone: {
+        neutral: "bg-muted text-muted-foreground",
+        green: "bg-success/12 text-success-text",
+        amber: "bg-warning/25 text-warning-foreground",
+        red: "bg-destructive/12 text-destructive",
+        blue: "bg-junior/10 text-junior",
+        purple: "bg-purple-100 text-purple-800",
+        gold: "bg-gold/12 text-gold ring-1 ring-gold/40",
+        silver: "bg-silver/10 text-silver ring-1 ring-silver/40",
+        junior: "bg-junior/10 text-junior ring-1 ring-junior/40",
+        dark: "bg-ink text-ink-foreground",
+      },
     },
+    defaultVariants: { tone: "neutral" },
   },
-  defaultVariants: { tone: "neutral" },
-});
+);
 
 export function Badge({
   className,

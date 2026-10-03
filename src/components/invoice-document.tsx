@@ -32,13 +32,13 @@ export function InvoiceDocument({ invoiceId }: { invoiceId: string }) {
           <div className="no-print mb-3 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <StatusBadge status={d.overdue ? "OVERDUE" : d.invoice.status} />
-              {d.gst && !d.taxRatesVerified ? <span className="text-xs text-amber-700">Tax rates not yet verified by the owner</span> : null}
+              {d.gst && !d.taxRatesVerified ? <span className="text-xs text-warning-text">Tax rates not yet verified by the owner</span> : null}
             </div>
             <Button variant="outline" onClick={() => window.print()}>
               <Printer className="h-4 w-4" /> Print / Save as PDF
             </Button>
           </div>
-          <div className="rounded-lg border bg-white p-6 text-sm text-slate-900 print:border-0 print:p-0">
+          <div className="rounded-lg border bg-white p-6 text-sm text-foreground print:border-0 print:p-0">
             <div className="flex flex-wrap justify-between gap-4 border-b pb-4">
               <div>
                 <p className="text-xl font-bold">{d.club.name}</p>
@@ -55,7 +55,7 @@ export function InvoiceDocument({ invoiceId }: { invoiceId: string }) {
               </div>
             </div>
             <div className="border-b py-3">
-              <p className="text-xs uppercase text-slate-500">Bill to</p>
+              <p className="text-xs uppercase text-muted-foreground">Bill to</p>
               {d.client ? (
                 <>
                   <p className="font-semibold">{d.client.name}</p>
@@ -86,7 +86,7 @@ export function InvoiceDocument({ invoiceId }: { invoiceId: string }) {
                 <tbody>
                   {d.lines.map((l) => (
                     <tr key={l.id} className="border-b">
-                      <td className="py-1">{l.description}{l.discountAmount ? <span className="block text-slate-500">less {formatINR(l.discountAmount)}</span> : null}</td>
+                      <td className="py-1">{l.description}{l.discountAmount ? <span className="block text-muted-foreground">less {formatINR(l.discountAmount)}</span> : null}</td>
                       {d.gst ? <td>{l.hsnSac}</td> : null}<td className="text-right">{l.qty}</td><td className="text-right">{formatINR(l.unitPrice)}</td>
                       {d.gst ? (
                         <>
@@ -122,7 +122,7 @@ export function InvoiceDocument({ invoiceId }: { invoiceId: string }) {
               </div>
             </div>
             {d.invoice.notes ? <p className="mt-3 text-xs">Notes: {d.invoice.notes}</p> : null}
-            <p className="mt-4 text-[11px] text-slate-500">
+            <p className="mt-4 text-[11px] text-muted-foreground">
               {d.gst
                 ? "Prices are GST-inclusive; tax is extracted per line. Intra-state supplies show CGST + SGST; inter-state supplies show IGST."
                 : "The club is not registered for GST; no GST is charged on this invoice."}

@@ -17,6 +17,7 @@ import { addDays, fmtDay } from "@/lib/time";
 import { BookingDialog, type NewBookingTarget } from "./booking-dialog";
 import { BookingDetailDialog } from "./booking-detail";
 import { MaintenanceDialog } from "./maintenance-dialog";
+import { CloseCourtsDialog } from "./close-courts-dialog";
 import type { Availability, CourtRow, PickedPlayer, Slot } from "./types";
 
 type Perms = { book: boolean; maintenance: boolean; checkin: boolean };
@@ -25,14 +26,14 @@ const STRIPES = "bg-[repeating-linear-gradient(45deg,#e2e8f0,#e2e8f0_6px,#cbd5e1
 
 function cellClass(s: Slot) {
   if (s.state === "FREE") {
-    if (s.bookable) return "bg-white hover:bg-emerald-50 hover:ring-2 hover:ring-emerald-400 cursor-pointer";
-    return s.past ? "bg-slate-100 text-slate-300" : "bg-slate-50 text-slate-300";
+    if (s.bookable) return "bg-card hover:bg-success/10 hover:ring-2 hover:ring-primary cursor-pointer";
+    return s.past ? "bg-secondary text-muted-foreground/60" : "bg-secondary text-muted-foreground/60";
   }
-  if (s.state === "SOCIAL") return "bg-purple-200 text-purple-900 hover:bg-purple-300 cursor-pointer";
-  if (s.state === "MAINTENANCE") return `${STRIPES} text-slate-700 cursor-pointer`;
-  if (s.checkedIn) return "bg-green-300 text-green-950 hover:bg-green-400 cursor-pointer";
-  if (s.unpaid) return "bg-amber-200 text-amber-950 hover:bg-amber-300 cursor-pointer";
-  return "bg-sky-200 text-sky-950 hover:bg-sky-300 cursor-pointer";
+  if (s.state === "SOCIAL") return "bg-junior/20 text-junior hover:bg-junior/30 cursor-pointer";
+  if (s.state === "MAINTENANCE") return `${STRIPES} text-foreground cursor-pointer`;
+  if (s.checkedIn) return "bg-success/25 text-success-text hover:bg-success/35 cursor-pointer";
+  if (s.unpaid) return "bg-warning/40 text-warning-foreground hover:bg-warning/60 cursor-pointer";
+  return "bg-primary/15 text-primary hover:bg-primary/25 cursor-pointer";
 }
 
 /** Merge consecutive half-hour cells held by the same reservation into one block. */
@@ -51,12 +52,12 @@ function spans(slots: Slot[]) {
 function Legend() {
   const items: Array<[string, string]> = [
     ["bg-white border", "Free"],
-    ["bg-sky-200", "Booked (paid)"],
-    ["bg-amber-200", "Booked — payment due"],
-    ["bg-green-300", "Checked in"],
-    ["bg-purple-200", "Social play"],
+    ["bg-primary/15", "Booked (paid)"],
+    ["bg-warning/40", "Booked — payment due"],
+    ["bg-success/25", "Checked in"],
+    ["bg-junior/20", "Social play"],
     [STRIPES, "Maintenance"],
-    ["bg-slate-100", "Past / can't start"],
+    ["bg-secondary", "Past / can't start"],
   ];
   return (
     <div className="flex flex-wrap gap-3 text-xs">
@@ -113,11 +114,14 @@ export function CommandCentre({ initialDate, perms, prefillMemberId }: { initial
           {perms.maintenance && state.data ? (
             <MaintenanceDialog courts={state.data.dates[0]?.courts ?? []} date={date} open={state.data.open} close={state.data.close} onDone={reload} />
           ) : null}
+          {perms.maintenance && state.data ? (
+            <CloseCourtsDialog courts={state.data.dates[0]?.courts ?? []} date={date} open={state.data.open} close={state.data.close} onDone={reload} />
+          ) : null}
           <Button asChild variant="outline"><Link href="/app/courts/social">Social play</Link></Button>
         </div>
       </div>
       {prefill ? (
-        <div className="rounded-md border border-sky-300 bg-sky-50 p-2 text-sm">
+        <div className="rounded-md border border-junior/30 bg-junior/10 p-2 text-sm">
           Booking for <strong>{prefill.name}</strong> — click a free slot; they are added as the first player.
         </div>
       ) : null}
@@ -164,7 +168,7 @@ export function CommandCentre({ initialDate, perms, prefillMemberId }: { initial
                                   <span className="block opacity-75">{slot.range}{slot.bookingCode ? ` · ${slot.bookingCode}` : ""}</span>
                                 </>
                               ) : slot.bookable ? (
-                                <span className="text-emerald-700 opacity-0 hover:opacity-100">+ {slot.time}</span>
+                                <span className="text-success-text opacity-0 hover:opacity-100">+ {slot.time}</span>
                               ) : null}
                             </button>
                           </td>

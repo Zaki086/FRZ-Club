@@ -3,7 +3,7 @@ import { useState } from "react";
 import { History, PackagePlus, Pencil, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 import { api, ApiError, useApi } from "@/components/api";
 import { DataState, RejectionBanner } from "@/components/states";
-import { Card } from "@/components/ui/card";
+import { FilteredList, useListReload } from "@/components/list/filtered-list";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
@@ -14,7 +14,6 @@ import { categoryLabel, SHOP_CATEGORIES } from "@/components/shop-quote";
 import { fmtDateTime } from "@/lib/time";
 import { formatINR, parseRupees } from "@/lib/money";
 import { ProductImage } from "@/components/product-image";
-import { uploadFile } from "@/components/upload";
 
 type Row = {
   variantId: string; sku: string; barcode: string | null; product: string; productId: string; imageUrl: string | null; label: string; category: string; price: number;
@@ -42,8 +41,12 @@ function PhotoUpload({ row, onDone }: { row: Row; onDone: () => void }) {
           setBusy(true);
           setError(null);
           try {
-            const url = await uploadFile("product", file);
-            await api(`/api/shop/products/${row.productId}/image`, { method: "PUT", body: { url } });
+            // v3 §9.3: resized on the server (1200 px + thumbnail) and added as the product's next photo.
+            const fd = new FormData();
+            fd.set("file", file);
+            const res = await fetch(`/api/shop/products/${row.productId}/photos`, { method: "POST", body: fd });
+            const j = await res.json();
+            if (!res.ok) throw new ApiError(j.error?.code ?? "HTTP", j.error?.message ?? "Upload failed", res.status, null);
             onDone();
           } catch (e) {
             setError(e instanceof ApiError ? e.message : String(e));
@@ -195,7 +198,7 @@ function MovementsDialog({ row }: { row: Row }) {
 
 type VRow = { sku: string; label: string; price: string; reorderLevel: string; hsnSac: string };
 
-function NewProductDialog({ onDone }: { onDone: () => void }) {
+export function NewProductDialog({ onDone }: { onDone: () => void }) {
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ name: "", brand: "", category: "ACCESSORIES", description: "", isRestring: false });
   const [variants, setVariants] = useState<VRow[]>([{ sku: "", label: "Standard", price: "", reorderLevel: "3", hsnSac: "9506" }]);
@@ -252,58 +255,70 @@ function NewProductDialog({ onDone }: { onDone: () => void }) {
   );
 }
 
-export function StockTable({ lowOnly: initialLow, perms }: { lowOnly: boolean; perms: { stock: boolean; price: boolean } }) {
-  const [low, setLow] = useState(initialLow);
-  const [q, setQ] = useState("");
-  const state = useApi<Row[]>(`/api/shop/stock?low=${low ? "1" : ""}&q=${encodeURIComponent(q.trim())}`);
-  const reload = () => void state.reload();
+type ListRow = {
+  id: string; variant_id: string; sku: string; barcode: string | null; label: string; price: number; on_hand: number; reserved: number; available: number;
+  reorder_level: number; product_id: string; product: string; brand: string; category: string; image_url: string | null; track_stock: boolean;
+  archived: boolean; low: boolean; out_of_stock: boolean;
+};
+
+const toRow = (r: ListRow): Row => ({
+  variantId: r.variant_id, sku: r.sku, barcode: r.barcode, product: r.product, productId: r.product_id, imageUrl: r.image_url, label: r.label, category: r.category,
+  price: r.price, onHand: r.on_hand, reserved: r.reserved, available: r.available, reorderLevel: r.reorder_level, trackStock: r.track_stock, low: r.low,
+});
+
+function RowActions({ r, perms }: { r: Row; perms: { stock: boolean; price: boolean } }) {
+  const reload = useListReload();
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Input className="max-w-xs" placeholder="Search product" value={q} onChange={(e) => setQ(e.target.value)} />
-        <Button size="sm" variant={!low ? "default" : "outline"} onClick={() => setLow(false)}>All stock</Button>
-        <Button size="sm" variant={low ? "default" : "outline"} onClick={() => setLow(true)}>Low stock only</Button>
-        {perms.stock ? <div className="ml-auto"><NewProductDialog onDone={reload} /></div> : null}
-      </div>
-      <Card>
-        <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: low ? "Nothing is low on stock" : "No products found" }}>
-          {(rows) => (
-            <Table>
-              <THead>
-                <TR><TH>Product</TH><TH>SKU</TH><TH>Category</TH><TH className="text-right">Price</TH><TH className="text-right">On hand</TH><TH className="text-right">Reserved</TH><TH className="text-right">Available</TH><TH className="text-right">Reorder</TH><TH /></TR>
-              </THead>
-              <TBody>
-                {rows.map((r) => (
-                  <TR key={r.variantId} className={r.low ? "bg-red-50/60" : undefined}>
-                    <TD className="flex items-center gap-2">{perms.stock ? <PhotoUpload row={r} onDone={reload} /> : <ProductImage url={r.imageUrl} category={r.category} name={r.product} className="h-10 w-10" />}<span><span className="font-medium">{r.product}</span>{r.label !== "Standard" ? <span className="text-muted-foreground"> · {r.label}</span> : null} {r.low ? <Badge tone="red">LOW</Badge> : null}</span></TD>
-                    <TD className="font-mono text-xs">{r.sku}</TD>
-                    <TD className="text-sm">{categoryLabel(r.category)}</TD>
-                    <TD className="text-right"><Money paise={r.price} /></TD>
-                    {r.trackStock ? (
-                      <>
-                        <TD className="text-right tabular">{r.onHand}</TD>
-                        <TD className="text-right tabular">{r.reserved}</TD>
-                        <TD className="text-right font-semibold tabular">{r.available}</TD>
-                        <TD className="text-right tabular">{r.reorderLevel}</TD>
-                      </>
-                    ) : (
-                      <TD colSpan={4} className="text-center text-xs text-muted-foreground">Service — no stock</TD>
-                    )}
-                    <TD>
-                      <div className="flex justify-end gap-1">
-                        {perms.stock && r.trackStock ? <ReceiveDialog row={r} onDone={reload} /> : null}
-                        {perms.stock && r.trackStock ? <AdjustDialog row={r} onDone={reload} /> : null}
-                        {r.trackStock ? <MovementsDialog row={r} /> : null}
-                        {perms.stock ? <EditVariantDialog row={r} onDone={reload} canPrice={perms.price} /> : null}
-                      </div>
-                    </TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          )}
-        </DataState>
-      </Card>
+    <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+      {perms.stock && r.trackStock ? <ReceiveDialog row={r} onDone={reload} /> : null}
+      {perms.stock && r.trackStock ? <AdjustDialog row={r} onDone={reload} /> : null}
+      {r.trackStock ? <MovementsDialog row={r} /> : null}
+      {perms.stock ? <EditVariantDialog row={r} onDone={reload} canPrice={perms.price} /> : null}
     </div>
+  );
+}
+
+function Photo({ r, canEdit }: { r: Row; canEdit: boolean }) {
+  const reload = useListReload();
+  return canEdit ? <PhotoUpload row={r} onDone={reload} /> : <ProductImage url={r.imageUrl} category={r.category} name={r.product} className="h-10 w-10" />;
+}
+
+function NewProduct() {
+  const reload = useListReload();
+  return <NewProductDialog onDone={reload} />;
+}
+
+/** v3 §3.2: stock per variant with the standard FilterBar; `?filter=low` (alerts, dashboard) shows what is low. */
+export function StockTable({ perms }: { perms: { stock: boolean; price: boolean } }) {
+  return (
+    <FilteredList<ListRow>
+      list="stock"
+      searchPlaceholder="Search product, SKU or barcode"
+      toolbar={perms.stock ? <NewProduct /> : null}
+      columns={[
+        { key: "product", header: "Product", cell: (l) => {
+          const r = toRow(l);
+          return (
+            <span className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+              <Photo r={r} canEdit={perms.stock} />
+              <span>
+                <span className="font-medium">{r.product}</span>{r.label !== "Standard" ? <span className="text-muted-foreground"> · {r.label}</span> : null}{" "}
+                {r.low ? <Badge tone="red">LOW</Badge> : null}
+                {l.archived ? <Badge tone="neutral">Archived</Badge> : null}
+              </span>
+            </span>
+          );
+        } },
+        { key: "sku", header: "SKU", cell: (l) => <span className="font-mono text-xs">{l.sku}</span> },
+        { key: "category", header: "Category", cell: (l) => <span className="text-sm">{categoryLabel(l.category)}</span> },
+        { key: "price", header: "Price", className: "text-right", cell: (l) => <Money paise={l.price} /> },
+        { key: "on_hand", header: "On hand", className: "text-right", cell: (l) => (l.track_stock ? <span className="tabular">{l.on_hand}</span> : <span className="text-xs text-muted-foreground">Service — no stock</span>) },
+        { key: "reserved", header: "Reserved", className: "text-right", cell: (l) => (l.track_stock ? <span className="tabular">{l.reserved}</span> : null) },
+        { key: "available", header: "Available", className: "text-right", cell: (l) => (l.track_stock ? <span className={l.low ? "font-semibold text-red-700 tabular" : "font-semibold tabular"}>{l.available}</span> : null) },
+        { key: "reorder", header: "Reorder", className: "text-right", cell: (l) => (l.track_stock ? <span className="tabular">{l.reorder_level}</span> : null) },
+        { key: "actions", header: "", cell: (l) => <RowActions r={toRow(l)} perms={perms} /> },
+      ]}
+      empty={{ title: "No stock matches these filters", hint: "Clear a filter, or add a product." }}
+    />
   );
 }

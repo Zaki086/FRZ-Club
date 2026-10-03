@@ -1,66 +1,55 @@
 "use client";
+// v3 §3, §7.1: bookings with the standard FilterBar (default: today, with a day stepper), a summary strip and the
+// next action per row. A row opens the booking detail in place (no navigation).
 import { useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useApi } from "@/components/api";
-import { DataState } from "@/components/states";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input, Select } from "@/components/ui/input";
-import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/badges";
 import { Money } from "@/components/money";
-import { addDays, fmtDay, fmtRange } from "@/lib/time";
+import { fmtRange } from "@/lib/time";
+import { FilteredList } from "@/components/list/filtered-list";
 import { BookingDetailDialog } from "../_components/booking-detail";
-import type { BookingView } from "../_components/types";
 
-export function BookingsList({ initialDate, perms }: { initialDate: string; perms: { book: boolean; checkin: boolean } }) {
-  const [date, setDate] = useState(initialDate);
-  const [status, setStatus] = useState("");
-  const [q, setQ] = useState("");
+type Row = {
+  id: string; code: string; start_at: string; end_at: string; court: string; sport: string; status: string; channel: string;
+  total: number; due: number; payment: string; who: string; players: string | null; checked_in: number; n_players: number;
+};
+
+const PAY: Record<string, { label: string; tone: "green" | "amber" | "red" | "neutral" }> = {
+  PAID: { label: "Paid", tone: "green" }, PARTIAL: { label: "Part-paid", tone: "amber" }, UNPAID: { label: "Unpaid", tone: "red" }, FREE: { label: "Nothing to pay", tone: "neutral" },
+};
+
+function NextAction({ r, now }: { r: Row; now: number }) {
+  if (r.status !== "CONFIRMED") return null;
+  if (r.due > 0) return <span className="text-sm font-semibold text-primary">Collect <Money paise={r.due} /></span>;
+  const start = new Date(r.start_at).getTime();
+  const end = new Date(r.end_at).getTime();
+  if (now >= start - 30 * 60_000 && now < end && r.checked_in < r.n_players) return <span className="text-sm font-semibold text-primary">Check in ({r.checked_in}/{r.n_players})</span>;
+  return null;
+}
+
+export function BookingsList({ perms }: { initialDate?: string; perms: { book: boolean; checkin: boolean } }) {
   const [open, setOpen] = useState<string | null>(null);
-  const state = useApi<BookingView[]>(`/api/bookings?date=${date}&status=${status}&q=${encodeURIComponent(q.trim())}`, { pollMs: 15000 });
+  const [now] = useState(() => Date.now());
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="icon" aria-label="Previous day" onClick={() => setDate(addDays(date, -1))}><ChevronLeft className="h-4 w-4" /></Button>
-        <Input type="date" className="w-44" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="Date" />
-        <Button variant="outline" size="icon" aria-label="Next day" onClick={() => setDate(addDays(date, 1))}><ChevronRight className="h-4 w-4" /></Button>
-        <span className="text-sm font-semibold">{fmtDay(date)}</span>
-        <Select className="w-40" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-          <option value="">All statuses</option>
-          <option value="CONFIRMED">Confirmed</option>
-          <option value="COMPLETED">Completed</option>
-          <option value="NO_SHOW">No-show</option>
-          <option value="CANCELLED">Cancelled</option>
-        </Select>
-        <Input className="max-w-xs" placeholder="Search code or player" value={q} onChange={(e) => setQ(e.target.value)} />
-      </div>
-      <Card>
-        <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: "No bookings for this day", hint: "Book from the command centre." }}>
-          {(rows) => (
-            <Table>
-              <THead>
-                <TR><TH>Code</TH><TH>Court</TH><TH>Time</TH><TH>Players</TH><TH>Channel</TH><TH className="text-right">Total</TH><TH className="text-right">Due</TH><TH>Status</TH></TR>
-              </THead>
-              <TBody>
-                {rows.map((b) => (
-                  <TR key={b.id} className="cursor-pointer" onClick={() => setOpen(b.id)}>
-                    <TD className="font-mono text-xs">{b.code}</TD>
-                    <TD>{b.court}</TD>
-                    <TD className="whitespace-nowrap">{fmtRange(b.startAt, b.endAt)}</TD>
-                    <TD className="text-sm">{b.players.map((p) => p.name).join(", ")}</TD>
-                    <TD className="text-xs">{b.channel.replace("_", " ")}</TD>
-                    <TD className="text-right"><Money paise={b.total} /></TD>
-                    <TD className="text-right">{b.due > 0 ? <Money paise={b.due} className="font-semibold text-amber-700" /> : "—"}</TD>
-                    <TD><StatusBadge status={b.status} /></TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          )}
-        </DataState>
-      </Card>
-      {open ? <BookingDetailDialog bookingId={open} onClose={() => setOpen(null)} onChanged={() => void state.reload()} canManage={perms.book} canCheckin={perms.checkin} /> : null}
-    </div>
+    <>
+      <FilteredList<Row>
+        list="bookings"
+        searchPlaceholder="Booking code, player or court"
+        dayStepper
+        pollMs={15000}
+        onRowClick={(r) => setOpen(r.id)}
+        columns={[
+          { key: "time", header: "Time", className: "whitespace-nowrap", cell: (r) => <span className="font-semibold">{fmtRange(r.start_at, r.end_at)}</span> },
+          { key: "court", header: "Court", cell: (r) => r.court },
+          { key: "players", header: "Players", cell: (r) => <span className="text-sm">{r.players ?? "—"} <span className="font-mono text-xs text-muted-foreground">{r.code}</span></span> },
+          { key: "pay", header: "Payment", cell: (r) => <Badge tone={PAY[r.payment]?.tone ?? "neutral"}>{PAY[r.payment]?.label ?? r.payment}</Badge> },
+          { key: "total", header: "Total", className: "text-right", cell: (r) => <Money paise={r.total} /> },
+          { key: "status", header: "Status", cell: (r) => <StatusBadge status={r.status} /> },
+          { key: "next", header: "Next", cell: (r) => <NextAction r={r} now={now} /> },
+        ]}
+        empty={{ title: "No bookings match", hint: "Change the day or remove a filter; new bookings are made from the command centre." }}
+      />
+      {open ? <BookingDetailDialog bookingId={open} onClose={() => setOpen(null)} onChanged={() => undefined} canManage={perms.book} canCheckin={perms.checkin} /> : null}
+    </>
   );
 }

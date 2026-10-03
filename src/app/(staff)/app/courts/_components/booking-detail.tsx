@@ -9,6 +9,8 @@ import { DataState, RejectionBanner } from "@/components/states";
 import { StatusBadge, TierBadge } from "@/components/badges";
 import { Money } from "@/components/money";
 import { PaymentPanel } from "@/components/payment-panel";
+import { BillRefundRequest } from "@/components/refund-request";
+import { ClubCancellationChoice } from "@/components/club-cancellation-choice";
 import { emptyRefund, RefundFields, refundBody, refundSummary, type RefundDraft } from "@/components/tender-fields";
 import { ConfirmButton } from "@/components/confirm";
 import { fmtDateTime, fmtRange } from "@/lib/time";
@@ -71,7 +73,7 @@ function ChangePlayers({ booking, onDone }: { booking: BookingView; onDone: () =
       </Field>
       <RejectionBanner error={error} />
       {result ? (
-        <p className="text-sm text-green-800">
+        <p className="text-sm text-success-text">
           Updated: +{result.added} / −{result.removed} players{result.refunded || result.refundPending ? ` · ${refundSummary(result.refunded, result.refundPending)}` : ""}{result.due ? ` · ${formatINR(result.due)} now due` : ""}.
         </p>
       ) : null}
@@ -131,18 +133,20 @@ export function BookingDetailDialog({ bookingId, onClose, onChanged, canManage =
                   <StatusBadge status={b.status} />
                   <span className="text-muted-foreground">via {b.channel.replace("_", " ").toLowerCase()}</span>
                 </div>
-                {cancelMsg ? <div className="rounded-md border border-green-300 bg-green-50 p-2 text-sm">{cancelMsg}</div> : null}
+                {b.status === "CANCELLED_BY_CLUB" ? <p className="text-sm text-muted-foreground">{b.cancelReason}</p> : null}
+                {b.resolution ? <ClubCancellationChoice r={b.resolution} onDone={refresh} /> : null}
+                {cancelMsg ? <div className="rounded-md border border-success/40 bg-success/10 p-2 text-sm">{cancelMsg}</div> : null}
                 <div className="divide-y rounded-md border">
                   {b.players.map((p) => (
                     <div key={p.id} className="flex items-center justify-between gap-2 p-2 text-sm">
                       <div>
                         <p className="font-medium">
-                          {p.name} <TierBadge tier={p.tier} /> {b.primaryMemberId && p.memberId === b.primaryMemberId ? <span className="text-xs text-amber-600">pays</span> : null}
+                          {p.name} <TierBadge tier={p.tier} /> {b.primaryMemberId && p.memberId === b.primaryMemberId ? <span className="text-xs text-warning-text">pays</span> : null}
                         </p>
                         <p className="text-xs text-muted-foreground">Fee <Money paise={p.fee} /></p>
                       </div>
                       {p.checkedInAt ? (
-                        <span className="text-xs text-green-700">Checked in {fmtDateTime(p.checkedInAt).split(", ")[1]}</span>
+                        <span className="text-xs text-success-text">Checked in {fmtDateTime(p.checkedInAt).split(", ")[1]}</span>
                       ) : canCheckin && b.status === "CONFIRMED" ? (
                         <CheckIn id={p.id} onDone={refresh} />
                       ) : null}
@@ -153,7 +157,8 @@ export function BookingDetailDialog({ bookingId, onClose, onChanged, canManage =
                   <span>Total <Money paise={b.total} className="font-semibold" /></span>
                   <span>Due <Money paise={b.due} className="font-semibold" /> <StatusBadge status={b.billStatus} /></span>
                 </div>
-                {b.billId && b.due > 0 && b.status !== "CANCELLED" ? <PaymentPanel billId={b.billId} onPaid={refresh} /> : null}
+                {b.billId && b.due > 0 && b.status !== "CANCELLED" && b.status !== "CANCELLED_BY_CLUB" ? <PaymentPanel billId={b.billId} onPaid={refresh} /> : null}
+                {b.billId && b.due === 0 && b.total > 0 && !b.resolution ? <BillRefundRequest billId={b.billId} /> : null}
                 <div className="flex flex-wrap gap-2">
                   <WhatsAppButton target={{ template: "BOOKING", bookingId: b.id }} />
                 </div>
