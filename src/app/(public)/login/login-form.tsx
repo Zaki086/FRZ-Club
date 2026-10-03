@@ -28,8 +28,9 @@ export function LoginForm() {
             try {
               const res = await api<{ home: string }>("/api/auth/login", { body: { identifier, password } });
               // Deep links win; a bare "/app" or "/portal" goes to the role's own home page (§6).
-              const next = params.get("next");
-              router.push(next && next.startsWith("/") && next !== "/app" && next !== "/portal" ? next : res.home);
+              const next = params.get("returnTo") ?? params.get("next");
+              const safe = next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\");
+              router.push(safe && next !== "/app" && next !== "/portal" ? next : res.home);
               router.refresh();
             } catch (err) {
               setError(err instanceof ApiError ? { code: err.code === "RATE_LIMITED" ? err.code : undefined, message: err.message } : { message: String(err) });
@@ -37,6 +38,7 @@ export function LoginForm() {
             }
           }}
         >
+          {params.get("ended") ? <p role="status" className="rounded-lg bg-warning/15 px-3 py-2 text-sm font-semibold text-warning-text">Your session ended — log in again to continue.</p> : null}
           <Field label="Phone or email">
             <Input
               name="identifier"

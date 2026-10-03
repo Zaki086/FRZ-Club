@@ -11,7 +11,7 @@ export function SetPasswordForm({ token }: { token: string }) {
   const [pw2, setPw2] = useState("");
   const [done, setDone] = useState(false);
   const [error, setError] = useState<{ message: string } | null>(null);
-  if (done) return <p className="rounded-md border border-green-300 bg-green-50 p-3">Password set. <Link className="font-semibold underline" href="/login">Log in</Link></p>;
+  if (done) return <p className="rounded-md border border-success/40 bg-success/10 p-3">Password set. <Link className="font-semibold underline" href="/login">Log in</Link></p>;
   return (
     <form className="flex flex-col gap-3" onSubmit={async (e) => {
       e.preventDefault();

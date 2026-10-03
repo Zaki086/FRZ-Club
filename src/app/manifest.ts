@@ -17,8 +17,8 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
     description: `${name}: bookings, membership, shop and café`,
     start_url: "/login",
     display: "standalone",
-    background_color: "#ffffff",
-    theme_color: "#065f46",
+    background_color: "#f7f6ef",
+    theme_color: "#1f3a2e",
     icons: [
       { src: "/icon", sizes: "512x512", type: "image/png", purpose: "any" },
       { src: "/apple-icon", sizes: "180x180", type: "image/png" },

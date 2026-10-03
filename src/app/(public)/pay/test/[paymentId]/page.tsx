@@ -32,9 +32,9 @@ export default async function TestGatewayPage({
   const returnUrl = ret && ret.startsWith("/") && !ret.startsWith("//") ? ret : (payment.returnUrl ?? "/");
   return (
     <div className="mx-auto flex max-w-lg flex-col gap-4 px-4 py-8">
-      <div className="rounded-lg border-4 border-dashed border-amber-500 bg-amber-50 p-4 text-center" role="alert">
-        <p className="text-2xl font-black tracking-widest text-amber-700">TEST MODE</p>
-        <p className="text-sm text-amber-900">
+      <div className="rounded-lg border-4 border-dashed border-amber-500 bg-warning/15 p-4 text-center" role="alert">
+        <p className="text-2xl font-black tracking-widest text-warning-text">TEST MODE</p>
+        <p className="text-sm text-warning-foreground">
           This is the built-in Test Gateway. <strong>No real money moves.</strong> It uses the same server-side
           verification path as the real gateway.
         </p>

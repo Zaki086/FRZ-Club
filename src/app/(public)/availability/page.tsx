@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PriceNotes } from "@/components/price-notes";
 import { WeekAvailability } from "./week-availability";
 
 export const metadata: Metadata = { title: "This week's availability" };
@@ -10,6 +11,7 @@ export default function AvailabilityPage() {
         <h1 className="text-3xl font-bold">This week&apos;s availability</h1>
         <p className="text-muted-foreground">Live court availability for the next 7 days. Each session lasts an hour; a new one starts every half hour.</p>
       </div>
+      <PriceNotes scopes={["COURTS", "SOCIAL"]} />
       <WeekAvailability />
     </div>
   );

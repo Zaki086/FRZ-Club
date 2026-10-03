@@ -17,24 +17,26 @@ export default async function PublicLayout({ children }: { children: React.React
     <div className="flex min-h-screen flex-col">
       <PublicNav account={account} clubName={clubName} />
       <main className="flex-1">{children}</main>
-      <footer className="no-print border-t bg-slate-900 text-slate-300">
-        <div className="mx-auto grid max-w-6xl gap-6 px-4 py-8 text-sm sm:grid-cols-3">
-          <div>
-            <p className="font-semibold text-white">{clubName}</p>
+      <footer className="no-print bg-ink text-ink-foreground/80">
+        <div className="container-x grid gap-8 py-12 text-sm sm:grid-cols-3">
+          <div className="flex flex-col gap-1">
+            <p className="font-display text-2xl font-bold uppercase text-ink-foreground">{clubName}</p>
             {club.address ? <p>{club.address}</p> : null}
             {club.phone ? <p>{club.phone}</p> : null}
             {club.email ? <p>{club.email}</p> : null}
           </div>
-          <div className="flex flex-col gap-1">
-            <Link href="/plans" className="hover:text-white">Plans &amp; prices</Link>
-            <Link href="/availability" className="hover:text-white">This week&apos;s availability</Link>
-            <Link href="/shop" className="hover:text-white">Shop</Link>
+          <div className="flex flex-col gap-1.5">
+            <p className="eyebrow mb-1 text-accent">Play</p>
+            <Link href="/plans" className="hover:text-ink-foreground">Plans &amp; prices</Link>
+            <Link href="/availability" className="hover:text-ink-foreground">This week&apos;s availability</Link>
+            <Link href="/shop" className="hover:text-ink-foreground">Shop</Link>
           </div>
-          <div className="flex flex-col gap-1">
-            <Link href="/trial" className="hover:text-white">Book a trial</Link>
-            <Link href="/enquire" className="hover:text-white">Enquire</Link>
-            <Link href="/login" className="hover:text-white">Log in</Link>
-            <Link href="/privacy" className="hover:text-white">Privacy</Link>
+          <div className="flex flex-col gap-1.5">
+            <p className="eyebrow mb-1 text-accent">Join</p>
+            <Link href="/trial" className="hover:text-ink-foreground">Book a trial</Link>
+            <Link href="/enquire" className="hover:text-ink-foreground">Enquire</Link>
+            <Link href="/login" className="hover:text-ink-foreground">Log in</Link>
+            <Link href="/privacy" className="hover:text-ink-foreground">Privacy</Link>
           </div>
         </div>
       </footer>

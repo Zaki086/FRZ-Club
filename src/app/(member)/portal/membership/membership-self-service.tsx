@@ -38,8 +38,8 @@ export function MembershipSelfService({ memberId }: { memberId: string }) {
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-2xl font-bold">My membership</h1>
-      {params.get("payment") === "success" ? <div className="rounded-md border border-green-300 bg-green-50 p-3 text-sm">Payment received — thank you! Your membership is updated and your tax invoice is under Invoices.</div> : null}
-      {params.get("payment") === "failed" ? <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm">The payment did not go through. You can try again.</div> : null}
+      {params.get("payment") === "success" ? <div className="rounded-md border border-success/40 bg-success/10 p-3 text-sm">Payment received — thank you! Your membership is updated and your tax invoice is under Invoices.</div> : null}
+      {params.get("payment") === "failed" ? <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">The payment did not go through. You can try again.</div> : null}
       <DataState state={state}>
         {(d) => {
           const pending = d.memberships.find((m) => m.status === "PENDING_PAYMENT");
@@ -49,7 +49,7 @@ export function MembershipSelfService({ memberId }: { memberId: string }) {
                 <CardContent className="flex flex-col gap-2 pt-4">
                   <MemberStatusBadge status={d.status} />
                   {pending && pending.billId ? (
-                    <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/50 bg-warning/15 p-3 text-sm">
                       <TierBadge tier={pending.plan.code} /> {fmtDate(pending.startDate)} → {fmtDate(pending.endDate)} is waiting for payment of {formatINR(pending.price)}.
                       <Button size="sm" onClick={() => payOnline(pending.billId!).catch((e) => setError(e instanceof ApiError ? e : { message: String(e) }))}>Pay online</Button>
                     </div>

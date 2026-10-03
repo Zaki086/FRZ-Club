@@ -33,13 +33,13 @@ export function PortalHome({ memberId }: { memberId: string }) {
             <h1 className="text-2xl font-bold">Hi {d.member.name.split(" ")[0]}</h1>
             <MemberCard memberId={memberId} />
             {d.status.status !== "ACTIVE" ? (
-              <div className="flex items-center gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900">
+              <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
                 <AlertTriangle className="h-4 w-4" /> Your membership is not active, so walk-in prices apply.{" "}
                 <Link className="font-semibold underline" href="/portal/membership">Renew now</Link>
               </div>
             ) : null}
             {d.openTab ? (
-              <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+              <div className="flex items-center gap-2 rounded-md border border-warning/50 bg-warning/15 p-3 text-sm">
                 <Beer className="h-4 w-4" /> Open bar tab {d.openTab.code}: {formatINR(d.openTab.due)}. <Link className="underline" href="/portal/tab">View</Link>
               </div>
             ) : null}
