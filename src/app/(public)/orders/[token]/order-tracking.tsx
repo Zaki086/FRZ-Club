@@ -40,8 +40,8 @@ export function OrderTracking({ token }: { token: string }) {
         const isMember = me.data?.kind === "USER" && me.data.role === "MEMBER";
         return (
           <div className="flex flex-col gap-4">
-            {payment === "success" ? <div className="rounded-md border border-green-300 bg-green-50 p-3 text-sm">Payment received — thank you! Your order is confirmed.</div> : null}
-            {payment === "failed" ? <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm">The payment did not go through. Your items are held for a short while.</div> : null}
+            {payment === "success" ? <div className="rounded-md border border-success/40 bg-success/10 p-3 text-sm">Payment received — thank you! Your order is confirmed.</div> : null}
+            {payment === "failed" ? <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">The payment did not go through. Your items are held for a short while.</div> : null}
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="text-sm text-muted-foreground">Order</p>
@@ -56,7 +56,7 @@ export function OrderTracking({ token }: { token: string }) {
                 ))}
               </ol>
             ) : (
-              <p className="rounded-md border border-red-300 bg-red-50 p-3 text-sm">This order was cancelled{o.cancelReason ? `: ${o.cancelReason}` : ""}.</p>
+              <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">This order was cancelled{o.cancelReason ? `: ${o.cancelReason}` : ""}.</p>
             )}
             <Card>
               <CardContent className="flex flex-col gap-2 pt-4 text-sm">
@@ -70,7 +70,7 @@ export function OrderTracking({ token }: { token: string }) {
                   ))}
                 </div>
                 <p className="flex justify-between font-semibold"><span>Total</span><Money paise={o.total} /></p>
-                {o.due > 0 && o.status !== "CANCELLED" ? <p className="flex justify-between text-amber-700"><span>To pay</span><span>{formatINR(o.due)}</span></p> : null}
+                {o.due > 0 && o.status !== "CANCELLED" ? <p className="flex justify-between text-warning-text"><span>To pay</span><span>{formatINR(o.due)}</span></p> : null}
                 {o.holdExpiresAt && o.status === "PENDING_PAYMENT" ? <p className="text-xs text-muted-foreground">Held until {fmtDateTime(o.holdExpiresAt)}.</p> : null}
               </CardContent>
             </Card>

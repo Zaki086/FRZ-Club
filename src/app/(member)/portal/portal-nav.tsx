@@ -19,14 +19,14 @@ const LINKS = [
 export function PortalNav() {
   const path = usePathname();
   return (
-    <nav className="mx-auto flex max-w-5xl gap-1 overflow-x-auto px-4 pb-2">
+    <nav className="mx-auto flex max-w-5xl gap-1 overflow-x-auto px-4">
       {LINKS.map((l) => (
         <Link
           key={l.href}
           href={l.href}
           className={cn(
-            "whitespace-nowrap rounded-full px-3 py-1 text-sm hover:bg-muted",
-            (l.href === "/portal" ? path === "/portal" : path.startsWith(l.href)) && "bg-primary text-white hover:bg-primary",
+            "whitespace-nowrap rounded-t-xl px-3.5 py-2.5 text-sm font-semibold text-ink-foreground/75 hover:text-ink-foreground",
+            (l.href === "/portal" ? path === "/portal" : path.startsWith(l.href)) && "bg-background !text-foreground",
           )}
         >
           {l.label}

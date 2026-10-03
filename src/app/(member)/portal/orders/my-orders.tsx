@@ -45,9 +45,9 @@ function OrderCard({ o, onChange }: { o: Order; onChange: () => void }) {
           {o.lines.map((l) => <li key={l.id}>{l.qty} × {l.name} — {formatINR(l.netAmount)}</li>)}
         </ul>
         <p className="flex justify-between font-semibold"><span>Total</span><Money paise={o.total} /></p>
-        {o.due > 0 && o.status !== "CANCELLED" ? <p className="text-amber-700">To pay: {formatINR(o.due)}</p> : null}
+        {o.due > 0 && o.status !== "CANCELLED" ? <p className="text-warning-text">To pay: {formatINR(o.due)}</p> : null}
         {o.cancelReason ? <p className="text-destructive">Cancelled: {o.cancelReason}</p> : null}
-        {refunded !== null ? <p className="text-green-700">Cancelled{refunded.refunded || refunded.refundPending ? ` — ${refundSummary(refunded.refunded, refunded.refundPending)}` : ""}.</p> : null}
+        {refunded !== null ? <p className="text-success-text">Cancelled{refunded.refunded || refunded.refundPending ? ` — ${refundSummary(refunded.refunded, refunded.refundPending)}` : ""}.</p> : null}
         <details>
           <summary className="cursor-pointer text-xs text-muted-foreground">Tracking</summary>
           <ol className="mt-1 flex flex-col gap-1 border-l-2 border-primary/30 pl-3 text-xs">
@@ -95,8 +95,8 @@ export function MyOrders() {
         <h1 className="text-2xl font-bold">Shop orders</h1>
         <Button asChild size="sm"><Link href="/shop"><ShoppingBag className="h-4 w-4" /> Shop</Link></Button>
       </div>
-      {params.get("payment") === "success" ? <div className="rounded-md border border-green-300 bg-green-50 p-3 text-sm">Payment received — thank you!</div> : null}
-      {params.get("payment") === "failed" ? <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm">The payment did not go through. You can try again.</div> : null}
+      {params.get("payment") === "success" ? <div className="rounded-md border border-success/40 bg-success/10 p-3 text-sm">Payment received — thank you!</div> : null}
+      {params.get("payment") === "failed" ? <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">The payment did not go through. You can try again.</div> : null}
       <DataState state={orders} isEmpty={(d) => d.length === 0} empty={{ title: "No orders yet", hint: "Order gear online and collect it at the club or get it delivered." }}>
         {(rows) => <div className="flex flex-col gap-3">{rows.map((o) => <OrderCard key={o.id} o={o} onChange={() => void orders.reload()} />)}</div>}
       </DataState>

@@ -46,8 +46,8 @@ export function QuoteView({ token }: { token: string }) {
             </div>
             <RejectionBanner error={error} />
             {q.status === "INTERESTED" ? (
-              <div className="flex items-start gap-2 rounded-md border border-green-300 bg-green-50 p-3 text-sm">
-                <CheckCircle2 className="h-5 w-5 text-green-700" /> Thank you! Your contact at the club has been told and will call you shortly to get you started.
+              <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/10 p-3 text-sm">
+                <CheckCircle2 className="h-5 w-5 text-success-text" /> Thank you! Your contact at the club has been told and will call you shortly to get you started.
               </div>
             ) : q.expired ? (
               <p className="text-sm">This quote has expired. Please <Link className="text-primary underline" href="/enquire">get in touch</Link> for a fresh one.</p>

@@ -6,8 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Empty } from "@/components/states";
-import { Money } from "@/components/money";
-import { categoryLabel, StockLabel, type CatalogueProduct } from "@/components/shop-quote";
+import { categoryLabel, OfferPrice, StockLabel, type CatalogueProduct } from "@/components/shop-quote";
 import { addToCart, useCart } from "@/components/cart";
 import { ProductImage } from "@/components/product-image";
 
@@ -52,7 +51,7 @@ export function ShopCatalogue({ products, initialCategory }: { products: Catalog
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">{p.brand} · {categoryLabel(p.category)}</p>
                     <Link href={`/shop/${p.id}`} className="text-lg font-semibold hover:underline">{p.name}</Link>
                   </div>
-                  <Money paise={first.price} className="text-lg font-bold" />
+                  <OfferPrice v={first} className="text-lg font-bold" />
                 </div>
                 <p className="line-clamp-2 text-sm text-muted-foreground">{p.description}</p>
                 <div className="flex flex-wrap gap-1">

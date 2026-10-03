@@ -60,9 +60,9 @@ export function PortalSocial({ memberId, today }: { memberId: string; today: str
     <div className="flex flex-col gap-4">
       <h1 className="text-2xl font-bold">Social play</h1>
       <p className="text-sm text-muted-foreground">Turn up and play with other members. A social session counts as one of your plays for the day.</p>
-      {params.get("payment") === "success" ? <div className="rounded-md border border-green-300 bg-green-50 p-3 text-sm">Payment received — see you on court!</div> : null}
-      {params.get("payment") === "failed" ? <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm">The payment did not go through. You can pay at the desk.</div> : null}
-      {msg ? <div className="rounded-md border border-green-300 bg-green-50 p-3 text-sm">{msg}</div> : null}
+      {params.get("payment") === "success" ? <div className="rounded-md border border-success/40 bg-success/10 p-3 text-sm">Payment received — see you on court!</div> : null}
+      {params.get("payment") === "failed" ? <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">The payment did not go through. You can pay at the desk.</div> : null}
+      {msg ? <div className="rounded-md border border-success/40 bg-success/10 p-3 text-sm">{msg}</div> : null}
       <DataState state={state} isEmpty={(d) => d.filter((s) => s.status === "SCHEDULED").length === 0} empty={{ title: "No social sessions coming up", hint: "Friday social play is scheduled by the club — check back soon." }}>
         {(rows) => (
           <div className="flex flex-col gap-3">

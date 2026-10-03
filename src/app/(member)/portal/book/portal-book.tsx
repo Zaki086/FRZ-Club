@@ -99,7 +99,7 @@ export function PortalBook({ memberId, memberName, today }: { memberId: string; 
           <CardContent className="flex flex-col gap-3">
             {result ? (
               <div className="flex flex-col gap-2">
-                <div className="rounded-md border border-green-300 bg-green-50 p-3 text-sm">
+                <div className="rounded-md border border-success/40 bg-success/10 p-3 text-sm">
                   <p className="font-semibold">{result.bookingCode} confirmed</p>
                   <p>Total <Money paise={result.total} />{result.due > 0 ? <> — <Money paise={result.due} /> to pay at the desk</> : " — nothing to pay"}</p>
                 </div>

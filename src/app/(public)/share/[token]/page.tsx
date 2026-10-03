@@ -27,7 +27,7 @@ export default async function SharedReportPage({ params }: { params: Promise<{ t
   }
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-3 px-4 py-6">
-      <div className="no-print rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+      <div className="no-print rounded-md border border-junior/30 bg-junior/10 p-3 text-sm text-junior">
         Read-only report shared by the owner of {shared.club}. This link expires {fmtDateTime(shared.expiresAt)}.
       </div>
       <ReportSummary data={shared.report as unknown as ReportData} clubName={shared.club} />

@@ -13,10 +13,12 @@ import { Money } from "@/components/money";
 import { fmtDay, fmtRange, istDate } from "@/lib/time";
 import { formatINR } from "@/lib/money";
 import { useNow } from "../_components/use-now";
+import { ClubCancellationChoice, type Resolution } from "@/components/club-cancellation-choice";
 
 type B = {
   id: string; code: string; court: string; startAt: string; endAt: string; status: string; primaryMemberId: string | null;
   players: Array<{ name: string; memberId: string | null; fee: number }>; billId: string | null; total: number; due: number; billStatus: string;
+  cancelReason: string | null; resolution: Resolution | null;
 };
 type Dues = { dues: Array<{ id: string; sourceType: string; due: number; createdAt: string; description: string }> };
 
@@ -48,11 +50,13 @@ function BookingRow({ b, memberId, onChanged, upcoming }: { b: B; memberId: stri
         <a className="text-xs text-primary underline" href={`/api/bookings/${b.id}/ics`} download>Add to calendar</a>
         <p className="mt-0.5 flex flex-wrap items-center gap-2 text-xs">
           <StatusBadge status={b.status} /> Total <Money paise={b.total} />
-          {b.due > 0 ? <span className="font-semibold text-amber-700">· {formatINR(b.due)} due</span> : null}
+          {b.due > 0 ? <span className="font-semibold text-warning-text">· {formatINR(b.due)} due</span> : null}
         </p>
+        {b.status === "CANCELLED_BY_CLUB" && b.cancelReason ? <p className="text-xs text-muted-foreground">{b.cancelReason}</p> : null}
+        {mine && b.resolution ? <div className="mt-2"><ClubCancellationChoice r={b.resolution} onDone={() => onChanged(b.resolution!.status === "PENDING_CHOICE" ? "Done — see the updated booking below." : "")} /></div> : null}
       </div>
       <div className="flex flex-wrap gap-2">
-        {mine && b.billId && b.due > 0 && b.status !== "CANCELLED" ? <PayOnline billId={b.billId} /> : null}
+        {mine && b.billId && b.due > 0 && b.status !== "CANCELLED" && b.status !== "CANCELLED_BY_CLUB" ? <PayOnline billId={b.billId} /> : null}
         {upcoming && mine && b.status === "CONFIRMED" ? (
           <ConfirmButton
             trigger="Cancel"
@@ -87,15 +91,24 @@ export function MyBookings({ memberId }: { memberId: string }) {
         <h1 className="text-2xl font-bold">My bookings</h1>
         <Button asChild size="sm"><Link href="/portal/book"><CalendarPlus className="h-4 w-4" /> Book</Link></Button>
       </div>
-      {params.get("payment") === "success" ? <div className="rounded-md border border-green-300 bg-green-50 p-3 text-sm">Payment received — thank you!</div> : null}
-      {params.get("payment") === "failed" ? <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm">The payment did not go through. You can try again or pay at the desk.</div> : null}
-      {msg ? <div className="rounded-md border border-green-300 bg-green-50 p-3 text-sm">{msg}</div> : null}
+      {params.get("payment") === "success" ? <div className="rounded-md border border-success/40 bg-success/10 p-3 text-sm">Payment received — thank you!</div> : null}
+      {params.get("payment") === "failed" ? <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">The payment did not go through. You can try again or pay at the desk.</div> : null}
+      {msg ? <div className="rounded-md border border-success/40 bg-success/10 p-3 text-sm">{msg}</div> : null}
       <DataState state={state}>
         {(rows) => {
           const upcoming = rows.filter((b) => new Date(b.endAt).getTime() > now && b.status === "CONFIRMED").sort((a, b) => a.startAt.localeCompare(b.startAt));
-          const past = rows.filter((b) => !upcoming.includes(b));
+          const choose = rows.filter((b) => b.resolution?.status === "PENDING_CHOICE" && b.primaryMemberId === memberId);
+          const past = rows.filter((b) => !upcoming.includes(b) && !choose.includes(b));
           return (
             <>
+              {choose.length ? (
+                <Card data-testid="needs-choice">
+                  <CardHeader><CardTitle>Cancelled by the club — your choice</CardTitle></CardHeader>
+                  <CardContent className="divide-y">
+                    {choose.map((b) => <BookingRow key={b.id} b={b} memberId={memberId} onChanged={changed} upcoming={false} />)}
+                  </CardContent>
+                </Card>
+              ) : null}
               <Card>
                 <CardHeader><CardTitle>Upcoming</CardTitle></CardHeader>
                 <CardContent className="divide-y">

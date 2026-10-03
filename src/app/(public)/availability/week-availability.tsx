@@ -12,10 +12,10 @@ type Court = { courtId: string; name: string; sport: string; active: boolean; sl
 type Avail = { today: string; dates: Array<{ date: string; courts: Court[] }> };
 
 const CELL: Record<Slot["state"], string> = {
-  FREE: "bg-emerald-50 text-emerald-800 border-emerald-200",
+  FREE: "bg-success/10 text-success-text border-success/40",
   BOOKED: "bg-rose-100 text-rose-800 border-rose-200",
   SOCIAL: "bg-purple-100 text-purple-800 border-purple-200",
-  MAINTENANCE: "bg-slate-200 text-slate-700 border-slate-300",
+  MAINTENANCE: "bg-slate-200 text-foreground border-border",
 };
 
 function todayStr() {
@@ -75,7 +75,7 @@ export function WeekAvailability() {
                           return (
                             <td key={s.time}>
                               {canTrial ? (
-                                <Link href={`/trial?courtId=${c.courtId}&date=${day.date}&time=${s.time}`} className={cn(cls, "hover:ring-2 hover:ring-primary")} title={`Book a trial at ${s.time}`}>{label}</Link>
+                                <Link prefetch={false} href={`/trial?courtId=${c.courtId}&date=${day.date}&time=${s.time}`} className={cn(cls, "hover:ring-2 hover:ring-primary")} title={`Book a trial at ${s.time}`}>{label}</Link>
                               ) : (
                                 <span className={cls} title={s.bookable ? "Free to book" : label}>{label}</span>
                               )}

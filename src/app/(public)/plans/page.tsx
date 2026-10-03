@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PriceNotes } from "@/components/price-notes";
 import Link from "next/link";
 import { Check } from "lucide-react";
 import { getSettings } from "@/server/services/settings";
@@ -25,9 +26,10 @@ export default async function PlansPage() {
         <h1 className="text-3xl font-bold">Plans &amp; prices</h1>
         <p className="text-muted-foreground">All prices include GST. Your plan&apos;s rates and discounts apply automatically at the courts, the shop and the bar.</p>
       </div>
+      <PriceNotes scopes={["COURTS", "SOCIAL", "PRODUCTS", "MENU"]} />
       <div className="grid gap-4 md:grid-cols-3">
         {plans.map((p) => (
-          <Card key={p.id} className={p.code === "GOLD" ? "ring-2 ring-yellow-400" : undefined}>
+          <Card key={p.id} className={p.code === "GOLD" ? "ring-2 ring-gold" : undefined}>
             <CardHeader>
               <TierBadge tier={p.code} />
               <p className="mt-2 text-3xl font-bold">{formatINR(p.price1m)}<span className="text-base font-normal text-muted-foreground"> / month</span></p>
@@ -45,7 +47,7 @@ export default async function PlansPage() {
                 <li className="flex gap-2"><Check className="h-4 w-4 shrink-0 text-primary" />{p.barDiscountPct}% off at the bar</li>
                 <li className="flex gap-2"><Check className="h-4 w-4 shrink-0 text-primary" />Book up to {p.advanceBookingDays} days ahead</li>
               </ul>
-              {p.code === "JUNIOR" ? <p className="rounded-md bg-sky-50 p-2 text-xs text-sky-900">For players under 18 on the start date. No alcohol is served on Junior memberships.</p> : null}
+              {p.code === "JUNIOR" ? <p className="rounded-md bg-junior/10 p-2 text-xs text-junior">For players under 18 on the start date. No alcohol is served on Junior memberships.</p> : null}
             </CardContent>
           </Card>
         ))}

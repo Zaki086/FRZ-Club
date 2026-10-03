@@ -16,7 +16,7 @@ export function ForgotForm() {
     <Card>
       <CardContent className="flex flex-col gap-3 pt-5">
         {message ? (
-          <p className="rounded-md border border-green-300 bg-green-50 p-3 text-sm" data-testid="forgot-result">{message}</p>
+          <p className="rounded-md border border-success/40 bg-success/10 p-3 text-sm" data-testid="forgot-result">{message}</p>
         ) : (
           <form
             className="flex flex-col gap-3"

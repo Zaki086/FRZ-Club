@@ -64,14 +64,14 @@ export function CartCheckout() {
           </div>
           <QuoteLines quote={quote} error={quoteError} loading={loading} />
           {quoteError ? <Button variant="outline" size="sm" onClick={clearCart}>Clear cart</Button> : null}
-          {isMember ? <p className="text-xs text-green-700">Signed in as {me.data?.name} — your member discount is included above.</p> : <p className="text-xs text-muted-foreground">Members: <Link className="underline" href="/login?next=/shop/cart">log in</Link> to get your plan discount.</p>}
+          {isMember ? <p className="text-xs text-success-text">Signed in as {me.data?.name} — your member discount is included above.</p> : <p className="text-xs text-muted-foreground">Members: <Link className="underline" href="/login?next=/shop/cart">log in</Link> to get your plan discount.</p>}
         </CardContent>
       </Card>
 
       <Card className="lg:col-span-2">
         <CardHeader><CardTitle>Checkout</CardTitle></CardHeader>
         <CardContent className="flex flex-col gap-3">
-          {isStaff ? <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm">You are signed in as staff — staff sell at the counter POS. Log out to order as a visitor.</p> : null}
+          {isStaff ? <p className="rounded-md border border-warning/50 bg-warning/15 p-2 text-sm">You are signed in as staff — staff sell at the counter POS. Log out to order as a visitor.</p> : null}
           <div className={cn("grid gap-2", caps?.delivery ? "grid-cols-2" : "grid-cols-1")}>
             {(caps?.delivery ? (["PICKUP", "DELIVERY"] as const) : (["PICKUP"] as const)).map((f) => (
               <button key={f} type="button" onClick={() => setFulfilment(f)} className={cn("rounded-lg border p-3 text-left text-sm", fulfilment === f ? "border-primary bg-accent ring-2 ring-primary" : "hover:bg-muted")}>

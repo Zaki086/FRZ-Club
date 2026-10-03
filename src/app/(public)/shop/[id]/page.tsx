@@ -24,7 +24,18 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
       <p className="mt-4 text-xs uppercase tracking-wide text-muted-foreground">{product.brand} · {categoryLabel(product.category)}</p>
       <h1 className="text-3xl font-bold">{product.name}</h1>
       <ProductImage url={product.imageUrl} category={product.category} name={product.name} className="mt-3 aspect-[4/3] w-full max-w-md" />
-      <p className="mt-2 text-muted-foreground">{product.description}</p>
+      {product.images.length > 1 ? (
+        <div className="mt-2 flex flex-wrap gap-2" data-testid="product-gallery">
+          {product.images.map((img, i) => (
+            <a key={img.url} href={img.url} target="_blank" rel="noopener">
+              {/* eslint-disable-next-line @next/next/no-img-element -- the club's own uploaded photo */}
+              <img src={img.thumbUrl} alt={`${product.name} photo ${i + 1}`} width={80} height={80} className="h-20 w-20 rounded-lg border object-cover" />
+            </a>
+          ))}
+        </div>
+      ) : null}
+      {/* v3 §9.3: plain text with line breaks. */}
+      <p className="mt-2 whitespace-pre-line text-muted-foreground">{product.description}</p>
       <ProductBuy product={JSON.parse(JSON.stringify(product))} />
     </div>
   );

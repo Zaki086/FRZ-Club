@@ -13,7 +13,7 @@ type Tab = { id: string; code: string; status: string; tier: string; table: { nu
 
 function TabCard({ t, open }: { t: Tab; open?: boolean }) {
   return (
-    <Card className={cn(open && "border-amber-300")}>
+    <Card className={cn(open && "border-warning/50")}>
       <CardHeader className="flex-row items-center justify-between gap-2">
         <CardTitle className="flex flex-wrap items-center gap-2">
           {open ? "Open tab" : fmtDate(t.barDate)} <span className="font-mono text-xs text-muted-foreground">{t.code}</span>
@@ -31,13 +31,13 @@ function TabCard({ t, open }: { t: Tab; open?: boolean }) {
               </div>
               <div className="text-right">
                 <Money paise={l.netAmount} />
-                {l.discountAmount ? <p className="text-xs text-green-700">−{formatINR(l.discountAmount)}</p> : null}
+                {l.discountAmount ? <p className="text-xs text-success-text">−{formatINR(l.discountAmount)}</p> : null}
               </div>
             </div>
           ))}
         </div>
         <div className="grid grid-cols-2 gap-1 border-t pt-2 text-sm">
-          <span className="text-muted-foreground">You saved</span><Money paise={t.discountTotal} className="text-right text-green-700" />
+          <span className="text-muted-foreground">You saved</span><Money paise={t.discountTotal} className="text-right text-success-text" />
           <span className="text-muted-foreground">Total</span><Money paise={t.total} className="text-right font-semibold" />
           <span className="text-muted-foreground">Paid</span><Money paise={t.paid} className="text-right" />
           <span className="font-semibold">To settle</span><Money paise={t.due} className="text-right font-bold" />

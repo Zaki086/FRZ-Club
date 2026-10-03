@@ -2,9 +2,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Money } from "@/components/money";
 import { cn } from "@/components/ui/cn";
-import { StockLabel, type CatalogueProduct } from "@/components/shop-quote";
+import { OfferPrice, StockLabel, type CatalogueProduct } from "@/components/shop-quote";
 import { addToCart } from "@/components/cart";
 
 export function ProductBuy({ product }: { product: CatalogueProduct }) {
@@ -30,7 +29,7 @@ export function ProductBuy({ product }: { product: CatalogueProduct }) {
       ) : (
         <StockLabel label={v.stockLabel} inStock={v.inStock} />
       )}
-      <p className="text-3xl font-bold"><Money paise={v.price} /></p>
+      <p className="text-3xl font-bold"><OfferPrice v={v} /></p>
       <p className="text-xs text-muted-foreground">Price includes GST. Member discounts are applied at checkout.</p>
       <div className="flex flex-wrap gap-2">
         <Button size="lg" disabled={!v.inStock} onClick={() => { addToCart({ variantId: v.id, name: `${product.name}${v.label !== "Standard" ? ` — ${v.label}` : ""}` }); setAdded(true); }}>

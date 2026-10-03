@@ -24,15 +24,15 @@ export default async function HomePage() {
   const teaser = catalogue.filter((p) => p.trackStock).slice(0, 4);
   return (
     <div>
-      <section className="bg-gradient-to-br from-emerald-900 via-emerald-800 to-slate-900 text-white">
+      <section className="bg-gradient-to-br from-ink via-primary to-ink text-ink-foreground">
         <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-14 sm:py-20">
-          <p className="text-sm font-semibold uppercase tracking-widest text-emerald-200">{s.club.address}</p>
+          <p className="text-sm font-semibold uppercase tracking-widest text-accent">{s.club.address}</p>
           <h1 className="max-w-3xl text-4xl font-black leading-tight sm:text-5xl">{s.club.name}</h1>
-          <p className="max-w-2xl text-lg text-emerald-50">
+          <p className="max-w-2xl text-lg text-ink-foreground/90">
             {tennis} tennis courts and {cricket} cricket nets you can book online, a gear shop for everything from strings to shoes, and a bar &amp; cafeteria for after the match.
           </p>
           <div className="flex flex-wrap gap-3">
-            <Button asChild size="lg" className="bg-white text-emerald-900 hover:bg-emerald-50">
+            <Button asChild size="lg" className="bg-white text-success-text hover:bg-success/10">
               <Link href="/trial"><CalendarCheck className="h-5 w-5" /> Book a trial</Link>
             </Button>
             <Button asChild size="lg" variant="outline" className="border-white/60 bg-transparent text-white hover:bg-white/10">
@@ -42,7 +42,7 @@ export default async function HomePage() {
               <Link href="/availability">Check availability</Link>
             </Button>
           </div>
-          <p className="text-sm text-emerald-100">Open every day {s.opening_hours.open}–{s.opening_hours.close}</p>
+          <p className="text-sm text-ink-foreground/80">Open every day {s.opening_hours.open}–{s.opening_hours.close}</p>
         </div>
       </section>
 
@@ -93,7 +93,7 @@ export default async function HomePage() {
                 <Link key={p.id} href={`/shop/${p.id}`} className="rounded-lg border bg-card p-4 hover:shadow-md">
                   <p className="text-xs uppercase text-muted-foreground">{p.brand}</p>
                   <p className="font-semibold">{p.name}</p>
-                  <p className="mt-1 font-bold">{formatINR(v.price)}</p>
+                  <p className="mt-1 font-bold">{v.offerPrice !== null ? <><s className="mr-1 font-normal text-muted-foreground">{formatINR(v.price)}</s>{formatINR(v.offerPrice)}</> : formatINR(v.price)}</p>
                   <p className={`text-xs ${v.inStock ? "text-muted-foreground" : "text-destructive"}`}>{v.stockLabel}</p>
                 </Link>
               );
