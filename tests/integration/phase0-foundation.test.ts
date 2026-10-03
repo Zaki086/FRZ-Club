@@ -74,9 +74,16 @@ describe("Phase 0 — settings & audit", () => {
     await updateSetting(w.actors.OWNER, "max_plays_per_day", 2);
   });
 
-  it("tax rates are seeded unverified (IN-6)", async () => {
-    const row = await prisma.setting.findUnique({ where: { key: "tax_rates" } });
-    expect(row?.verified).toBe(false);
+  it("GST is charged only when the tax rates are verified AND the club GSTIN is valid (IN-6, completion pass §1)", async () => {
+    expect((await getSettings()).gstEnabled).toBe(true);
+    await prisma.setting.update({ where: { key: "tax_rates" }, data: { verified: false } });
+    expect((await getSettings()).gstEnabled).toBe(false);
+    await prisma.setting.update({ where: { key: "tax_rates" }, data: { verified: true } });
+    const club = (await getSettings()).club;
+    await updateSetting(w.actors.OWNER, "club", { ...club, gstin: "24AAACC1206D1ZA" }); // wrong check digit
+    expect((await getSettings()).gstEnabled).toBe(false);
+    await updateSetting(w.actors.OWNER, "club", club);
+    expect((await getSettings()).gstEnabled).toBe(true);
   });
 
   it("audit rows and ledger rows are append-only at the database level", async () => {
@@ -158,8 +165,9 @@ describe("Phase 0 — money & time utilities (§2)", () => {
   });
 
   it("IN-1: GSTIN format validation", () => {
-    expect(isValidGstin("24AABCC1234F1Z5")).toBe(true);
-    expect(isValidGstin("24AABCC1234F1X5")).toBe(false);
-    expect(isValidGstin("99AABCC1234F1Z5")).toBe(false);
+    expect(isValidGstin("24AABCC1234F1ZD")).toBe(true);
+    expect(isValidGstin("24AABCC1234F1Z5")).toBe(false); // right shape, wrong check digit
+    expect(isValidGstin("24AABCC1234F1XD")).toBe(false);
+    expect(isValidGstin("99AABCC1234F1ZD")).toBe(false);
   });
 });

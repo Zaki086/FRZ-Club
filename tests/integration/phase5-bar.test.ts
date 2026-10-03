@@ -4,7 +4,7 @@ import {
   addLines, barDayReport, carryTab, closeBarDay, getTab, kitchenQueue, listTables, openTab, readyQueue, sendToKitchen, setLineStatus, settleTab, verifyGuestId, voidLine,
 } from "@/server/services/bar";
 import { clockIn, clockOut } from "@/server/services/staff";
-import { makeWorld, type World } from "../helpers/world";
+import { makeWorld, type World, utr, CARD_PROOF } from "../helpers/world";
 import { makeMember } from "../helpers/members";
 import { makeBar } from "../helpers/bar";
 import { expectIntegrity } from "../helpers/integrity";
@@ -109,10 +109,10 @@ describe("Phase 5 — settle, carry, close the day, shifts (BR-8…BR-11, E-13�
   it("BR-8: a partial settle leaves the tab OPEN; split cash + UPI settles it; overpayment is rejected", async () => {
     const t = await openTab(w.actors.BAR_STAFF, { guest: { name: "Splitter" } });
     await addLines(w.actors.BAR_STAFF, t.tabId, { items: [{ menuItemId: bar.sandwich.id, qty: 2 }] }); // 640
-    const part = await settleTab(w.actors.BAR_STAFF, t.tabId, { payments: [{ method: "CARD", amount: 20000 }] });
+    const part = await settleTab(w.actors.BAR_STAFF, t.tabId, { payments: [{ method: "CARD", ...CARD_PROOF, amount: 20000 }] });
     expect([part.status, part.due]).toEqual(["OPEN", 44000]);
     await expect(settleTab(w.actors.BAR_STAFF, t.tabId, { payments: [{ method: "CASH", amount: 50000 }] })).rejects.toMatchObject({ code: "OVERPAYMENT" });
-    const done = await settleTab(w.actors.BAR_STAFF, t.tabId, { payments: [{ method: "CASH", amount: 24000, tendered: 30000 }, { method: "UPI", amount: 20000, reference: "UTR77" }] });
+    const done = await settleTab(w.actors.BAR_STAFF, t.tabId, { payments: [{ method: "CASH", amount: 24000, tendered: 30000 }, { method: "UPI", reference: utr(), amount: 20000 }] });
     expect([done.status, done.due, done.changeGiven]).toEqual(["SETTLED", 0, 6000]);
     await expectIntegrity();
   });
@@ -132,7 +132,7 @@ describe("Phase 5 — settle, carry, close the day, shifts (BR-8…BR-11, E-13�
     expect(report.byCategory).toEqual({ FOOD: 18000 + 32000, BEVERAGE: 12000, ALCOHOL: 0 });
     expect(report.carriedTabs.map((c) => c.code)).toEqual([b.code]);
     expect((await barDayReport(w.actors.BAR_STAFF, "2026-10-12")).closedAt).not.toBeNull();
-    const settledLater = await settleTab(w.actors.BAR_STAFF, b.tabId, { payments: [{ method: "UPI", amount: 32000 }] });
+    const settledLater = await settleTab(w.actors.BAR_STAFF, b.tabId, { payments: [{ method: "UPI", reference: utr(), amount: 32000 }] });
     expect(settledLater.status).toBe("SETTLED");
   });
 
