@@ -1,5 +1,6 @@
 // Users & roles (Settings → Users, plan §7). Staff users get an employee record (ST-1).
 import type { Role } from "@prisma/client";
+import { reassignLeadsOf } from "./crm";
 import { z } from "zod";
 import { isIndianMobile, normalisePhone } from "@/lib/codes";
 import { dbDate } from "@/lib/time";
@@ -72,6 +73,8 @@ export async function setUserActive(actor: Actor, userId: string, active: boolea
     }
     const user = await tx.user.update({ where: { id: userId }, data: { active } });
     await tx.employee.updateMany({ where: { userId }, data: { active } });
+    // v3 LA-7: a deactivated person's open leads go to someone else by the assignment rules.
+    if (!active) await reassignLeadsOf(tx, actor, userId);
     await audit(tx, actor, active ? "user.activate" : "user.deactivate", "user", userId, {
       before: { active: before.active },
       after: { active },

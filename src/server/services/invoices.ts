@@ -320,10 +320,12 @@ export async function markOverdueInvoices(outer?: Tx) {
         link: `/app/finance/invoices/${inv.id}`,
         dedupeKey: `invoice-overdue:${inv.id}`,
       });
+      // A member with a login hears it from runInvoiceDueReminders on every channel (dues.ts); email only the others.
+      const member = inv.memberId ? await tx.member.findUnique({ where: { id: inv.memberId } }) : null;
       const email = inv.businessClientId
         ? (await tx.businessClient.findUnique({ where: { id: inv.businessClientId } }))?.contactEmail
-        : inv.memberId
-          ? (await tx.member.findUnique({ where: { id: inv.memberId } }))?.email
+        : member && !member.userId
+          ? member.email
           : null;
       if (email) {
         await queueEmail(tx, {

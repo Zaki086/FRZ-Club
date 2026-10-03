@@ -10,7 +10,7 @@ import { DAY, fmtDateTime, HOUR, istDate, MINUTE } from "@/lib/time";
 import { nextSeq, pgErrorCode, prisma, withTx, type Tx } from "../db";
 import { DomainError } from "../errors";
 import { actorId, actorKey, type Actor } from "../rbac/actor";
-import { assertCan, can } from "../rbac/permissions";
+import { assertCan } from "../rbac/permissions";
 import { audit } from "./audit";
 import { addBillLines, billDue, closeBill, createBill, netPaid, refreshBill, voidBillLines } from "./bills";
 import { findOrCreateGuest } from "./guests";
@@ -53,15 +53,28 @@ export async function listCatalogue(opts: { category?: string; q?: string } = {}
     include: { variants: { where: { archivedAt: null }, orderBy: { price: "asc" } } },
     orderBy: [{ category: "asc" }, { name: "asc" }],
   });
+  const images = await prisma.productImage.findMany({ where: { productId: { in: products.map((p) => p.id) } }, orderBy: { sort: "asc" } });
+  // D-79: the price a walk-in pays right now, from the one pricing engine (price book + any shop discount in effect).
+  // Members' plan discounts and tier-only offers are applied at checkout.
+  const all = products.flatMap((p) => p.variants.map((v) => ({ variantId: v.id, qty: 1, name: p.name, price: v.price, taxCategory: v.taxCategory, hsnSac: v.hsnSac })));
+  const walkIn = all.length ? await quoteShop(prisma, { date: istDate(clock.now()), items: all }, s) : null;
+  const priced = (variantId: string, fallback: number) => {
+    const l = walkIn?.lines.find((x) => x.variantId === variantId);
+    if (!l) return { price: fallback, offerPrice: null, offer: null };
+    const words = l.explanation.replace(/^Walk-in · /, "").replace(/ \(better than .*\)$/, "");
+    return { price: l.unitPrice, offerPrice: l.discountAmount > 0 ? l.netAmount : null, offer: l.discountAmount > 0 ? words : null };
+  };
   return products
     .filter((p) => p.variants.length)
     .map((p) => ({
       id: p.id, name: p.name, brand: p.brand, category: p.category, description: p.description, imageUrl: p.imageUrl,
+      // v3 §9.3: every photo (cover first) for the product page.
+      images: images.filter((i) => i.productId === p.id).map((i) => ({ url: i.url, thumbUrl: i.thumbUrl })),
       trackStock: p.trackStock, isRestring: p.isRestring,
       variants: p.variants.map((v) => {
         const available = p.trackStock ? v.onHand - v.reserved : null;
         return {
-          id: v.id, sku: v.sku, barcode: v.barcode, label: v.label, price: v.price, available,
+          id: v.id, sku: v.sku, barcode: v.barcode, label: v.label, ...priced(v.id, v.price), available,
           stockLabel: available === null ? "Service" : available <= 0 ? "Out of stock" : available <= s.public_low_stock_threshold ? `Only ${available} left` : "In stock",
           inStock: available === null || available > 0,
         };
@@ -295,6 +308,8 @@ const NEXT: Record<"PICKUP" | "DELIVERY", Partial<Record<OrderStatus, OrderStatu
   PICKUP: { CONFIRMED: ["READY_FOR_PICKUP"], READY_FOR_PICKUP: ["COLLECTED"] },
   DELIVERY: { CONFIRMED: ["PACKED"], PACKED: ["OUT_FOR_DELIVERY"], OUT_FOR_DELIVERY: ["DELIVERED"] },
 };
+/** The next steps staff may take on an order (the orders list shows them as buttons). */
+export const ORDER_NEXT = NEXT;
 const HANDED_OVER: OrderStatus[] = ["COLLECTED", "OUT_FOR_DELIVERY", "DELIVERED"];
 
 async function lockOrder(tx: Tx, orderId: string) {
@@ -352,7 +367,7 @@ export async function cancelOrderTx(tx: Tx, actor: Actor, orderId: string, reaso
   for (const l of o.lines) await release(tx, actor, l.variantId, l.qty, { type: "shop_order", id: o.id });
   const bill = await tx.bill.findUniqueOrThrow({ where: { id: o.billId } });
   const paid = netPaid(bill);
-  const refund = paid > 0 ? await refundTx(tx, actor, bill.id, paid, { reason: `Order ${o.code} cancelled: ${reason}` }) : { refunded: 0, pending: 0 };
+  const refund = paid > 0 ? await refundTx(tx, actor, bill.id, paid, { reason: `Order ${o.code} cancelled: ${reason}`, category: "POLICY_CANCELLATION", policy: "ORDER_CANCELLED_BEFORE_HANDOVER" }) : { refunded: 0, pending: 0 };
   await closeBill(tx, bill.id, `Order cancelled: ${reason}`, clock.now());
   await tx.shopOrder.update({ where: { id: o.id }, data: { status: "CANCELLED", cancelReason: reason, holdExpiresAt: null } });
   await tx.shopOrderEvent.create({ data: { orderId: o.id, status: "CANCELLED", note: reason, actorId: actorId(actor), at: clock.now() } });
@@ -430,7 +445,7 @@ export async function returnItems(actor: Actor, raw: z.infer<typeof returnSchema
       await restock(tx, actor, line.variantId, r.qty, { type: "return", id: bill.id });
     }
     let pending = 0;
-    if (refund > 0) pending = (await refundTx(tx, actor, bill.id, Math.min(refund, netPaid(bill)), { method: input.method, reference: input.reference, approvalCode: input.reference, reason: `Return: ${input.reason}` })).pending;
+    if (refund > 0) pending = (await refundTx(tx, actor, bill.id, Math.min(refund, netPaid(bill)), { method: input.method, reference: input.reference, approvalCode: input.reference, reason: `Return: ${input.reason}`, category: "PRODUCT_RETURN", policy: "RETURN_WITHIN_7_DAYS" })).pending;
     await refreshBill(tx, bill.id);
     await audit(tx, actor, "shop.return", "bill", bill.id, { after: { refund, lines: input.lines }, reason: input.reason });
     return { refunded: refund - pending, pending };
@@ -559,7 +574,7 @@ export const productSchema = z.object({
   name: z.string().trim().min(2).max(120),
   brand: z.string().trim().max(60).default(""),
   category: z.enum(["RACKETS", "BALLS", "SHOES", "ACCESSORIES", "APPAREL", "SERVICES"]),
-  description: z.string().max(1000).default(""),
+  description: z.string().max(2000, "The description is at most 2,000 characters.").default(""),
   // Only photos uploaded to the club's own server (no hot-linked or stock images).
   imageUrl: z.string().regex(/^\/api\/uploads\/product\/[a-z0-9]{24}\.(png|jpg|webp)$/, "Upload the product photo first.").optional(),
   isRestring: z.boolean().default(false),
@@ -595,18 +610,36 @@ export async function createProduct(actor: Actor, raw: z.input<typeof productSch
   }, outer);
 }
 
-/** Completion pass §9: set or clear a product's photo (an uploaded /api/uploads/product/... file). */
+/**
+ * Completion pass §9: set or clear a product's cover photo (an uploaded /api/uploads/product/... file). v3 §9.3: the
+ * cover is the first of the product's photos — a new cover goes first, clearing removes the current cover.
+ */
 export async function setProductImage(actor: Actor, productId: string, url: string | null) {
   assertCan(actor, "shop.stock");
   const imageUrl = url === null ? null : productSchema.shape.imageUrl.parse(url) ?? null;
-  const p = await prisma.product.findUnique({ where: { id: productId } });
-  if (!p) throw new DomainError("NOT_FOUND", "Product was not found.");
-  const updated = await prisma.product.update({ where: { id: p.id }, data: { imageUrl } });
-  await audit(prisma, actor, "product.image", "product", p.id, { before: { imageUrl: p.imageUrl }, after: { imageUrl } });
-  return { id: updated.id, imageUrl: updated.imageUrl };
+  return withTx(async (tx) => {
+    const p = await tx.product.findUnique({ where: { id: productId } });
+    if (!p) throw new DomainError("NOT_FOUND", "Product was not found.");
+    const imgs = await tx.productImage.findMany({ where: { productId }, orderBy: { sort: "asc" } });
+    if (imageUrl === null) {
+      if (imgs[0]) await tx.productImage.delete({ where: { id: imgs[0].id } });
+    } else {
+      if (imgs.length >= 5) throw new DomainError("VALIDATION_FAILED", "A product has at most 5 photos. Remove one first.");
+      for (const [i, img] of [...imgs].reverse().entries()) await tx.productImage.update({ where: { id: img.id }, data: { sort: imgs.length - i } });
+      await tx.productImage.create({ data: { productId, url: imageUrl, thumbUrl: imageUrl, sort: 0 } });
+    }
+    const rest = await tx.productImage.findMany({ where: { productId }, orderBy: { sort: "asc" } });
+    for (const [i, r] of rest.entries()) await tx.productImage.update({ where: { id: r.id }, data: { sort: i } });
+    const updated = await tx.product.update({ where: { id: p.id }, data: { imageUrl: rest[0]?.url ?? null } });
+    await audit(tx, actor, "product.image", "product", p.id, { before: { imageUrl: p.imageUrl }, after: { imageUrl: updated.imageUrl } });
+    return { id: updated.id, imageUrl: updated.imageUrl };
+  });
 }
 
 export const variantUpdateSchema = z.object({
+  label: z.string().trim().min(1).max(60).optional(),
+  sku: z.string().trim().min(3).max(40).optional(),
+  hsnSac: z.string().trim().min(4).max(10).optional(),
   price: z.number().int().min(0).optional(),
   reorderLevel: z.number().int().min(0).optional(),
   archived: z.boolean().optional(),
@@ -618,14 +651,22 @@ export const variantUpdateSchema = z.object({
 export async function updateVariant(actor: Actor, variantId: string, raw: z.infer<typeof variantUpdateSchema>) {
   assertCan(actor, "shop.stock");
   const input = variantUpdateSchema.parse(raw);
-  if (input.price !== undefined && !can(actor, "dashboard.ops")) throw new DomainError("FORBIDDEN", "Not allowed: only the owner or manager can change prices.");
+  // D-79: shop staff set shop prices too (always through the price book below).
+  if (input.price !== undefined) assertCan(actor, "shop.pricing");
+  const sku = input.sku?.toUpperCase();
   return withTx(async (tx) => {
     const before = await tx.productVariant.findUnique({ where: { id: variantId } });
     if (!before) throw new DomainError("NOT_FOUND", "Product was not found.");
+    if (sku && sku !== before.sku && (await tx.productVariant.findFirst({ where: { sku, id: { not: variantId } } }))) throw new DomainError("VALIDATION_FAILED", `SKU ${sku} is already in use.`);
+    if (input.price !== undefined && input.price !== before.price) {
+      // v3 §9.2: the price goes through the price book (a dated version, in effect now).
+      const { setBasePriceTx } = await import("./price-book");
+      await setBasePriceTx(tx, actor, { target: `VARIANT:${variantId}`, price: input.price });
+    }
     const v = await tx.productVariant.update({
       where: { id: variantId },
       data: {
-        price: input.price, reorderLevel: input.reorderLevel, taxCategory: input.taxCategory, archivedAt: input.archived === undefined ? undefined : input.archived ? clock.now() : null,
+        label: input.label, sku, hsnSac: input.hsnSac, reorderLevel: input.reorderLevel, taxCategory: input.taxCategory, archivedAt: input.archived === undefined ? undefined : input.archived ? clock.now() : null,
         barcode: input.barcode === undefined ? undefined : input.barcode || null,
       },
     }).catch((e) => {

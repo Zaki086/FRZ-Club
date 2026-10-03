@@ -17,6 +17,7 @@ import { billDue } from "./bills";
 import { splitTax } from "./invoices";
 import { getSettings } from "./settings";
 import { INDIAN_STATES } from "@/lib/states";
+import { resolveRange, type DatePreset } from "./filters/core";
 import { assertCapability } from "./capabilities";
 
 export const INCOME_SOURCES: LedgerSource[] = ["COURTS", "SOCIAL", "SHOP", "BAR", "MEMBERSHIP", "INVOICE"];
@@ -104,7 +105,7 @@ async function bookingStats(from: string, to: string) {
   const [a, b] = bounds(from, to);
   const rows = await prisma.booking.groupBy({ by: ["status"], where: { reservation: { startAt: { gte: a, lt: b } } }, _count: { _all: true } });
   const n = (s: string) => rows.find((r) => r.status === s)?._count._all ?? 0;
-  return { total: rows.reduce((x, r) => x + r._count._all, 0), cancelled: n("CANCELLED"), noShows: n("NO_SHOW"), completed: n("COMPLETED"), confirmed: n("CONFIRMED") };
+  return { total: rows.reduce((x, r) => x + r._count._all, 0), cancelled: n("CANCELLED") + n("CANCELLED_BY_CLUB"), cancelledByClub: n("CANCELLED_BY_CLUB"), noShows: n("NO_SHOW"), completed: n("COMPLETED"), confirmed: n("CONFIRMED") };
 }
 
 /** Booked court-hours ÷ open court-hours (social counts as booked; maintenance does not count either way). */
@@ -237,6 +238,8 @@ export async function computeDashboard(scope: DashboardScope, raw: PeriodInput) 
     bookings: { value: bk.total, prev: bkPrev.total, change: pct(bk.total, bkPrev.total) },
     cancellations: { value: bk.cancelled, prev: bkPrev.cancelled, change: pct(bk.cancelled, bkPrev.cancelled) },
     noShows: { value: bk.noShows, prev: bkPrev.noShows, change: pct(bk.noShows, bkPrev.noShows) },
+    // v3 CC-8: paid bookings the club cancelled that still wait for the player's choice (not period-bound).
+    clubCancellationsPending: await prisma.clubCancellation.count({ where: { status: "PENDING_CHOICE" } }),
     utilization: util,
     members,
     shop,
@@ -261,7 +264,7 @@ export async function computeDashboard(scope: DashboardScope, raw: PeriodInput) 
     case "SHOP":
       return { ...base, money: { collected: money.bySource.SHOP }, ops: { shop: ops.shop } };
     case "DESK":
-      return { ...base, money: { courts: money.bySource.COURTS, social: money.bySource.SOCIAL, memberships: money.bySource.MEMBERSHIP }, ops: { bookings: ops.bookings, noShows: ops.noShows, utilization: ops.utilization, members: ops.members, leads: ops.leads } };
+      return { ...base, money: { courts: money.bySource.COURTS, social: money.bySource.SOCIAL, memberships: money.bySource.MEMBERSHIP }, ops: { bookings: ops.bookings, noShows: ops.noShows, clubCancellationsPending: ops.clubCancellationsPending, utilization: ops.utilization, members: ops.members, leads: ops.leads } };
   }
 }
 
@@ -318,7 +321,7 @@ export async function drillDown(actor: Actor, metric: string, raw: PeriodInput) 
     const rows = r.rows.map((b) => ({ id: b.id, at: b.createdAt, source: b.sourceType, method: null, description: b.customerName, amount: billDue(b), billId: b.id }));
     return { metric, period: p, kind: "money" as const, total: r.total, rows };
   }
-  const statusWhere: Prisma.BookingWhereInput = kind === "noShows" ? { status: "NO_SHOW" } : kind === "cancellations" ? { status: "CANCELLED" } : {};
+  const statusWhere: Prisma.BookingWhereInput = kind === "noShows" ? { status: "NO_SHOW" } : kind === "cancellations" ? { status: { in: ["CANCELLED", "CANCELLED_BY_CLUB"] } } : {};
   const bookings = await prisma.booking.findMany({
     where: { ...statusWhere, reservation: { startAt: { gte: a, lt: b } } },
     include: { reservation: { include: { court: true } } },
@@ -468,7 +471,7 @@ const TALLY_LEDGER: Record<LedgerSource, string> = {
 const TALLY_CASH_BANK: Record<PaymentMethod, string> = { CASH: "Cash", CARD: "Card Settlements (Bank)", UPI: "UPI Collections (Bank)", BANK_TRANSFER: "Bank Account", ONLINE: "Razorpay Settlements (Bank)" };
 
 /** Day book for Tally import: one row per ledger entry, receipts and payments with their cash/bank ledger. */
-export async function tallyRows(actor: Actor, raw: PeriodInput) {
+export async function tallyRows(actor: Actor, raw: PeriodInput & LedgerListFilter & { source?: string; method?: string }) {
   assertCan(actor, "finance.reports");
   const l = await listLedger(actor, raw);
   return [...l.rows].reverse().map((r) => {
@@ -488,12 +491,47 @@ export async function tallyRows(actor: Actor, raw: PeriodInput) {
 
 // ───────────── ledger explorer & CSV (DB-5) ─────────────
 
-export async function listLedger(actor: Actor, raw: PeriodInput & { source?: string; method?: string }) {
+/** Ledger filters as the ledger list (v3 §3.2) sends them: a date preset (or ALL), comma-separated facets, a search. */
+export type LedgerListFilter = { range?: DatePreset | "ALL"; direction?: string; q?: string };
+const LEDGER_SOURCES: LedgerSource[] = [...INCOME_SOURCES, "EXPENSE", "PAYROLL"];
+
+function oneOf<T extends string>(raw: string | undefined, allowed: readonly T[], what: string): T[] | undefined {
+  if (!raw) return undefined;
+  const v = raw.split(",").map((x) => x.trim()).filter(Boolean);
+  if (v.some((x) => !(allowed as readonly string[]).includes(x))) throw new DomainError("VALIDATION_FAILED", `Unknown ${what} "${raw}".`);
+  return v.length ? (v as T[]) : undefined;
+}
+
+/** The period for the ledger: the old period picker, or the ledger list's date preset (ALL = from the first entry). */
+async function ledgerPeriod(raw: PeriodInput & LedgerListFilter): Promise<Period> {
+  if (!raw.range) return resolvePeriod(raw);
+  const today = istDate(clock.now());
+  const r = raw.range === "ALL" ? { from: null, to: null } : resolveRange(raw.range, raw.from ?? null, raw.to ?? null, today);
+  let from = r.from;
+  if (!from) {
+    const first = (await prisma.ledgerEntry.aggregate({ _min: { occurredAt: true } }))._min.occurredAt;
+    from = first ? istDate(first) : today;
+  }
+  const to = r.to ?? (from > today ? from : today);
+  return resolvePeriod({ period: "CUSTOM", from, to }, today);
+}
+
+export async function listLedger(actor: Actor, raw: PeriodInput & LedgerListFilter & { source?: string; method?: string }) {
   assertCan(actor, "finance.reports");
-  const p = resolvePeriod(raw);
+  const p = await ledgerPeriod(raw);
   const [a, b] = bounds(p.from, p.to);
+  const source = oneOf(raw.source, LEDGER_SOURCES, "source");
+  const method = oneOf(raw.method, METHODS, "method");
+  const direction = oneOf(raw.direction, ["IN", "OUT"] as const, "direction");
+  const q = raw.q?.trim();
   const rows = await prisma.ledgerEntry.findMany({
-    where: { occurredAt: { gte: a, lt: b }, source: raw.source ? (raw.source as LedgerSource) : undefined, method: raw.method ? (raw.method as PaymentMethod) : undefined },
+    where: {
+      occurredAt: { gte: a, lt: b },
+      source: source ? { in: source } : undefined,
+      method: method ? { in: method } : undefined,
+      direction: direction ? { in: direction } : undefined,
+      description: q ? { contains: q, mode: "insensitive" } : undefined,
+    },
     orderBy: { occurredAt: "desc" },
     take: 2000,
   });
@@ -512,7 +550,7 @@ export function toCsv(headers: string[], rows: Array<Array<unknown>>): string {
 const rupees = (paise: number) => (paise / 100).toFixed(2);
 
 /** CSV export of any report (DB-5). */
-export async function exportCsv(actor: Actor, report: string, raw: PeriodInput & { metric?: string }) {
+export async function exportCsv(actor: Actor, report: string, raw: PeriodInput & LedgerListFilter & { metric?: string; source?: string; method?: string }) {
   if (report === "drilldown") {
     const d = await drillDown(actor, raw.metric ?? "collected", raw);
     return toCsv(["When (IST)", "Source", "Method", "Description", d.kind === "money" ? "Amount (₹)" : "Count"], d.rows.map((r) => [fmtDateTime(r.at), r.source, r.method ?? "", r.description, d.kind === "money" ? rupees(r.amount) : r.amount]));

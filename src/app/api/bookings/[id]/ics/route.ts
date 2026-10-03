@@ -14,7 +14,7 @@ export const GET = route<{ id: string }>(async ({ actor, params }) => {
     summary: `${b.court} · ${club.name || "Club"}`,
     description: `Booking ${b.code}. Players: ${b.players.map((p) => p.name).join(", ")}.`,
     location: club.address || undefined,
-    cancelled: b.status === "CANCELLED",
+    cancelled: b.status === "CANCELLED" || b.status === "CANCELLED_BY_CLUB",
   });
   return new NextResponse(ics, { headers: { "Content-Type": "text/calendar; charset=utf-8", "Content-Disposition": `attachment; filename="${b.code}.ics"` } });
 });

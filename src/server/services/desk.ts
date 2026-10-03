@@ -5,9 +5,10 @@ import { clock } from "@/lib/clock";
 import { addDays, istDate, istDayRange } from "@/lib/time";
 import { prisma } from "../db";
 import type { Actor } from "../rbac/actor";
-import { assertCan } from "../rbac/permissions";
+import { assertCan, can } from "../rbac/permissions";
 import { listBookings } from "./booking";
 import { myDrawer } from "./drawers";
+import { messagesToSend, myOverdueFollowUps } from "./todo";
 
 export async function deskToday(actor: Actor) {
   assertCan(actor, "checkin");
@@ -21,10 +22,13 @@ export async function deskToday(actor: Actor) {
   const dues = bookings.filter((b) => b.due > 0);
   const [from] = istDayRange(today);
   const [, weekEnd] = istDayRange(addDays(today, 7));
-  const [checkins, pendingRefunds, expiring] = await Promise.all([
+  const [checkins, pendingRefunds, expiring, toSend, followUps] = await Promise.all([
     prisma.visit.count({ where: { checkedInAt: { gte: from } } }),
     prisma.payment.count({ where: { type: "REFUND", status: "PENDING" } }),
     prisma.membership.count({ where: { status: "ACTIVE", endDate: { gte: new Date(`${today}T00:00:00Z`), lt: weekEnd } } }),
+    // Role panels: the desk's other to-dos — WhatsApp messages to send by hand, and my overdue lead follow-ups.
+    can(actor, "notifications.log") ? messagesToSend() : null,
+    actor.kind === "USER" && can(actor, "crm") ? myOverdueFollowUps(actor) : null,
   ]);
   const drawer = await myDrawer(actor);
   return {
@@ -35,6 +39,8 @@ export async function deskToday(actor: Actor) {
     checkinsToday: checkins,
     pendingRefunds,
     expiringThisWeek: expiring,
+    messagesToSend: toSend,
+    overdueFollowUps: followUps,
     drawer: drawer.open ? { area: drawer.open.area, cashExpected: drawer.open.cashExpected, openedAt: drawer.open.openedAt } : null,
   };
 }

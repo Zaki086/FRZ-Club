@@ -54,6 +54,26 @@ export const SETTINGS_SCHEMA = {
   public_low_stock_threshold: z.number().int().min(0),
   restring_turnaround_hours: z.number().int().min(1).max(240),
   leave_allowance: z.object({ CASUAL: z.number().int().min(0), SICK: z.number().int().min(0) }),
+  // v3 §4.3 attendance rules AT-2, AT-3, AT-4.
+  late_grace_minutes: z.number().int().min(0).max(120),
+  // v3 RF-3: a Manager approves refunds up to this amount (paise); above it, the Owner.
+  refund_manager_limit: z.number().int().min(0),
+  // v3 §6.4 WK-2: how long a one-time set-password link works.
+  credential_link_hours: z.number().int().min(1).max(720),
+  // v3 §7.2 CC-4/CC-6 club cancellations; §8.2 LA-8 lead escalation.
+  reschedule_window_days: z.number().int().min(1).max(60),
+  // v3 §9.2 PR-11 / §9.3 guardrails (Owner only): promotions above these need approval.
+  max_manager_discount_pct: z.number().int().min(0).max(100),
+  max_staff_discount_pct: z.number().int().min(0).max(100),
+  resolution_deadline_days: z.number().int().min(1).max(60),
+  lead_escalation_hours: z.number().int().min(1).max(720),
+  // v3 §6.5 NT-2: first dues reminder after this many days unpaid (then weekly, at most 3).
+  dues_reminder_days: z.number().int().min(1).max(60),
+  // v3 §6.3: approved WhatsApp Cloud API templates per event, and when a test message last succeeded.
+  whatsapp_templates: z.record(z.string(), z.object({ name: z.string().trim().min(1).max(100), language: z.string().trim().min(2).max(10) })),
+  whatsapp_verified_at: z.string().nullable(),
+  overtime_threshold_minutes: z.number().int().min(0).max(600),
+  missing_clockout_hours: z.number().int().min(1).max(48),
   invoice_terms_days: z.number().int().min(0).max(365),
   lead_follow_up_hours: z.number().int().min(1).max(720),
   quote_valid_days: z.number().int().min(1).max(90),
@@ -130,6 +150,19 @@ export const DEFAULT_SETTINGS: StoredSettings = {
   public_low_stock_threshold: 5,
   restring_turnaround_hours: 24,
   leave_allowance: { CASUAL: 12, SICK: 6 },
+  late_grace_minutes: 10,
+  refund_manager_limit: R(5000),
+  credential_link_hours: 72,
+  reschedule_window_days: 14,
+  max_manager_discount_pct: 30,
+  max_staff_discount_pct: 15,
+  resolution_deadline_days: 7,
+  lead_escalation_hours: 48,
+  dues_reminder_days: 3,
+  whatsapp_templates: {},
+  whatsapp_verified_at: null,
+  overtime_threshold_minutes: 30,
+  missing_clockout_hours: 4,
   invoice_terms_days: 15,
   lead_follow_up_hours: 24,
   quote_valid_days: 7,
@@ -213,6 +246,16 @@ export async function updateSetting(actor: Actor, key: string, value: unknown, o
       update: { value: parsed.data as Prisma.InputJsonValue, verified: opts.verified ?? before?.verified ?? true },
     });
     await audit(tx, actor, "settings.update", "setting", key, { before: before?.value, after: row.value });
+    if (k === "walk_in") {
+      // v3 §9.2: walk-in court and social fees live in the price book — a change here is a new version from now.
+      const v = parsed.data as StoredSettings["walk_in"];
+      const now = clock.now();
+      const fees: Array<[string, number]> = [...Object.entries(v.court_fee).map(([sport, fee]) => [`COURT_FEE:WALK_IN:${sport}`, fee] as [string, number]), ["SOCIAL_FEE:WALK_IN", v.social_fee]];
+      for (const [target, price] of fees) {
+        const cur = await tx.priceChange.findFirst({ where: { target, cancelledAt: null, effectiveAt: { lte: now } }, orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }] });
+        if (cur?.price !== price) await tx.priceChange.create({ data: { target, price, effectiveAt: now, note: "Walk-in rates in Settings", createdBy: actor.kind === "USER" ? actor.userId : null } });
+      }
+    }
     const { invalidateCapabilities } = await import("./capabilities");
     invalidateCapabilities();
     return row;

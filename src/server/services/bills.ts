@@ -5,6 +5,18 @@ import type { Tx } from "../db";
 import { DomainError } from "../errors";
 import type { PricedLine, Tier } from "./pricing";
 
+/** What a bill is for, in a member's words ("₹400 due for your court booking"). */
+export const BILL_WHAT: Record<BillSource, string> = {
+  BOOKING: "court booking", SOCIAL_JOIN: "social play", MEMBERSHIP: "membership", COUNTER_SALE: "shop purchase", SHOP_ORDER: "online order",
+  SERVICE_TICKET: "restring", BAR_TAB: "bar tab", INVOICE: "invoice",
+};
+
+/** Where in the member portal a bill's item lives. */
+export const BILL_PORTAL_LINK: Record<BillSource, string> = {
+  BOOKING: "/portal/bookings", SOCIAL_JOIN: "/portal/social", MEMBERSHIP: "/portal/membership", COUNTER_SALE: "/portal/orders", SHOP_ORDER: "/portal/orders",
+  SERVICE_TICKET: "/portal/orders", BAR_TAB: "/portal/tab", INVOICE: "/portal/invoices",
+};
+
 export type BillCustomer = {
   memberId?: string | null;
   guestId?: string | null;

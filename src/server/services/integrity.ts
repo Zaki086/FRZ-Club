@@ -10,7 +10,7 @@ const TRANSACTIONAL_TABLES = [
   "shop_order_lines", "shop_order_events", "service_tickets", "tabs", "tab_lines", "kitchen_tickets",
   "bills", "payments", "invoices", "leads", "lead_activities", "quotes", "shifts", "attendance",
   "leave_requests", "payroll_runs", "payslips", "expense_bills",
-  "cash_drawer_sessions", "data_requests", "purchase_orders", "purchase_order_lines", "stock_takes", "stock_take_lines",
+  "cash_drawer_sessions", "data_requests", "refund_requests", "notification_deliveries", "purchase_orders", "purchase_order_lines", "stock_takes", "stock_take_lines",
 ];
 
 type Row = Record<string, unknown>;
@@ -45,7 +45,7 @@ export async function runIntegrityChecks(): Promise<Check[]> {
   const playerSessions = `
     SELECT bp.member_id, bp.guest_id, r.start_at, r.end_at, r.period, 'B:' || b.booking_code AS ref
       FROM booking_players bp JOIN bookings b ON b.id = bp.booking_id JOIN court_reservations r ON r.id = b.reservation_id
-     WHERE bp.removed_at IS NULL AND b.status <> 'CANCELLED'
+     WHERE bp.removed_at IS NULL AND b.status NOT IN ('CANCELLED', 'CANCELLED_BY_CLUB')
     UNION ALL
     SELECT sp.member_id, sp.guest_id, ss.start_at, ss.end_at, tstzrange(ss.start_at, ss.end_at, '[)'), 'S:' || ss.id
       FROM social_participants sp JOIN social_sessions ss ON ss.id = sp.session_id
@@ -196,6 +196,28 @@ export async function runIntegrityChecks(): Promise<Check[]> {
       detail: missing.length || orphans.length
         ? `tables without delete guard: ${missing.join(", ") || "none"}; audited-but-missing: ${JSON.stringify(orphans)}`
         : `delete guards on ${TRANSACTIONAL_TABLES.length} tables; every audited creation still exists`,
+    });
+  }
+
+  // 11 · v3 RF-5/RF-7: every refund payment belongs to a refund request whose state matches its money.
+  {
+    const rows = await q(`
+      WITH p AS (
+        SELECT r.id, r.code, r.status, r.amount,
+               COALESCE(sum(x.amount) FILTER (WHERE x.status = 'SUCCEEDED'), 0)::int AS paid,
+               COALESCE(sum(x.amount) FILTER (WHERE x.status = 'PENDING'), 0)::int AS pending
+          FROM refund_requests r LEFT JOIN payments x ON x.refund_request_id = r.id AND x.type = 'REFUND'
+         GROUP BY r.id)
+      SELECT code, status, amount, paid, pending FROM p
+       WHERE (status = 'COMPLETED' AND (paid <> amount OR pending <> 0))
+          OR (status = 'APPROVED' AND (paid + pending <> amount OR pending = 0) AND paid + pending <> 0)
+          OR (status IN ('REQUESTED', 'REJECTED', 'CANCELLED', 'FAILED') AND (paid <> 0 OR pending <> 0))
+      UNION ALL
+      SELECT 'payment ' || id, 'no request', amount, 0, 0 FROM payments WHERE type = 'REFUND' AND refund_request_id IS NULL
+      LIMIT 10`);
+    checks.push({
+      id: 11, name: "Every refund belongs to a refund request whose state matches its payments",
+      ok: rows.length === 0, detail: rows.length ? JSON.stringify(rows) : "requests and refund payments agree",
     });
   }
 

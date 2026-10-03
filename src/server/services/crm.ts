@@ -5,29 +5,92 @@ import { z } from "zod";
 import { clock } from "@/lib/clock";
 import { CODE_SEQUENCE, formatCode, isIndianMobile, normalisePhone } from "@/lib/codes";
 import { formatINR } from "@/lib/money";
-import { addDays, addMonths, DAY, fmtDate, fmtDateTime, HOUR, istDate } from "@/lib/time";
+import { addDays, addMonths, DAY, fmtDate, fmtDateTime, HOUR, istDate, istDayRange } from "@/lib/time";
 import { nextSeq, prisma, withTx, type Tx } from "../db";
 import { DomainError } from "../errors";
 import { actorId, PUBLIC, type Actor } from "../rbac/actor";
-import { assertCan } from "../rbac/permissions";
+import { assertCan, can } from "../rbac/permissions";
 import { audit } from "./audit";
 import { createBookingTx } from "./booking";
 import { findOrCreateGuest } from "./guests";
 import { notify, queueEmail } from "./notifications";
+import { notifyMember } from "./channels";
 import { assertCapability } from "./capabilities";
 import { quoteManual, quoteMembership } from "./pricing";
 import { getSettings } from "./settings";
 
 const OPEN_STATUSES: LeadStatus[] = ["NEW", "CONTACTED", "QUOTED"];
 
-/** CR-3: round-robin among active front-desk users (the one after the most recent lead's assignee). */
-async function nextAssignee(tx: Tx): Promise<{ id: string; name: string; email: string | null } | null> {
-  const desk = await tx.user.findMany({ where: { role: "FRONT_DESK", active: true }, orderBy: { id: "asc" }, select: { id: true, name: true, email: true } });
-  if (!desk.length) return null;
-  const last = await tx.lead.findFirst({ where: { assignedTo: { in: desk.map((d) => d.id) } }, orderBy: [{ createdAt: "desc" }, { id: "desc" }] });
-  if (!last) return desk[0];
-  const i = desk.findIndex((d) => d.id === last.assignedTo);
-  return desk[(i + 1) % desk.length];
+// ───────────── v3 §8.2 lead assignment (LA-1…LA-4, LA-6) ─────────────
+
+type Candidate = { id: string; name: string; email: string | null };
+export type Assignment = Candidate & { reason: string };
+
+/** A corporate / business-client enquiry (LA-1). */
+const isCorporate = (interest: string) => /corporate|business|company|team event/i.test(interest);
+
+/** Tie-break: fewest open leads, then longest since their last assignment, then name (deterministic). */
+async function rank(tx: Tx, users: Candidate[]): Promise<Array<Candidate & { open: number }>> {
+  if (!users.length) return [];
+  const ids = users.map((u) => u.id);
+  const open = await tx.lead.groupBy({ by: ["assignedTo"], where: { assignedTo: { in: ids }, status: { in: OPEN_STATUSES } }, _count: { _all: true } });
+  const last = await tx.lead.groupBy({ by: ["assignedTo"], where: { assignedTo: { in: ids } }, _max: { assignedAt: true } });
+  const n = (id: string) => open.find((o) => o.assignedTo === id)?._count._all ?? 0;
+  const t = (id: string) => last.find((o) => o.assignedTo === id)?._max.assignedAt?.getTime() ?? 0;
+  return users.map((u) => ({ ...u, open: n(u.id) })).sort((a, b) => a.open - b.open || t(a.id) - t(b.id) || a.name.localeCompare(b.name));
+}
+
+const userSelect = { id: true, name: true, email: true } as const;
+async function clockedIn(tx: Tx, role: "FRONT_DESK" | "MANAGER") {
+  const open = await tx.attendance.findMany({ where: { clockOut: null }, select: { employeeId: true } });
+  return tx.user.findMany({ where: { role, active: true, employee: { id: { in: open.map((a) => a.employeeId) }, active: true } }, select: userSelect });
+}
+
+/**
+ * LA-1 corporate → a Manager on shift, else any Manager. LA-2 others → front desk clocked in with the fewest open
+ * leads. LA-3 nobody clocked in → front desk rostered next (today/tomorrow). LA-4 → a Manager, else the Owner.
+ * `exclude` leaves out a person (e.g. the one being deactivated).
+ */
+export async function chooseAssignee(tx: Tx, interest: string, exclude?: string): Promise<Assignment | null> {
+  const not = (list: Candidate[]) => list.filter((u) => u.id !== exclude);
+  const pick = async (list: Candidate[], why: (c: Candidate & { open: number }) => string) => {
+    const [first] = await rank(tx, not(list));
+    return first ? { id: first.id, name: first.name, email: first.email, reason: why(first) } : null;
+  };
+  const managers = await tx.user.findMany({ where: { role: "MANAGER", active: true }, select: userSelect });
+  if (isCorporate(interest)) {
+    const onShift = await pick(await clockedIn(tx, "MANAGER"), (c) => `LA-1: corporate enquiry → manager on shift, ${c.open} open leads`);
+    if (onShift) return onShift;
+    const any = await pick(managers, (c) => `LA-1: corporate enquiry → manager (none on shift), ${c.open} open leads`);
+    if (any) return any;
+  }
+  const desk = await pick(await clockedIn(tx, "FRONT_DESK"), (c) => `LA-2: clocked in, ${c.open} open leads`);
+  if (desk) return desk;
+  const now = clock.now();
+  const tomorrowEnd = istDayRange(addDays(istDate(now), 1))[1];
+  const shifts = await tx.shift.findMany({
+    where: { status: "ASSIGNED", endAt: { gt: now }, startAt: { lt: tomorrowEnd }, employeeId: { not: null } },
+    orderBy: { startAt: "asc" }, select: { employeeId: true, startAt: true },
+  });
+  const deskEmployees = await tx.employee.findMany({ where: { id: { in: shifts.map((s) => s.employeeId!) }, active: true, user: { role: "FRONT_DESK", active: true } }, include: { user: { select: userSelect } } });
+  const next = shifts.find((s) => deskEmployees.some((e) => e.id === s.employeeId && e.userId !== exclude));
+  if (next) {
+    const sameStart = shifts.filter((s) => s.startAt.getTime() === next.startAt.getTime()).map((s) => deskEmployees.find((e) => e.id === s.employeeId)?.user).filter((u): u is Candidate => !!u);
+    const r = await pick(sameStart, (c) => `LA-3: nobody clocked in → next on the roster at ${fmtDateTime(next.startAt)}, ${c.open} open leads`);
+    if (r) return r;
+  }
+  const mgr = await pick(managers, (c) => `LA-4: no front desk on the roster → manager, ${c.open} open leads`);
+  if (mgr) return mgr;
+  const owners = await tx.user.findMany({ where: { role: "OWNER", active: true }, select: userSelect });
+  return pick(owners, () => "LA-4: no front desk or manager → owner");
+}
+
+/** LA-5: the assignee hears about it in the app and by push (if they turned it on). */
+async function tellAssignee(tx: Tx, actor: Actor, lead: { id: string; code: string; name: string }, a: { id: string; reason: string }, key: string) {
+  await notifyMember(tx, {
+    event: "LEAD_ASSIGNED", userId: a.id, actor, channels: ["PUSH"], title: `Lead ${lead.code} assigned to you: ${lead.name}`,
+    body: a.reason, link: `/app/crm/${lead.id}`, dedupeKey: key,
+  });
 }
 
 export async function markLeadWon(tx: Tx, actor: Actor, leadId: string, memberId: string) {
@@ -60,12 +123,13 @@ export async function createLeadTx(tx: Tx, actor: Actor, raw: z.input<typeof lea
   if (!input.phone && !input.email) throw new DomainError("VALIDATION_FAILED", "Please give a phone number or an email so we can get back to you.");
   const s = await getSettings(tx);
   const now = clock.now();
-  const assignee = await nextAssignee(tx);
+  const assignee = await chooseAssignee(tx, input.interest);
   const code = formatCode("lead", await nextSeq(tx, CODE_SEQUENCE.lead));
   const lead = await tx.lead.create({
     data: {
       code, name: input.name, phone: input.phone ?? null, email: input.email ?? null, source: input.source as LeadSource,
       interest: input.interest, message: input.message, assignedTo: assignee?.id ?? null,
+      assignmentReason: assignee?.reason ?? null, assignedAt: assignee ? now : null,
       nextFollowUpAt: new Date(now.getTime() + s.lead_follow_up_hours * HOUR), guestId: extra.guestId ?? null, bookingId: extra.bookingId ?? null,
       consentAt: extra.consentAt ?? null,
     },
@@ -73,7 +137,10 @@ export async function createLeadTx(tx: Tx, actor: Actor, raw: z.input<typeof lea
   await tx.leadActivity.create({
     data: { leadId: lead.id, type: "NOTE", note: `Lead created from ${input.source.replace(/_/g, " ").toLowerCase()}${input.message ? `: “${input.message.slice(0, 300)}”` : ""}`, byUserId: actorId(actor), at: now },
   });
-  if (assignee) await tx.leadActivity.create({ data: { leadId: lead.id, type: "ASSIGNED", note: `Assigned to ${assignee.name} (round robin)`, byUserId: actorId(actor), at: now } });
+  if (assignee) {
+    await tx.leadActivity.create({ data: { leadId: lead.id, type: "ASSIGNED", note: `Assigned to ${assignee.name} — ${assignee.reason}`, byUserId: actorId(actor), at: now } });
+    await tellAssignee(tx, actor, lead, assignee, `lead-assigned:${lead.id}:${assignee.id}:0`);
+  }
   await audit(tx, actor, "lead.create", "lead", lead.id, { after: { code, name: lead.name, source: lead.source, assignedTo: assignee?.name ?? null } });
   // CR-3: every front desk and manager hears about it; the assignee also gets an email.
   await notify(tx, {
@@ -131,18 +198,42 @@ export async function logActivity(actor: Actor, leadId: string, raw: z.infer<typ
   }, outer);
 }
 
-export async function assignLead(actor: Actor, leadId: string, userId: string) {
-  assertCan(actor, "crm");
+/** LA-7: a Manager/Owner reassigns with a reason; audited; the old and the new assignee are told. */
+export async function assignLead(actor: Actor, leadId: string, userId: string, reason: string) {
+  assertCan(actor, "leads.assign");
+  const why = z.string().trim().min(3, "Give a reason for the reassignment.").max(300).parse(reason);
   return withTx(async (tx) => {
     const lead = await getLeadOrThrow(tx, leadId);
     const u = await tx.user.findUnique({ where: { id: userId } });
     if (!u || !u.active || !["FRONT_DESK", "MANAGER", "OWNER"].includes(u.role)) throw new DomainError("VALIDATION_FAILED", "Leads can be assigned to front desk staff or managers.");
-    await tx.lead.update({ where: { id: leadId }, data: { assignedTo: userId } });
-    await tx.leadActivity.create({ data: { leadId, type: "ASSIGNED", note: `Assigned to ${u.name}`, byUserId: actorId(actor), at: clock.now() } });
-    await audit(tx, actor, "lead.assign", "lead", leadId, { before: { assignedTo: lead.assignedTo }, after: { assignedTo: userId } });
-    await notify(tx, { userIds: [userId], type: "LEAD_ASSIGNED", title: `Lead ${lead.code} assigned to you`, body: lead.name, link: `/app/crm/${lead.id}`, dedupeKey: `lead-assigned:${lead.id}:${userId}:${clock.now().getTime()}` });
+    const now = clock.now();
+    const text = `LA-7: reassigned by ${actor.kind === "USER" ? actor.name : "the system"} — ${why}`;
+    await tx.lead.update({ where: { id: leadId }, data: { assignedTo: userId, assignmentReason: text, assignedAt: now } });
+    await tx.leadActivity.create({ data: { leadId, type: "ASSIGNED", note: `Assigned to ${u.name} — ${text}`, byUserId: actorId(actor), at: now } });
+    await audit(tx, actor, "lead.assign", "lead", leadId, { before: { assignedTo: lead.assignedTo }, after: { assignedTo: userId }, reason: why });
+    const n = await tx.leadActivity.count({ where: { leadId, type: "ASSIGNED" } });
+    await tellAssignee(tx, actor, lead, { id: userId, reason: text }, `lead-assigned:${lead.id}:${userId}:${n}`);
+    if (lead.assignedTo && lead.assignedTo !== userId) {
+      await notify(tx, { userIds: [lead.assignedTo], type: "LEAD_REASSIGNED", title: `Lead ${lead.code} moved to ${u.name}`, body: why, link: `/app/crm/${lead.id}`, dedupeKey: `lead-reassigned:${lead.id}:${n}` });
+    }
     return { leadId, assignedTo: userId };
   });
+}
+
+/** LA-7: when a user is deactivated, their open leads are reassigned by the same rules (inside that transaction). */
+export async function reassignLeadsOf(tx: Tx, actor: Actor, userId: string) {
+  const leads = await tx.lead.findMany({ where: { assignedTo: userId, status: { in: OPEN_STATUSES } }, orderBy: { createdAt: "asc" } });
+  const gone = await tx.user.findUniqueOrThrow({ where: { id: userId }, select: { name: true } });
+  for (const lead of leads) {
+    const a = await chooseAssignee(tx, lead.interest, userId);
+    const now = clock.now();
+    const text = a ? `LA-7: ${gone.name} was deactivated → ${a.reason}` : `LA-7: ${gone.name} was deactivated; nobody to assign to`;
+    await tx.lead.update({ where: { id: lead.id }, data: { assignedTo: a?.id ?? null, assignmentReason: text, assignedAt: a ? now : null } });
+    await tx.leadActivity.create({ data: { leadId: lead.id, type: "ASSIGNED", note: a ? `Assigned to ${a.name} — ${text}` : text, byUserId: actorId(actor), at: now } });
+    await audit(tx, actor, "lead.assign", "lead", lead.id, { before: { assignedTo: userId }, after: { assignedTo: a?.id ?? null }, reason: text });
+    if (a) await tellAssignee(tx, actor, lead, { id: a.id, reason: text }, `lead-assigned:${lead.id}:${a.id}:deactivated:${userId}`);
+  }
+  return { reassigned: leads.length };
 }
 
 /** CR-2: LOST needs a reason. WON comes from conversion (CR-7). */
@@ -255,7 +346,22 @@ export async function flagOverdueLeads(outer?: Tx) {
         link: `/app/crm/${l.id}`, dedupeKey: `lead-overdue:${l.id}:${l.nextFollowUpAt.getTime()}`,
       });
     }
-    return { flagged: overdue.length };
+    // LA-8: still overdue `lead_escalation_hours` later → escalated to the Managers, once per lead.
+    const s = await getSettings(tx);
+    const late = await tx.lead.findMany({ where: { status: { in: OPEN_STATUSES }, nextFollowUpAt: { lt: new Date(now.getTime() - s.lead_escalation_hours * HOUR) }, escalatedAt: null } });
+    const managers = await tx.user.findMany({ where: { role: "MANAGER", active: true }, select: { id: true } });
+    for (const l of late) {
+      await tx.lead.update({ where: { id: l.id }, data: { escalatedAt: now } });
+      const who = l.assignedTo ? (await tx.user.findUnique({ where: { id: l.assignedTo }, select: { name: true } }))?.name : null;
+      await tx.leadActivity.create({ data: { leadId: l.id, type: "NOTE", note: `LA-8: follow-up ${s.lead_escalation_hours}h overdue — escalated to the managers`, byUserId: null, at: now } });
+      for (const m of managers) {
+        await notifyMember(tx, {
+          event: "LEAD_ESCALATED", userId: m.id, channels: ["PUSH"], title: `Escalated: ${l.name} (${l.code}) not followed up`,
+          body: `Follow-up was due ${fmtDateTime(l.nextFollowUpAt)}${who ? `; assigned to ${who}` : "; unassigned"}.`, link: `/app/crm/${l.id}`, dedupeKey: `lead-escalated:${l.id}:${m.id}`,
+        });
+      }
+    }
+    return { flagged: overdue.length, escalated: late.length };
   }, outer);
 }
 
@@ -278,7 +384,7 @@ export async function createTrialBooking(raw: z.input<typeof trialSchema>) {
     if (member) throw new DomainError("TRIAL_ALREADY_USED", "This phone number already belongs to a member — log in to book a court.");
     const guest = await findOrCreateGuest(tx, { name: input.name, phone: input.phone, email: input.email ?? null });
     await tx.$queryRaw`SELECT id FROM guests WHERE id = ${guest.id} FOR UPDATE`;
-    const used = await tx.booking.findFirst({ where: { primaryGuestId: guest.id, channel: "ONLINE_TRIAL", status: { not: "CANCELLED" } } });
+    const used = await tx.booking.findFirst({ where: { primaryGuestId: guest.id, channel: "ONLINE_TRIAL", status: { notIn: ["CANCELLED", "CANCELLED_BY_CLUB"] } } });
     if (used) throw new DomainError("TRIAL_ALREADY_USED", `A trial was already booked with ${input.phone} (${used.bookingCode}). Each phone number gets one trial.`);
     const booking = await createBookingTx(tx, PUBLIC, {
       courtId: input.courtId, date: input.date, startTime: input.startTime, players: [{ guestId: guest.id }], channel: "ONLINE_TRIAL", payment: { kind: "LATER" },
@@ -330,7 +436,9 @@ export async function getLead(actor: Actor, leadId: string) {
     overdue: OPEN_STATUSES.includes(lead.status) && lead.nextFollowUpAt.getTime() < now.getTime(),
     activities: lead.activities.map((a) => ({ ...a, by: a.byUserId ? (users.find((u) => u.id === a.byUserId)?.name ?? "staff") : "customer / system" })),
     quotes: lead.quotes.map((q) => ({ ...q, expired: q.validUntil.getTime() < now.getTime() })),
-    assignable: staff,
+    // LA-7: only a Manager/Owner reassigns (with a reason); everyone sees why it went to whom (LA-6).
+    assignable: can(actor, "leads.assign") ? staff : [],
+    canReassign: can(actor, "leads.assign"),
     convertUrl: `/app/members/new?leadId=${lead.id}&name=${encodeURIComponent(lead.name)}&phone=${encodeURIComponent(lead.phone ?? "")}&email=${encodeURIComponent(lead.email ?? "")}`,
   };
 }

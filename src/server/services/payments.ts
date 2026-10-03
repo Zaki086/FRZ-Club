@@ -23,6 +23,7 @@ import { requireDrawer } from "./drawers";
 import { activeGateway, gatewayByName, razorpayGateway } from "./gateway";
 import { idempotent } from "./idempotency";
 import { LEDGER_SOURCE_FOR_BILL, writeLedger } from "./ledger";
+import { createPolicyRequest, notifyRefund, settleRequestIfPaid, type RefundReason } from "./refund-records";
 
 export const BILL_CAPABILITY: Record<BillSource, Capability> = {
   BOOKING: "bookings.any",
@@ -195,8 +196,10 @@ export async function startOnlinePaymentTx(
   if (due <= 0) throw new DomainError("OVERPAYMENT", "Nothing is due on this bill.");
   const returnUrl = opts.returnUrl.startsWith("/") && !opts.returnUrl.startsWith("//") ? opts.returnUrl : "/";
   const gateway = activeGateway();
+  // v3 §5.1: an online payment started at a counter counts in that person's drawer session (never in its cash).
+  const drawer = actor.kind === "USER" && actor.role !== "MEMBER" ? await tx.cashDrawerSession.findFirst({ where: { userId: actor.userId, closedAt: null }, select: { id: true } }) : null;
   const payment = await tx.payment.create({
-    data: { billId, type: "PAYMENT", method: "ONLINE", amount: due, status: "PENDING", gateway: gateway.name, receivedBy: actorId(actor), returnUrl, occurredAt: clock.now() },
+    data: { billId, type: "PAYMENT", method: "ONLINE", amount: due, status: "PENDING", gateway: gateway.name, receivedBy: actorId(actor), drawerSessionId: drawer?.id ?? null, returnUrl, occurredAt: clock.now() },
   });
   const order = await gateway.createOrder({ paymentId: payment.id, amount: due, description: bill.customerName, returnUrl });
   await tx.payment.update({ where: { id: payment.id }, data: { gatewayOrderId: order.gatewayOrderId } });
@@ -241,7 +244,7 @@ async function settleOnlineTx(tx: Tx, paymentId: string, gatewayPaymentId: strin
   if (payment.amount > due) {
     // D-12: the bill changed while the customer was at the gateway (e.g. the hold expired) — money not owed goes back.
     await refreshBill(tx, before.id);
-    await refundTx(tx, actor, before.id, payment.amount - due, { reason: "Paid after the bill was closed or reduced — automatic refund" });
+    await refundTx(tx, actor, before.id, payment.amount - due, { reason: "Paid after the bill was closed or reduced — automatic refund", category: "DUPLICATE_CHARGE", policy: "D-12_LATE_PAYMENT" });
     const bill = await refreshBill(tx, before.id);
     return { paymentId: payment.id, status: "SUCCEEDED", billId: bill.id, replayed: false, refunded: payment.amount - due, returnUrl: payment.returnUrl };
   }
@@ -311,7 +314,21 @@ async function refundedSoFar(tx: Tx, paymentId: string) {
   return r._sum.amount ?? 0;
 }
 
-export type RefundOpts = { method?: "CASH" | "CARD" | "UPI" | "BANK_TRANSFER"; reference?: string | null; approvalCode?: string | null; reason: string };
+export type RefundOpts = {
+  method?: "CASH" | "CARD" | "UPI" | "BANK_TRANSFER"; reference?: string | null; approvalCode?: string | null; reason: string;
+  /** v3 §5.2: the reason category of the policy request created for this refund (RF-2, RF-3). */
+  category?: RefundReason;
+  /** The rule that makes this a policy refund (e.g. "BK-7"), recorded on the auto-approved request. */
+  policy?: string;
+  /** Pay out under an already-approved request instead of creating one. */
+  requestId?: string;
+  /** Don't pay out at the counter now: only the gateway pays immediately; the rest waits at the desk (RF-4). */
+  deskLater?: boolean;
+  /** Skip the gateway (its refund failed): everything waits at the desk. */
+  noGateway?: boolean;
+  /** Don't send the member the "approved" / "completed" message: the caller sends its own (automatic club refund). */
+  quiet?: boolean;
+};
 
 /**
  * Refund `amount` on a bill inside an existing transaction, allocated to the newest payments first.
@@ -320,13 +337,15 @@ export type RefundOpts = { method?: "CASH" | "CARD" | "UPI" | "BANK_TRANSFER"; r
  *   originals; UPI/card need their reference);
  * - if that isn't possible right now, a PENDING refund is created for the desk to pay out (completeRefund).
  */
-export async function refundTx(tx: Tx, actor: Actor, billId: string, amount: number, opts: RefundOpts): Promise<{ refunded: number; pending: number; refunds: Payment[] }> {
+export async function refundTx(tx: Tx, actor: Actor, billId: string, amount: number, opts: RefundOpts): Promise<{ refunded: number; pending: number; refunds: Payment[]; requestId: string }> {
   if (!Number.isInteger(amount) || amount <= 0) throw new DomainError("VALIDATION_FAILED", "Refund amount must be positive.");
   const bill = await lockBill(tx, billId);
   const refundable = netPaid(bill);
   if (amount > refundable) {
     throw new DomainError("REFUND_EXCEEDS_PAID", `A refund of ${formatINR(amount)} is more than the ${formatINR(refundable)} paid on this bill.`, { refundable, amount });
   }
+  // v3 RF-3: a refund made by a rule (cancellation in time, over-payment, return window…) is an approved request.
+  const requestId = opts.requestId ?? (await createPolicyRequest(tx, actor, { billId, amount, reason: opts.category ?? "OTHER", note: opts.reason, policy: opts.policy ?? "POLICY" })).id;
   const payments = await tx.payment.findMany({ where: { billId, type: "PAYMENT", status: "SUCCEEDED" }, orderBy: { occurredAt: "desc" } });
   const refunds: Payment[] = [];
   let remaining = amount;
@@ -342,8 +361,13 @@ export async function refundTx(tx: Tx, actor: Actor, billId: string, amount: num
     let reference: string | null = null;
     let gateway: string | null = null;
     let drawerSessionId: string | null = null;
-    if (p.method === "ONLINE" && p.gatewayPaymentId && (await isEnabled("payments.online"))) {
-      const r = await gatewayByName(p.gateway).refund({ gatewayPaymentId: p.gatewayPaymentId, amount: take });
+    if (p.method === "ONLINE" && p.gatewayPaymentId && !opts.noGateway && (await isEnabled("payments.online"))) {
+      let r: { gatewayRefundId: string };
+      try {
+        r = await gatewayByName(p.gateway).refund({ gatewayPaymentId: p.gatewayPaymentId, amount: take });
+      } catch (e) {
+        throw new DomainError("GATEWAY_REFUND_FAILED", `The payment gateway refused the refund: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300));
+      }
       method = "ONLINE";
       reference = r.gatewayRefundId;
       gateway = p.gateway;
@@ -356,7 +380,7 @@ export async function refundTx(tx: Tx, actor: Actor, billId: string, amount: num
         (chosen === "BANK_TRANSFER" && !!opts.reference);
       const methodOn = chosen ? (chosen === "BANK_TRANSFER" ? bill.sourceType === "INVOICE" : await isEnabled(METHOD_CAPABILITY[chosen]!)) : false;
       const needsDrawer = chosen ? DRAWER_METHODS.includes(chosen) : false;
-      if (chosen && proofOk && methodOn && (!needsDrawer || staffWithDrawer)) {
+      if (!opts.deskLater && chosen && proofOk && methodOn && (!needsDrawer || staffWithDrawer)) {
         method = chosen;
         reference = chosen === "CARD" ? (opts.approvalCode ?? opts.reference ?? null) : (opts.reference ?? null);
         drawerSessionId = needsDrawer ? staffWithDrawer!.id : null;
@@ -367,7 +391,7 @@ export async function refundTx(tx: Tx, actor: Actor, billId: string, amount: num
       data: {
         billId, type: "REFUND", method: method ?? (p.method === "ONLINE" ? "CASH" : p.method), amount: take, status,
         reference, gateway, approvalCode: method === "CARD" ? reference : null, receivedBy: actorId(actor),
-        shiftId: await openShiftId(tx, actor), drawerSessionId, refundOfId: p.id,
+        shiftId: await openShiftId(tx, actor), drawerSessionId, refundOfId: p.id, refundRequestId: requestId,
         note: status === "PENDING" ? `To be paid at the desk · ${opts.reason}` : opts.reason, occurredAt: now,
       },
     });
@@ -384,8 +408,11 @@ export async function refundTx(tx: Tx, actor: Actor, billId: string, amount: num
   }
   if (remaining > 0) throw new Error(`refund allocation left ${remaining} unallocated on bill ${billId}`);
   await onBillPaymentChanged(tx, await refreshBill(tx, billId));
-  await audit(tx, actor, pending ? "payment.refund.pending" : "payment.refund", "bill", billId, { after: { amount, pending, refunds: refunds.map((r) => r.id) }, reason: opts.reason });
-  return { refunded: amount - pending, pending, refunds };
+  await audit(tx, actor, pending ? "payment.refund.pending" : "payment.refund", "bill", billId, { after: { amount, pending, refunds: refunds.map((r) => r.id), requestId }, reason: opts.reason });
+  // The member hears either "completed" (paid back now) or "approved — collect it at the desk / on its way back".
+  await settleRequestIfPaid(tx, actor, requestId, { quiet: opts.quiet });
+  if (!opts.quiet) await notifyRefund(tx, actor, requestId, "APPROVED");
+  return { refunded: amount - pending, pending, refunds, requestId };
 }
 
 export const completeRefundSchema = tenderSchema.pick({ method: true, reference: true, approvalCode: true });
@@ -412,6 +439,7 @@ export async function completeRefund(actor: Actor, refundId: string, raw: z.infe
     const after = await refreshBill(tx, bill.id);
     await onBillPaymentChanged(tx, after);
     await audit(tx, actor, "payment.refund.complete", "payment", r.id, { after: { method: input.method, amount: r.amount, reference } });
+    if (r.refundRequestId) await settleRequestIfPaid(tx, actor, r.refundRequestId);
     return { refundId: r.id, amount: r.amount, method: input.method };
   });
 }
@@ -426,28 +454,6 @@ export async function listPendingRefunds(actor: Actor) {
     .map((r) => ({ id: r.id, amount: r.amount, billId: r.billId, sourceType: r.bill.sourceType, customer: r.bill.customerName, memberId: r.bill.memberId, note: r.note, since: r.occurredAt }));
 }
 
-export const refundSchema = z.object({
-  billId: z.string().min(1),
-  amount: z.number().int().positive(),
-  method: z.enum(["CASH", "CARD", "UPI", "BANK_TRANSFER"]).optional(),
-  reference: z.string().trim().max(100).optional(),
-  approvalCode: z.string().trim().max(20).optional(),
-  reason: z.string().trim().min(3).max(300),
-});
-
-/** Discretionary refund (OWNER/MANAGER only, §3). Rule-driven refunds (cancellations) call refundTx directly. */
-export async function issueRefund(actor: Actor, raw: z.infer<typeof refundSchema>, idempotencyKey?: string | null) {
-  assertCan(actor, "refunds.issue");
-  const input = refundSchema.parse(raw);
-  return withTx((tx) =>
-    idempotent(tx, { key: idempotencyKey, actorKey: actorKey(actor), endpoint: "payments.refund", body: input }, async () => {
-      const r = await refundTx(tx, actor, input.billId, input.amount, input);
-      const bill = await tx.bill.findUniqueOrThrow({ where: { id: input.billId } });
-      return { refunded: r.refunded, pending: r.pending, billStatus: bill.status, refundIds: r.refunds.map((x) => x.id) };
-    }),
-  );
-}
-
 // ───────────── read side ─────────────
 
 export async function getBill(actor: Actor, billId: string) {
@@ -457,7 +463,10 @@ export async function getBill(actor: Actor, billId: string) {
   });
   if (!bill) throw new DomainError("NOT_FOUND", "Bill was not found.");
   assertCanViewBill(actor, bill);
-  return { ...bill, due: billDue(bill) };
+  // v3 RF-1/RF-2: what can still be asked for, and whether this person may ask.
+  const open = await prisma.refundRequest.aggregate({ where: { billId, status: "REQUESTED" }, _sum: { amount: true } });
+  const openRequests = await prisma.refundRequest.findMany({ where: { billId, status: { in: ["REQUESTED", "APPROVED"] } }, select: { id: true, code: true, amount: true, status: true }, orderBy: { createdAt: "asc" } });
+  return { ...bill, due: billDue(bill), refundable: Math.max(0, netPaid(bill) - (open._sum.amount ?? 0)), canRequestRefund: can(actor, "refunds.request"), openRefunds: openRequests };
 }
 
 export async function getPaymentForGateway(paymentId: string) {

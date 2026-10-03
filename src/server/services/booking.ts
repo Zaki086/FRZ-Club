@@ -17,6 +17,7 @@ import { audit } from "./audit";
 import { addBillLines, billDue, closeBill, createBill, netPaid, refreshBill, voidBillLines } from "./bills";
 import { findOrCreateGuest } from "./guests";
 import { idempotent } from "./idempotency";
+import { memberAudience, notifyGuest, notifyMember } from "./channels";
 import { notify } from "./notifications";
 import { recordPaymentTx, refundTx, startOnlinePaymentTx } from "./payments";
 import { entitlementsFor, priceLine, quoteCourt, type PlayerRef, type Tier } from "./pricing";
@@ -140,7 +141,7 @@ export async function playsOnDate(tx: Tx | typeof prisma, memberId: string, date
     SELECT b.booking_code AS ref, c.name AS court, r.start_at, r.end_at, 'BOOKING' AS kind
       FROM booking_players bp JOIN bookings b ON b.id = bp.booking_id
       JOIN court_reservations r ON r.id = b.reservation_id JOIN courts c ON c.id = r.court_id
-     WHERE bp.member_id = ${memberId} AND bp.removed_at IS NULL AND b.status <> 'CANCELLED'
+     WHERE bp.member_id = ${memberId} AND bp.removed_at IS NULL AND b.status NOT IN ('CANCELLED', 'CANCELLED_BY_CLUB')
        AND r.start_at >= ${from} AND r.start_at < ${to} AND b.id <> ${excludeBookingId ?? ""}
     UNION ALL
     SELECT 'Social: ' || ss.title AS ref, 'social' AS court, ss.start_at, ss.end_at, 'SOCIAL' AS kind
@@ -159,7 +160,7 @@ async function overlappingSessions(tx: Tx, p: ResolvedPlayer, start: Date, end: 
       FROM booking_players bp JOIN bookings b ON b.id = bp.booking_id
       JOIN court_reservations r ON r.id = b.reservation_id JOIN courts c ON c.id = r.court_id
      WHERE (CASE WHEN ${col} = 'member' THEN bp.member_id ELSE bp.guest_id END) = ${id}
-       AND bp.removed_at IS NULL AND b.status <> 'CANCELLED' AND b.id <> ${excludeBookingId ?? ""}
+       AND bp.removed_at IS NULL AND b.status NOT IN ('CANCELLED', 'CANCELLED_BY_CLUB') AND b.id <> ${excludeBookingId ?? ""}
        AND r.period && tstzrange(${start}, ${end}, '[)')
     UNION ALL
     SELECT 'Social: ' || ss.title AS ref, 'social' AS court, ss.start_at, ss.end_at, 'SOCIAL' AS kind
@@ -286,7 +287,13 @@ export type BookingResult = {
 };
 
 /** The booking transaction body (shared by staff/member bookings, trial bookings and the seed). */
-export async function createBookingTx(tx: Tx, actor: Actor, raw: CreateBookingInput, opts: { trial?: boolean } = {}): Promise<BookingResult> {
+export async function createBookingTx(
+  tx: Tx,
+  actor: Actor,
+  raw: CreateBookingInput,
+  /** `reschedule` (v3 CC-4): a club-cancelled booking moved here — its own window, already paid, no extra charge. */
+  opts: { trial?: boolean; reschedule?: { fromCode: string; windowDays: number } } = {},
+): Promise<BookingResult> {
   const input = createBookingSchema.parse(raw);
   channelAllowed(actor, input.channel, !!opts.trial);
   const s = await getSettings(tx);
@@ -320,7 +327,10 @@ export async function createBookingTx(tx: Tx, actor: Actor, raw: CreateBookingIn
   // 5. OUTSIDE_BOOKING_WINDOW (primary player's tier on the session date, E-08)
   const today = istDate(now);
   const ent = await entitlementsFor(tx, { memberId: primary.memberId }, input.date, s);
-  const lastDay = addDays(today, ent.advanceBookingDays);
+  const lastDay = addDays(today, opts.reschedule ? opts.reschedule.windowDays : ent.advanceBookingDays);
+  if (opts.reschedule && input.date > lastDay) {
+    throw new DomainError("OUTSIDE_BOOKING_WINDOW", `A cancelled session can be moved to a day up to ${opts.reschedule.windowDays} days ahead — until ${fmtDate(lastDay)}.`, { lastDay });
+  }
   if (input.date > lastDay) {
     throw new DomainError(
       "OUTSIDE_BOOKING_WINDOW",
@@ -337,7 +347,7 @@ export async function createBookingTx(tx: Tx, actor: Actor, raw: CreateBookingIn
   // 9. price (PR-4), bill, CONFIRMED
   const timeLabel = `${fmtDate(input.date)} ${fmtRange(start, end)}`;
   const refs: PlayerRef[] = players.map((p) => (p.memberId ? { memberId: p.memberId, name: p.name } : { guestId: p.guestId!, name: p.name }));
-  const quote = await quoteCourt(tx, { sport: court.sport, date: input.date, courtName: court.name, timeLabel, players: refs }, s);
+  const quote = await quoteCourt(tx, { sport: court.sport, date: input.date, courtName: court.name, timeLabel, players: refs, courtId: court.id, startMinute: timeToMinutes(input.startTime) }, s);
   if (opts.trial) {
     // CR-8: the trial fee is a setting (default ₹0), paid at the desk.
     quote.players = quote.players.map((p) => ({
@@ -345,6 +355,15 @@ export async function createBookingTx(tx: Tx, actor: Actor, raw: CreateBookingIn
       ...priceLine({ description: `Trial session: ${court.name} ${timeLabel} — ${p.name}`, qty: 1, unitPrice: s.trial_fee, taxCategory: "COURT", hsnSac: s.sac_codes.COURT, explanation: s.trial_fee ? `Trial session fee ${formatINR(s.trial_fee)}` : "Trial session · free" }, s),
     }));
     quote.total = quote.players.reduce((a, p) => a + p.netAmount, 0);
+  }
+  if (opts.reschedule) {
+    // CC-4: priced as usual, then waived in full — the original payment covers it even if this slot costs more.
+    const from = opts.reschedule.fromCode;
+    quote.players = quote.players.map((p) => ({
+      ...p,
+      ...priceLine({ description: p.description, qty: p.qty, unitPrice: p.unitPrice, discountPct: 100, taxCategory: p.taxCategory, hsnSac: p.hsnSac, explanation: `${p.explanation} · moved from ${from} after a club cancellation — already paid, no extra charge` }, s),
+    }));
+    quote.total = 0;
   }
   const code = formatCode("booking", await nextSeq(tx, CODE_SEQUENCE.booking));
   const booking = await tx.booking.create({
@@ -432,7 +451,7 @@ export async function quoteBooking(actor: Actor, raw: { courtId: string; date: s
     }
   }
   const { start, end } = slotBounds(raw.date, raw.startTime);
-  const q = await quoteCourt(prisma, { sport: court.sport, date: raw.date, courtName: court.name, timeLabel: fmtRange(start, end), players: refs });
+  const q = await quoteCourt(prisma, { sport: court.sport, date: raw.date, courtName: court.name, timeLabel: fmtRange(start, end), players: refs, courtId: court.id, startMinute: timeToMinutes(raw.startTime) });
   return { total: q.total, taxTotal: q.taxTotal, players: q.players.map((p) => ({ name: p.name, tier: p.tier, fee: p.netAmount, explanation: p.explanation })) };
 }
 
@@ -475,7 +494,7 @@ export async function cancelBookingTx(tx: Tx, actor: Actor, bookingId: string, r
     if (fullRefund) {
       const paid = netPaid(bill);
       if (paid > 0) {
-        const r = await refundTx(tx, actor, bill.id, paid, { method: input.refundMethod, reference: input.refundReference, approvalCode: input.refundReference, reason: `Booking ${b.bookingCode} cancelled ${hoursBefore.toFixed(1)}h before start` });
+        const r = await refundTx(tx, actor, bill.id, paid, { method: input.refundMethod, reference: input.refundReference, approvalCode: input.refundReference, reason: `Booking ${b.bookingCode} cancelled ${hoursBefore.toFixed(1)}h before start`, category: "POLICY_CANCELLATION", policy: "BK-7", quiet: true }); // the cancellation message below says what happens to the money
         refunded = r.refunded;
         refundPending = r.pending;
       }
@@ -493,16 +512,37 @@ export async function cancelBookingTx(tx: Tx, actor: Actor, bookingId: string, r
     after: { status: "CANCELLED", refunded, hoursBefore: Number(hoursBefore.toFixed(2)), fullRefund },
     reason: input.reason ?? null,
   });
-  const memberUsers = await tx.member.findMany({ where: { id: { in: b.players.filter((p) => !p.removedAt).map((p) => p.memberId).filter((x): x is string => !!x) } }, select: { userId: true } });
-  await notify(tx, {
-    userIds: memberUsers.map((m) => m.userId).filter((x): x is string => !!x),
-    type: "BOOKING_CANCELLED",
-    title: `Cancelled: ${b.reservation.court.name} ${fmtDate(istDate(b.reservation.startAt))} ${fmtRange(b.reservation.startAt, b.reservation.endAt)}`,
-    body: `${b.bookingCode} was cancelled. ${refunded ? `${formatINR(refunded)} refunded.` : ""}${refundPending ? ` ${formatINR(refundPending)} will be refunded at the front desk.` : ""}${!refunded && !refundPending ? (fullRefund ? "Nothing was charged." : `Cancelled less than ${s.cancel_full_refund_hours}h before start — no refund.`) : ""}`,
-    link: "/portal/bookings",
-    dedupeKey: `booking-cancelled:${b.id}`,
-    email: true,
-  });
+  const slot = `${b.reservation.court.name} ${fmtDate(istDate(b.reservation.startAt))} ${fmtRange(b.reservation.startAt, b.reservation.endAt)}`;
+  const money = `${refunded ? `${formatINR(refunded)} refunded.` : ""}${refundPending ? ` ${formatINR(refundPending)} will be refunded at the front desk.` : ""}${!refunded && !refundPending ? (fullRefund ? "Nothing was charged." : `Cancelled less than ${s.cancel_full_refund_hours}h before start — no refund.`) : ""}`;
+  const selfService = actor.kind === "USER" && actor.role === "MEMBER";
+  if (selfService) {
+    // The member cancelled it themselves: a confirmation in the app and by email is enough.
+    const memberUsers = await tx.member.findMany({ where: { id: { in: b.players.filter((p) => !p.removedAt).map((p) => p.memberId).filter((x): x is string => !!x) } }, select: { userId: true } });
+    await notify(tx, {
+      userIds: memberUsers.map((m) => m.userId).filter((x): x is string => !!x),
+      type: "BOOKING_CANCELLED",
+      title: `Cancelled: ${slot}`,
+      body: `${b.bookingCode} was cancelled. ${money}`,
+      link: "/portal/bookings",
+      dedupeKey: `booking-cancelled:${b.id}`,
+      email: true,
+    });
+  } else {
+    // Cancelled by the club's staff: every player hears it on every channel (members, a Junior's guardian, guests).
+    const title = `Cancelled: ${slot}`;
+    const body = `Your booking ${b.bookingCode} (${slot}) was cancelled by the club${input.reason ? `. Reason: ${input.reason}` : ""}. ${money}`;
+    const params = (name: string) => [name, b.reservation.court.name, `${fmtDate(istDate(b.reservation.startAt))} ${fmtRange(b.reservation.startAt, b.reservation.endAt)}`, money];
+    const players = b.players.filter((p) => !p.removedAt);
+    const audience = await memberAudience(tx, [b.primaryMemberId, ...players.map((p) => p.memberId)]);
+    for (const a of audience) {
+      const m = await tx.member.findUnique({ where: { id: a.memberId }, select: { name: true } });
+      await notifyMember(tx, { event: "BOOKING_CANCELLED", userId: a.userId, memberId: a.memberId, actor, title, body, link: "/portal/bookings", dedupeKey: `booking-cancelled:${b.id}:${a.memberId}:${a.userId}`, params: params(m?.name ?? "") });
+    }
+    for (const g of [...new Set([b.primaryGuestId, ...players.map((p) => p.guestId)].filter((x): x is string => !!x))]) {
+      const guest = await tx.guest.findUnique({ where: { id: g }, select: { name: true } });
+      await notifyGuest(tx, { event: "BOOKING_CANCELLED", guestId: g, title, body, actor, dedupeKey: `booking-cancelled:${b.id}:${g}`, params: params(guest?.name ?? "") });
+    }
+  }
   return { bookingId: b.id, bookingCode: b.bookingCode, status: "CANCELLED" as const, refunded, refundPending, fullRefund };
 }
 
@@ -554,7 +594,7 @@ export async function changePlayers(actor: Actor, bookingId: string, raw: z.infe
     const refs: PlayerRef[] = added.map((p) => (p.memberId ? { memberId: p.memberId, name: p.name } : { guestId: p.guestId!, name: p.name }));
     let billId = b.billId!;
     if (refs.length) {
-      const q = await quoteCourt(tx, { sport: court.sport, date, courtName: court.name, timeLabel: `${fmtDate(date)} ${fmtRange(b.reservation.startAt, b.reservation.endAt)}`, players: refs }, s);
+      const q = await quoteCourt(tx, { sport: court.sport, date, courtName: court.name, timeLabel: `${fmtDate(date)} ${fmtRange(b.reservation.startAt, b.reservation.endAt)}`, players: refs, courtId: court.id, startMinute: timeToMinutes(istTime(b.reservation.startAt)) }, s);
       const ids = await addBillLines(tx, billId, q.players);
       for (const [i, p] of q.players.entries()) {
         await tx.bookingPlayer.create({ data: { bookingId: b.id, memberId: p.memberId, guestId: p.guestId, feeSnapshot: p.netAmount, tierSnapshot: p.tier, billLineId: ids[i] } });
@@ -567,7 +607,7 @@ export async function changePlayers(actor: Actor, bookingId: string, raw: z.infe
     let refunded = 0;
     let refundPending = 0;
     if (over > 0) {
-      const r = await refundTx(tx, actor, billId, over, { method: input.refundMethod, reference: input.refundReference, approvalCode: input.refundReference, reason: `Players changed on ${b.bookingCode}` });
+      const r = await refundTx(tx, actor, billId, over, { method: input.refundMethod, reference: input.refundReference, approvalCode: input.refundReference, reason: `Players changed on ${b.bookingCode}`, category: "DUPLICATE_CHARGE", policy: "BILL_REDUCED" });
       refunded = r.refunded;
       refundPending = r.pending;
     }
@@ -624,20 +664,46 @@ export const maintenanceSchema = z.object({
   startTime: z.string().regex(/^\d{2}:(00|30)$/, "start on :00 or :30"),
   endTime: z.string().regex(/^\d{2}:(00|30)$/, "end on :00 or :30"),
   note: z.string().trim().min(3).max(200),
+  /** Bookings or social play in the way: cancel them as a club cancellation (refund or reschedule, everyone told). */
+  cancelBookings: z.boolean().optional(),
 });
 
+/**
+ * CT-4: block a court for maintenance. Existing bookings are never overwritten or dropped: when bookings or social play
+ * are in the way the block is refused (SLOT_TAKEN, listing them) unless the manager confirms `cancelBookings` — then it
+ * goes through the club-cancellation path (closures.ts, reason Maintenance): CANCELLED_BY_CLUB, refund or reschedule
+ * offered, every player told on every channel, and the range blocked.
+ */
 export async function createMaintenance(actor: Actor, raw: z.infer<typeof maintenanceSchema>) {
   assertCan(actor, "maintenance.manage");
   const input = maintenanceSchema.parse(raw);
+  const court = await prisma.court.findUnique({ where: { id: input.courtId } });
+  if (!court) throw new DomainError("NOT_FOUND", "Court was not found.");
+  const start = istToUtc(input.date, input.startTime);
+  const end = istToUtc(input.date, input.endTime);
+  if (end <= start) throw new DomainError("INVALID_SLOT", "Maintenance must end after it starts.");
+  const inTheWay = await prisma.$queryRaw<{ ref: string }[]>`
+    SELECT COALESCE(b.booking_code, '“' || ss.title || '”') AS ref FROM court_reservations r
+      LEFT JOIN bookings b ON b.reservation_id = r.id AND b.status = 'CONFIRMED'
+      LEFT JOIN social_session_courts sc ON sc.reservation_id = r.id
+      LEFT JOIN social_sessions ss ON ss.id = sc.session_id AND ss.status = 'SCHEDULED'
+     WHERE r.court_id = ${court.id} AND r.status = 'ACTIVE' AND r.kind IN ('REGULAR', 'SOCIAL') AND r.period && tstzrange(${start}, ${end}, '[)')
+       AND (b.id IS NOT NULL OR ss.id IS NOT NULL)
+     ORDER BY r.start_at`;
+  if (inTheWay.length) {
+    const refs = inTheWay.map((r) => r.ref);
+    if (!input.cancelBookings) {
+      throw new DomainError("SLOT_TAKEN", `${court.name} has ${refs.length === 1 ? "a booking" : `${refs.length} bookings or sessions`} in that time (${refs.join(", ")}). Confirm "Cancel them and tell the players" to cancel ${refs.length === 1 ? "it" : "them"} as a club cancellation — refund or reschedule is offered — or choose another time.`, { court: court.name, conflicts: refs, needsClubCancellation: true });
+    }
+    const { closeCourts } = await import("./closures");
+    const r = await closeCourts(actor, { courtIds: [court.id], date: input.date, startTime: input.startTime, endTime: input.endTime, reason: "MAINTENANCE", note: input.note });
+    const blocks = await prisma.courtReservation.findMany({ where: { closureId: r.closureId }, orderBy: { startAt: "asc" }, select: { id: true } });
+    return { reservationId: blocks[0]?.id ?? null, closure: r };
+  }
   return withTx(async (tx) => {
-    const court = await tx.court.findUnique({ where: { id: input.courtId } });
-    if (!court) throw new DomainError("NOT_FOUND", "Court was not found.");
-    const start = istToUtc(input.date, input.startTime);
-    const end = istToUtc(input.date, input.endTime);
-    if (end <= start) throw new DomainError("INVALID_SLOT", "Maintenance must end after it starts.");
     const id = await insertReservation(tx, court, start, end, "MAINTENANCE", actorId(actor), input.note);
     await audit(tx, actor, "maintenance.create", "court_reservation", id, { after: { court: court.name, start, end, note: input.note } });
-    return { reservationId: id };
+    return { reservationId: id, closure: null };
   });
 }
 
@@ -760,11 +826,14 @@ async function decorateBookings(
 ) {
   const memberIds = rows.flatMap((b) => b.players.map((p) => p.memberId)).filter((x): x is string => !!x);
   const guestIds = rows.flatMap((b) => b.players.map((p) => p.guestId)).filter((x): x is string => !!x);
-  const [members, guests, bills] = await Promise.all([
+  const [members, guests, bills, resolutions, s] = await Promise.all([
     prisma.member.findMany({ where: { id: { in: memberIds } }, select: { id: true, name: true, memberCode: true } }),
     prisma.guest.findMany({ where: { id: { in: guestIds } }, select: { id: true, name: true } }),
     prisma.bill.findMany({ where: { id: { in: rows.map((b) => b.billId).filter((x): x is string => !!x) } } }),
+    prisma.clubCancellation.findMany({ where: { bookingId: { in: rows.map((b) => b.id) } } }),
+    getSettings(),
   ]);
+  const rescheduleUntil = addDays(istDate(clock.now()), s.reschedule_window_days);
   const name = (p: { memberId: string | null; guestId: string | null }) =>
     p.memberId ? (members.find((m) => m.id === p.memberId)?.name ?? "?") : (guests.find((g) => g.id === p.guestId)?.name ?? "?");
   const out = rows.map((b) => {
@@ -785,6 +854,12 @@ async function decorateBookings(
       due: bill ? billDue(bill) : 0,
       billStatus: bill?.status ?? "UNPAID",
       cancelledAt: b.cancelledAt,
+      cancelReason: b.cancelReason,
+      // v3 CC-4/CC-5: the open choice on a booking the club cancelled.
+      resolution: (() => {
+        const cc = resolutions.find((r) => r.bookingId === b.id);
+        return cc ? { id: cc.id, status: cc.status, amountPaid: cc.amountPaid, deadlineAt: cc.deadlineAt, newBookingId: cc.newBookingId, rescheduleUntil } : null;
+      })(),
     };
   });
   const term = search?.trim().toLowerCase();

@@ -119,19 +119,18 @@ export async function updatePlan(actor: Actor, planId: string, raw: z.infer<type
   return withTx(async (tx) => {
     const before = await tx.plan.findUnique({ where: { id: planId }, include: { courtFees: true } });
     if (!before) throw new DomainError("NOT_FOUND", "Plan was not found.");
-    const { courtFees, ...fields } = input;
+    const { courtFees, socialFee, ...fields } = input;
     const data: Prisma.PlanUpdateInput = { ...fields };
     await tx.plan.update({ where: { id: planId }, data });
+    // v3 §9.2: court and social fees per tier live in the price book (dated versions; the plan row is kept in step).
+    const { setBasePriceTx } = await import("./price-book");
     if (courtFees) {
       for (const [sport, fee] of Object.entries(courtFees)) {
-        if (fee === undefined) continue;
-        await tx.planCourtFee.upsert({
-          where: { planId_sport: { planId, sport: sport as Sport } },
-          create: { planId, sport: sport as Sport, fee },
-          update: { fee },
-        });
+        if (fee === undefined || fee === before.courtFees.find((f) => f.sport === sport)?.fee) continue;
+        await setBasePriceTx(tx, actor, { target: `COURT_FEE:${before.code}:${sport as Sport}`, price: fee });
       }
     }
+    if (socialFee !== undefined && socialFee !== before.socialFee) await setBasePriceTx(tx, actor, { target: `SOCIAL_FEE:${before.code}`, price: socialFee });
     const after = await tx.plan.findUnique({ where: { id: planId }, include: { courtFees: true } });
     await audit(tx, actor, "plan.update", "plan", planId, { before, after });
     return after;

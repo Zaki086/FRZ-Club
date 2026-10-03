@@ -229,7 +229,7 @@ export async function voidLine(actor: Actor, lineId: string, reason: string) {
     const totals = await tx.$queryRaw<{ total: number }[]>`SELECT coalesce(sum(net_amount),0)::int AS total FROM bill_lines WHERE bill_id = ${line.tab.billId} AND voided_at IS NULL`;
     const bill = await tx.bill.findUniqueOrThrow({ where: { id: line.tab.billId } });
     const over = netPaid(bill) - totals[0].total;
-    if (over > 0) await refundTx(tx, actor, bill.id, over, { reason: `Item voided on ${line.tab.code}` });
+    if (over > 0) await refundTx(tx, actor, bill.id, over, { reason: `Item voided on ${line.tab.code}`, category: "DUPLICATE_CHARGE", policy: "BILL_REDUCED" });
     const after = await refreshBill(tx, line.tab.billId);
     await audit(tx, actor, "tab.void_line", "tab_line", line.id, { before: { status: line.status, netAmount: line.netAmount }, after: { status: "VOID" }, reason });
     return { lineId: line.id, total: after.total, due: billDue(after) };
@@ -586,7 +586,12 @@ export async function updateMenuItem(actor: Actor, id: string, raw: { available?
   return withTx(async (tx) => {
     const before = await tx.menuItem.findUnique({ where: { id } });
     if (!before) throw new DomainError("NOT_FOUND", "Menu item was not found.");
-    const item = await tx.menuItem.update({ where: { id }, data: { available: raw.available, price: raw.price } });
+    // v3 §9.2: a price change is a new price-book version (in effect now); availability is the item's own switch.
+    if (raw.price !== undefined && raw.price !== before.price) {
+      const { setBasePriceTx } = await import("./price-book");
+      await setBasePriceTx(tx, actor, { target: `MENU:${id}`, price: raw.price });
+    }
+    const item = await tx.menuItem.update({ where: { id }, data: { available: raw.available } });
     await audit(tx, actor, "menu.update", "menu_item", id, { before, after: item });
     return item;
   });
