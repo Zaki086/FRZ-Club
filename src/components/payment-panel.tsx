@@ -2,14 +2,14 @@
 // Staff payment panel: shows the server's bill (lines with explanations, total, paid, due) and records
 // one or more counter payments (split cash/card/UPI, E-14). It never computes amounts itself — the due
 // shown is the server's, and every rejection message is shown verbatim.
-import { useEffect, useState } from "react";
-import QRCode from "qrcode";
+import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { formatINR, parseRupees } from "@/lib/money";
-import { upiLink } from "@/lib/upi";
 import { api, ApiError, newIdempotencyKey, useApi } from "./api";
 import { Button } from "./ui/button";
-import { Input, Select } from "./ui/input";
+import { Input } from "./ui/input";
+import { METHOD_LABEL, useCapabilities } from "./capabilities";
+import { DrawerOpener, emptyTender, MethodSelect, ProofFields, tenderProof, UpiQr, useTenderMethods, type TenderDraft, type TenderMethod } from "./tender-fields";
 import { DataState, RejectionBanner } from "./states";
 import { Money } from "./money";
 import { StatusBadge } from "./badges";
@@ -50,7 +50,7 @@ export function BillLines({ bill }: { bill: BillView }) {
         ))}
       </div>
       <div className="grid grid-cols-2 gap-1 text-sm">
-        <span className="text-muted-foreground">Total (incl. GST {formatINR(bill.taxTotal)})</span>
+        <span className="text-muted-foreground">{bill.taxTotal ? <>Total (incl. GST {formatINR(bill.taxTotal)})</> : "Total"}</span>
         <Money paise={bill.total} className="text-right font-semibold" />
         <span className="text-muted-foreground">Paid</span>
         <Money paise={bill.amountPaid - bill.amountRefunded} className="text-right" />
@@ -64,49 +64,36 @@ export function BillLines({ bill }: { bill: BillView }) {
   );
 }
 
-type Part = { method: "CASH" | "CARD" | "UPI"; amount: string; reference: string; tendered: string };
+type SubmitPart = { method: TenderMethod; amount: number; reference?: string; tendered?: number; cardLast4?: string; approvalCode?: string };
 
 export function PaymentPanel({
   billId,
   onPaid,
-  upiVpa = "championsclub@testupi",
   allowOnline = true,
+  bankTransfer = false,
   submit,
 }: {
   billId: string;
   onPaid?: () => void;
-  upiVpa?: string;
   allowOnline?: boolean;
+  /** Invoices only: also offer a bank transfer (with its reference). */
+  bankTransfer?: boolean;
   /** Custom submit (e.g. settle a bar tab atomically). Defaults to one counter payment per part. */
-  submit?: (parts: Array<{ method: Part["method"]; amount: number; reference?: string; tendered?: number }>) => Promise<unknown>;
+  submit?: (parts: SubmitPart[]) => Promise<unknown>;
 }) {
   const state = useApi<BillView>(`/api/bills/${billId}`);
-  const [parts, setParts] = useState<Part[]>([]);
+  const caps = useCapabilities();
+  const methods = useTenderMethods({ bankTransfer });
+  const [parts, setParts] = useState<TenderDraft[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
-  const [qr, setQr] = useState<string | null>(null);
   const due = state.data?.due ?? 0;
   const firstUpi = parts.find((p) => p.method === "UPI");
   const upiAmount = firstUpi ? parseRupees(firstUpi.amount) : null;
 
-  useEffect(() => {
-    if (!upiAmount || !state.data) return;
-    let cancelled = false;
-    QRCode.toDataURL(upiLink({ vpa: upiVpa, payee: "The Champions Club", amountPaise: upiAmount, note: `Bill ${billId.slice(-6)}` }), { width: 160, margin: 1 })
-      .then((d) => {
-        if (!cancelled) setQr(d);
-      })
-      .catch(() => {
-        if (!cancelled) setQr(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [upiAmount, upiVpa, billId, state.data]);
+  const effectiveParts: TenderDraft[] = parts.length ? parts : [emptyTender("CASH", due ? (due / 100).toFixed(2) : "")];
 
-  const effectiveParts: Part[] = parts.length ? parts : [{ method: "CASH", amount: due ? (due / 100).toFixed(2) : "", reference: "", tendered: "" }];
-
-  const update = (i: number, patch: Partial<Part>) => {
+  const update = (i: number, patch: Partial<TenderDraft>) => {
     const base = parts.length ? parts : effectiveParts;
     setParts(base.map((p, j) => (j === i ? { ...p, ...patch } : p)));
   };
@@ -116,27 +103,14 @@ export function PaymentPanel({
       {(bill) => (
         <div className="flex flex-col gap-3">
           <BillLines bill={bill} />
-          {bill.due > 0 ? (
+          {bill.due > 0 && methods ? (
             <div className="flex flex-col gap-2 rounded-md border bg-muted/40 p-3">
               <p className="text-sm font-semibold">Take payment</p>
               {effectiveParts.map((p, i) => (
                 <div key={i} className="grid grid-cols-12 gap-2">
-                  <Select
-                    className="col-span-3"
-                    value={p.method}
-                    onChange={(e) => update(i, { method: e.target.value as Part["method"] })}
-                    aria-label="Method"
-                  >
-                    <option value="CASH">Cash</option>
-                    <option value="CARD">Card</option>
-                    <option value="UPI">UPI</option>
-                  </Select>
-                  <Input className="col-span-3" inputMode="decimal" placeholder="Amount ₹" value={p.amount} onChange={(e) => update(i, { amount: e.target.value })} aria-label="Amount" />
-                  {p.method === "CASH" ? (
-                    <Input className="col-span-4" inputMode="decimal" placeholder="Tendered ₹ (optional)" value={p.tendered} onChange={(e) => update(i, { tendered: e.target.value })} aria-label="Cash tendered" />
-                  ) : (
-                    <Input className="col-span-4" placeholder={p.method === "UPI" ? "UTR / ref" : "Card last 4"} value={p.reference} onChange={(e) => update(i, { reference: e.target.value })} aria-label="Reference" />
-                  )}
+                  <MethodSelect className="col-span-12 sm:col-span-3" methods={methods} value={p.method} onChange={(m) => update(i, { method: m })} />
+                  <Input className="col-span-5 sm:col-span-3" inputMode="decimal" placeholder="Amount ₹" value={p.amount} onChange={(e) => update(i, { amount: e.target.value })} aria-label="Amount" />
+                  <ProofFields className="col-span-5 sm:col-span-4" value={p} onChange={(patch) => update(i, patch)} />
                   <Button
                     className="col-span-2"
                     variant="ghost"
@@ -149,19 +123,15 @@ export function PaymentPanel({
                   </Button>
                 </div>
               ))}
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={() => setParts([...effectiveParts, { method: "UPI", amount: "", reference: "", tendered: "" }])}>
-                  <Plus className="h-4 w-4" /> Split payment
-                </Button>
-              </div>
-              {qr ? (
-                <div className="flex items-center gap-3 rounded-md border bg-card p-2">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={qr} alt="UPI QR code" className="h-28 w-28" />
-                  <p className="text-xs text-muted-foreground">Customer scans to pay {upiAmount ? formatINR(upiAmount) : ""} by UPI. Enter the UTR once received.</p>
+              {methods.length > 1 ? (
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setParts([...effectiveParts, emptyTender(methods.find((m) => m !== "CASH") ?? "CASH")])}>
+                    <Plus className="h-4 w-4" /> Split payment
+                  </Button>
                 </div>
               ) : null}
-              <RejectionBanner error={error} />
+              <UpiQr amountPaise={upiAmount} note={`Bill ${billId.slice(-6)}`} />
+              {error?.code === "DRAWER_NOT_OPEN" ? <DrawerOpener onOpened={() => setError(null)} /> : <RejectionBanner error={error} />}
               <div className="flex flex-wrap gap-2">
                 <Button
                   size="lg"
@@ -174,8 +144,7 @@ export function PaymentPanel({
                       const parsed = effectiveParts.map((p) => {
                         const amount = parseRupees(p.amount);
                         if (!amount) throw new ApiError("VALIDATION_FAILED", "Enter an amount for every payment part.", 422, null);
-                        const tendered = p.tendered ? parseRupees(p.tendered) : null;
-                        return { method: p.method, amount, reference: p.reference || undefined, tendered: tendered ?? undefined };
+                        return { ...tenderProof(p), amount } as SubmitPart;
                       });
                       if (submit) await submit(parsed);
                       else for (const p of parsed) await api("/api/payments/counter", { body: { billId, ...p }, idempotencyKey: newIdempotencyKey() });
@@ -192,7 +161,7 @@ export function PaymentPanel({
                 >
                   {busy ? "Recording…" : "Record payment"}
                 </Button>
-                {allowOnline ? (
+                {allowOnline && caps?.online ? (
                   <Button
                     variant="outline"
                     size="lg"
@@ -220,7 +189,7 @@ export function PaymentPanel({
             <div className="text-xs text-muted-foreground">
               {bill.payments.map((p) => (
                 <p key={p.id}>
-                  {p.type === "REFUND" ? "Refund" : "Payment"} · {p.method} · {formatINR(p.amount)} · {p.status}
+                  {p.type === "REFUND" ? "Refund" : "Payment"} · {METHOD_LABEL[p.method] ?? p.method} · {formatINR(p.amount)} · {p.status === "PENDING" && p.type === "REFUND" ? "to be paid out at the desk" : p.status}
                   {p.reference ? ` · ${p.reference}` : ""}
                   {p.changeGiven ? ` · change ${formatINR(p.changeGiven)}` : ""}
                 </p>

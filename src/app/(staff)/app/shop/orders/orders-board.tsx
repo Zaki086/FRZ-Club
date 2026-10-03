@@ -11,10 +11,12 @@ import { StatusBadge } from "@/components/badges";
 import { Money } from "@/components/money";
 import { ConfirmButton } from "@/components/confirm";
 import { PaymentPanel } from "@/components/payment-panel";
+import { refundSummary } from "@/components/tender-fields";
 import { fmtDateTime } from "@/lib/time";
 import { formatINR } from "@/lib/money";
 import { STATUS_LABEL, type OrderView } from "../_components/types";
 import { OrderTimeline } from "../_components/order-timeline";
+import { WhatsAppButton } from "@/components/whatsapp-button";
 
 const COLUMNS = ["PENDING_PAYMENT", "CONFIRMED", "READY_FOR_PICKUP", "PACKED", "OUT_FOR_DELIVERY"];
 
@@ -22,7 +24,7 @@ function OrderCard({ o, onChange }: { o: OrderView; onChange: () => void }) {
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
-  const [refunded, setRefunded] = useState<number | null>(null);
+  const [refunded, setRefunded] = useState<{ refunded: number; refundPending: number } | null>(null);
   const handedOver = ["COLLECTED", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"].includes(o.status);
   return (
     <Card className="flex flex-col gap-2 p-3 text-sm" data-testid={`order-${o.code}`}>
@@ -43,7 +45,7 @@ function OrderCard({ o, onChange }: { o: OrderView; onChange: () => void }) {
           {o.fulfilment === "DELIVERY" ? <Truck className="mr-1 h-3 w-3" /> : <Store className="mr-1 h-3 w-3" />}
           {o.fulfilment === "DELIVERY" ? "Delivery" : "Pickup"}
         </Badge>
-        <Badge tone="neutral">{o.paymentOption === "ONLINE" ? "Paid online" : "Pay at pickup"}</Badge>
+        <Badge tone="neutral">{o.paymentOption === "ONLINE" ? "Paid online" : o.paymentOption === "PAY_ON_DELIVERY" ? "Pay on delivery" : "Pay at pickup"}</Badge>
       </div>
       <ul className="list-disc pl-4 text-xs">
         {o.lines.map((l) => <li key={l.id}>{l.qty} × {l.name}</li>)}
@@ -51,7 +53,7 @@ function OrderCard({ o, onChange }: { o: OrderView; onChange: () => void }) {
       {o.address ? <p className="rounded bg-muted p-1 text-xs">{o.address}</p> : null}
       {o.holdExpiresAt && !handedOver ? <p className="text-xs text-amber-700">Hold expires {fmtDateTime(o.holdExpiresAt)}</p> : null}
       {o.cancelReason ? <p className="text-xs text-destructive">Cancelled: {o.cancelReason}</p> : null}
-      {refunded !== null ? <p className="text-xs text-green-700">Cancelled — {formatINR(refunded)} refunded.</p> : null}
+      {refunded !== null ? <p className="text-xs text-green-700">Cancelled{refunded.refunded || refunded.refundPending ? ` — ${refundSummary(refunded.refunded, refunded.refundPending)}` : ""}.</p> : null}
       <details className="text-xs">
         <summary className="cursor-pointer text-muted-foreground">Timeline</summary>
         <OrderTimeline events={o.events} />
@@ -79,6 +81,7 @@ function OrderCard({ o, onChange }: { o: OrderView; onChange: () => void }) {
             Mark {STATUS_LABEL[s]?.toLowerCase() ?? s}
           </Button>
         ))}
+        <WhatsAppButton target={{ template: "ORDER", orderId: o.id }} />
         {o.due > 0 && o.status !== "CANCELLED" ? (
           <Dialog open={payOpen} onOpenChange={(v) => { setPayOpen(v); if (!v) onChange(); }}>
             <DialogTrigger asChild><Button size="sm" variant="outline">Take payment</Button></DialogTrigger>
@@ -95,8 +98,8 @@ function OrderCard({ o, onChange }: { o: OrderView; onChange: () => void }) {
             requireReason
             confirmLabel="Cancel order"
             onConfirm={async (reason) => {
-              const r = await api<{ refunded: number }>(`/api/shop/orders/${o.id}/cancel`, { body: { reason } });
-              setRefunded(r.refunded);
+              const r = await api<{ refunded: number; refundPending: number }>(`/api/shop/orders/${o.id}/cancel`, { body: { reason } });
+              setRefunded(r);
               onChange();
             }}
           />

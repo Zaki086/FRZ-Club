@@ -20,7 +20,7 @@ export type ReportData = {
 };
 
 const SOURCE_LABEL: Record<string, string> = { COURTS: "Courts", SOCIAL: "Social play", SHOP: "Shop", BAR: "Bar & cafe", MEMBERSHIP: "Memberships", INVOICE: "Invoices" };
-const METHOD_LABEL: Record<string, string> = { CASH: "Cash", CARD: "Card", UPI: "UPI", ONLINE: "Online" };
+const METHOD_LABEL: Record<string, string> = { CASH: "Cash", CARD: "Card", UPI: "UPI", BANK_TRANSFER: "Bank transfer", ONLINE: "Online" };
 
 function change(c: number | null) {
   if (c === null) return "new";

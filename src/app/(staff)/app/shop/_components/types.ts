@@ -3,7 +3,7 @@ export type OrderView = {
   code: string;
   status: string;
   fulfilment: "PICKUP" | "DELIVERY";
-  paymentOption: "ONLINE" | "PAY_AT_PICKUP";
+  paymentOption: "ONLINE" | "PAY_AT_PICKUP" | "PAY_ON_DELIVERY";
   address: string | null;
   holdExpiresAt: string | null;
   createdAt: string;

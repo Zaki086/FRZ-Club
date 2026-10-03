@@ -4,12 +4,12 @@ import { useState } from "react";
 import { api, newIdempotencyKey } from "@/components/api";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Field, Input, Select } from "@/components/ui/input";
+import { Field, Select } from "@/components/ui/input";
 import { RejectionBanner } from "@/components/states";
 import { Money } from "@/components/money";
 import { StatusBadge } from "@/components/badges";
 import { fmtDay, fmtRange } from "@/lib/time";
-import { parseRupees } from "@/lib/money";
+import { DrawerOpener, emptyTender, MethodSelect, ProofFields, tenderProof, UpiQr, useTenderMethods, type TenderDraft } from "@/components/tender-fields";
 import { PlayerPicker } from "./player-picker";
 import { QuoteView } from "./quote-view";
 import { useBookingQuote } from "./use-quote";
@@ -39,9 +39,8 @@ export function BookingDialog({
   const [primary, setPrimary] = useState(0);
   const [channel, setChannel] = useState<string>("FRONT_DESK");
   const [payNow, setPayNow] = useState(true);
-  const [method, setMethod] = useState<"CASH" | "CARD" | "UPI">("UPI");
-  const [reference, setReference] = useState("");
-  const [tendered, setTendered] = useState("");
+  const methods = useTenderMethods() ?? ["CASH"];
+  const [tender, setTender] = useState<TenderDraft>(emptyTender("CASH"));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   const [result, setResult] = useState<BookingResult | null>(null);
@@ -80,7 +79,6 @@ export function BookingDialog({
               setBusy(true);
               setError(null);
               try {
-                const tenderedPaise = tendered ? parseRupees(tendered) : null;
                 const r = await api<BookingResult>("/api/bookings", {
                   body: {
                     courtId: target.courtId,
@@ -90,7 +88,7 @@ export function BookingDialog({
                     primaryIndex: primary,
                     channel,
                     payment: payNow
-                      ? { kind: "COUNTER", method, reference: reference || undefined, tendered: method === "CASH" && tenderedPaise ? tenderedPaise : undefined }
+                      ? { kind: "COUNTER", ...tenderProof(tender) }
                       : { kind: "LATER" },
                   },
                   idempotencyKey: key,
@@ -122,24 +120,19 @@ export function BookingDialog({
                 <input type="radio" checked={payNow} onChange={() => setPayNow(true)} /> Pay now (full amount)
               </label>
               {payNow ? (
-                <div className="grid grid-cols-3 gap-2 pl-6">
-                  <Select value={method} onChange={(e) => setMethod(e.target.value as typeof method)} aria-label="Payment method">
-                    <option value="UPI">UPI</option>
-                    <option value="CARD">Card</option>
-                    <option value="CASH">Cash</option>
-                  </Select>
-                  {method === "CASH" ? (
-                    <Input placeholder="Tendered ₹ (optional)" inputMode="decimal" value={tendered} onChange={(e) => setTendered(e.target.value)} aria-label="Cash tendered" />
-                  ) : (
-                    <Input placeholder={method === "UPI" ? "UTR / ref" : "Card last 4"} value={reference} onChange={(e) => setReference(e.target.value)} aria-label="Reference" />
-                  )}
+                <div className="flex flex-col gap-2 pl-6">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <MethodSelect methods={methods} value={tender.method} onChange={(m) => setTender({ ...tender, method: m })} />
+                    <ProofFields className="sm:col-span-2" value={tender} onChange={(patch) => setTender({ ...tender, ...patch })} />
+                  </div>
+                  {tender.method === "UPI" ? <UpiQr amountPaise={quote?.total ?? null} note={`${target.courtName} ${target.date} ${target.time}`} /> : null}
                 </div>
               ) : null}
               <label className="flex items-center gap-2 text-sm">
                 <input type="radio" checked={!payNow} onChange={() => setPayNow(false)} /> Pay later at check-in (check-in is blocked until paid)
               </label>
             </div>
-            <RejectionBanner error={error} />
+            {error?.code === "DRAWER_NOT_OPEN" ? <DrawerOpener onOpened={() => setError(null)} /> : <RejectionBanner error={error} />}
             <Button type="submit" size="lg" disabled={busy || players.length === 0} data-testid="confirm-booking">
               {busy ? "Booking…" : "Confirm booking"}
             </Button>

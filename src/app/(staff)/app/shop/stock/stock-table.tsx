@@ -13,13 +13,49 @@ import { Money } from "@/components/money";
 import { categoryLabel, SHOP_CATEGORIES } from "@/components/shop-quote";
 import { fmtDateTime } from "@/lib/time";
 import { formatINR, parseRupees } from "@/lib/money";
+import { ProductImage } from "@/components/product-image";
+import { uploadFile } from "@/components/upload";
 
 type Row = {
-  variantId: string; sku: string; product: string; productId: string; label: string; category: string; price: number;
+  variantId: string; sku: string; barcode: string | null; product: string; productId: string; imageUrl: string | null; label: string; category: string; price: number;
   onHand: number; reserved: number; available: number; reorderLevel: number; trackStock: boolean; low: boolean;
 };
 type Movement = { id: string; qtyOnHandDelta: number; qtyReservedDelta: number; reason: string; refType: string | null; refId: string | null; unitCost: number | null; note: string | null; createdAt: string };
 type Err = { code?: string; message: string } | null;
+
+/** Completion pass §9: upload the product photo (PNG/JPEG/WebP ≤ 2 MB); without one the category icon shows. */
+function PhotoUpload({ row, onDone }: { row: Row; onDone: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <label className="relative inline-flex cursor-pointer flex-col items-center" title={row.imageUrl ? "Replace photo" : "Add photo"}>
+      <ProductImage url={row.imageUrl} category={row.category} name={row.product} className="h-10 w-10" />
+      <span className="text-[10px] text-primary underline">{busy ? "…" : row.imageUrl ? "Replace" : "Add photo"}</span>
+      <input
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        onChange={async (ev) => {
+          const file = ev.target.files?.[0];
+          ev.target.value = "";
+          if (!file) return;
+          setBusy(true);
+          setError(null);
+          try {
+            const url = await uploadFile("product", file);
+            await api(`/api/shop/products/${row.productId}/image`, { method: "PUT", body: { url } });
+            onDone();
+          } catch (e) {
+            setError(e instanceof ApiError ? e.message : String(e));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
+      {error ? <span className="max-w-[8rem] text-[10px] text-red-700">{error}</span> : null}
+    </label>
+  );
+}
 
 const errOf = (e: unknown): Err => (e instanceof ApiError ? { code: e.code, message: e.message } : { message: String(e) });
 const signed = (n: number) => (n > 0 ? `+${n}` : String(n));
@@ -98,6 +134,7 @@ function EditVariantDialog({ row, onDone, canPrice }: { row: Row; onDone: () => 
   const [open, setOpen] = useState(false);
   const [price, setPrice] = useState((row.price / 100).toFixed(2));
   const [reorder, setReorder] = useState(String(row.reorderLevel));
+  const [barcode, setBarcode] = useState(row.barcode ?? "");
   const [error, setError] = useState<Err>(null);
   const [busy, setBusy] = useState(false);
   return (
@@ -107,12 +144,14 @@ function EditVariantDialog({ row, onDone, canPrice }: { row: Row; onDone: () => 
         <div className="flex flex-col gap-3">
           <Field label="Price ₹ (GST inclusive)"><Input inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} /></Field>
           <Field label="Reorder level"><Input inputMode="numeric" value={reorder} onChange={(e) => setReorder(e.target.value)} /></Field>
+          <Field label="Barcode" hint="Scan the item's barcode into this box (optional); the SKU always works at the till"><Input value={barcode} onChange={(e) => setBarcode(e.target.value.trim())} /></Field>
           <RejectionBanner error={error} />
           <Button disabled={busy} onClick={async () => {
             setBusy(true); setError(null);
             try {
               const p = parseRupees(price);
-              const body: Record<string, number> = { reorderLevel: Number(reorder) };
+              const body: Record<string, number | string> = { reorderLevel: Number(reorder) };
+              if (barcode !== (row.barcode ?? "")) body.barcode = barcode;
               if (p !== null && p !== row.price) body.price = p;
               await api(`/api/shop/variants/${row.variantId}`, { method: "PATCH", body });
               setOpen(false); onDone();
@@ -236,7 +275,7 @@ export function StockTable({ lowOnly: initialLow, perms }: { lowOnly: boolean; p
               <TBody>
                 {rows.map((r) => (
                   <TR key={r.variantId} className={r.low ? "bg-red-50/60" : undefined}>
-                    <TD><span className="font-medium">{r.product}</span>{r.label !== "Standard" ? <span className="text-muted-foreground"> · {r.label}</span> : null} {r.low ? <Badge tone="red">LOW</Badge> : null}</TD>
+                    <TD className="flex items-center gap-2">{perms.stock ? <PhotoUpload row={r} onDone={reload} /> : <ProductImage url={r.imageUrl} category={r.category} name={r.product} className="h-10 w-10" />}<span><span className="font-medium">{r.product}</span>{r.label !== "Standard" ? <span className="text-muted-foreground"> · {r.label}</span> : null} {r.low ? <Badge tone="red">LOW</Badge> : null}</span></TD>
                     <TD className="font-mono text-xs">{r.sku}</TD>
                     <TD className="text-sm">{categoryLabel(r.category)}</TD>
                     <TD className="text-right"><Money paise={r.price} /></TD>

@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Minus, Plus, Trash2, X, Receipt, Split } from "lucide-react";
+import { Minus, Plus, Trash2, X, Receipt, ScanBarcode, Split } from "lucide-react";
+import { QrScanner } from "@/components/qr-scanner";
 import { api, ApiError, newIdempotencyKey, useApi } from "@/components/api";
 import { DataState, RejectionBanner } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input, Select } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/components/ui/cn";
 import { MemberStatusBadge, type MemberStatus } from "@/components/member-status";
 import { Money } from "@/components/money";
@@ -14,10 +15,12 @@ import {
   type CartItem, type CatalogueProduct, type CatalogueVariant, type QuoteLine,
 } from "@/components/shop-quote";
 import { formatINR, parseRupees } from "@/lib/money";
+import { DrawerOpener, emptyTender, MethodSelect, ProofFields, tenderProof, UpiQr, useTenderMethods, type TenderDraft } from "@/components/tender-fields";
+import { METHOD_LABEL } from "@/components/capabilities";
 
 type MemberHit = { id: string; memberCode: string; name: string; phone: string; status: MemberStatus };
 type CartRow = CartItem & { name: string; isRestring: boolean; stockLabel: string };
-type PayRow = { method: "CASH" | "CARD" | "UPI"; amount: string; reference: string; tendered: string };
+type PayRow = TenderDraft;
 type SaleResult = { code: string; billId: string; total: number; discountTotal: number; changeGiven: number; tickets: string[]; lines: QuoteLine[] };
 
 function variantName(p: CatalogueProduct, v: CatalogueVariant) {
@@ -37,15 +40,14 @@ export function CounterPos() {
   const [racket, setRacket] = useState("");
   const [notes, setNotes] = useState("");
   const [split, setSplit] = useState(false);
-  const [single, setSingle] = useState<PayRow>({ method: "UPI", amount: "", reference: "", tendered: "" });
-  const [rows, setRows] = useState<PayRow[]>([
-    { method: "CASH", amount: "", reference: "", tendered: "" },
-    { method: "UPI", amount: "", reference: "", tendered: "" },
-  ]);
+  const methods = useTenderMethods() ?? ["CASH"];
+  const [single, setSingle] = useState<PayRow>(emptyTender("CASH"));
+  const [rows, setRows] = useState<PayRow[]>([emptyTender("CASH"), emptyTender("CASH")]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   const [result, setResult] = useState<SaleResult | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const [scanning, setScanning] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setMemberTerm(memberQ.trim()), 250);
@@ -73,6 +75,24 @@ export function CounterPos() {
       return [...c, { variantId: v.id, qty: 1, name: variantName(p, v), isRestring: p.isRestring, stockLabel: v.stockLabel }];
     });
   };
+  /** Completion pass P2: add the item whose barcode or SKU is exactly `code`. */
+  const addByCode = (code: string): boolean => {
+    const c = code.trim().toLowerCase();
+    if (!c) return false;
+    for (const p of catalogue.data ?? []) {
+      const v = p.variants.find((x) => x.sku.toLowerCase() === c || (x.barcode ?? "").toLowerCase() === c);
+      if (v) {
+        if (!v.inStock) {
+          setError({ code: "INSUFFICIENT_STOCK", message: `${variantName(p, v)} is out of stock.` });
+          return true;
+        }
+        add(p, v);
+        setQ("");
+        return true;
+      }
+    }
+    return false;
+  };
   const setQty = (id: string, qty: number) => setCart((c) => (qty <= 0 ? c.filter((x) => x.variantId !== id) : c.map((x) => (x.variantId === id ? { ...x, qty } : x))));
 
   const reset = () => {
@@ -84,11 +104,8 @@ export function CounterPos() {
     setRacket("");
     setNotes("");
     setSplit(false);
-    setSingle({ method: "UPI", amount: "", reference: "", tendered: "" });
-    setRows([
-      { method: "CASH", amount: "", reference: "", tendered: "" },
-      { method: "UPI", amount: "", reference: "", tendered: "" },
-    ]);
+    setSingle(emptyTender("CASH"));
+    setRows([emptyTender("CASH"), emptyTender(methods.find((m) => m !== "CASH") ?? "CASH")]);
     setError(null);
     searchRef.current?.focus();
   };
@@ -101,16 +118,9 @@ export function CounterPos() {
         ? rows.map((r) => {
             const amount = parseRupees(r.amount);
             if (!amount) throw new ApiError("VALIDATION_FAILED", "Enter an amount for every split payment row.", 422, null);
-            const tendered = r.method === "CASH" && r.tendered ? parseRupees(r.tendered) : null;
-            return { method: r.method, amount, reference: r.reference || undefined, tendered: tendered ?? undefined };
+            return { ...tenderProof(r), amount };
           })
-        : [
-            {
-              method: single.method,
-              reference: single.reference || undefined,
-              tendered: single.method === "CASH" && single.tendered ? (parseRupees(single.tendered) ?? undefined) : undefined,
-            },
-          ];
+        : [tenderProof(single)];
       const r = await api<SaleResult>("/api/shop/counter-sale", {
         body: {
           memberId: member?.id,
@@ -139,13 +149,15 @@ export function CounterPos() {
           <Input
             ref={searchRef}
             className="h-14 text-lg"
-            placeholder="Search product, brand or SKU — Enter adds the first match"
+            placeholder="Search, or scan a barcode — Enter adds the item"
             value={q}
             autoFocus
             data-testid="pos-search"
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
               if (e.key !== "Enter") return;
+              // A barcode scanner types the code and presses Enter: an exact barcode/SKU match wins.
+              if (addByCode(q)) return;
               for (const p of filtered) {
                 const v = p.variants.find((x) => x.inStock);
                 if (v) {
@@ -156,7 +168,17 @@ export function CounterPos() {
               }
             }}
           />
+          {scanning ? (
+            <QrScanner
+              onScan={(text) => {
+                setScanning(false);
+                if (!addByCode(text)) setError({ code: "NOT_FOUND", message: `No item has the barcode or SKU ${text}.` });
+              }}
+              onClose={() => setScanning(false)}
+            />
+          ) : null}
           <div className="flex flex-wrap gap-1">
+            <Button size="sm" variant="outline" onClick={() => setScanning(true)}><ScanBarcode className="h-4 w-4" /> Scan</Button>
             <Button size="sm" variant={cat === "" ? "default" : "outline"} onClick={() => setCat("")}>All</Button>
             {SHOP_CATEGORIES.map((c) => (
               <Button key={c} size="sm" variant={cat === c ? "default" : "outline"} onClick={() => setCat(c)}>
@@ -201,7 +223,9 @@ export function CounterPos() {
         <CardContent className="flex flex-col gap-3">
           {result ? (
             <div className="flex flex-col gap-2 rounded-md border border-green-300 bg-green-50 p-3 text-sm" data-testid="sale-receipt">
-              <p className="flex items-center gap-2 text-base font-semibold"><Receipt className="h-4 w-4" /> Sale {result.code} complete</p>
+              <p className="flex items-center gap-2 text-base font-semibold"><Receipt className="h-4 w-4" /> Sale {result.code} complete
+                <a className="ml-auto text-sm font-normal text-primary underline" href={`/print/bill/${result.billId}`} target="_blank" rel="noreferrer">Print receipt</a>
+              </p>
               {result.lines.map((l, i) => (
                 <p key={i} className="flex justify-between gap-2">
                   <span>{l.qty} × {l.description}</span>
@@ -276,46 +300,37 @@ export function CounterPos() {
             <div className="flex flex-col gap-2 rounded-md border bg-muted/40 p-3">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold">Payment (in full)</p>
-                <Button size="sm" variant="ghost" onClick={() => setSplit(!split)}><Split className="h-4 w-4" /> {split ? "Single payment" : "Split payment"}</Button>
+                {methods.length > 1 ? (
+                  <Button size="sm" variant="ghost" onClick={() => { if (!split) setRows([emptyTender("CASH"), emptyTender(methods.find((m) => m !== "CASH") ?? "CASH")]); setSplit(!split); }}><Split className="h-4 w-4" /> {split ? "Single payment" : "Split payment"}</Button>
+                ) : null}
               </div>
               {!split ? (
                 <div className="grid grid-cols-3 gap-2">
                   <div className="col-span-3 flex gap-1">
-                    {(["CASH", "CARD", "UPI"] as const).map((m) => (
+                    {methods.map((m) => (
                       <Button key={m} type="button" className="flex-1" size="lg" variant={single.method === m ? "default" : "outline"} onClick={() => setSingle({ ...single, method: m })}>
-                        {m === "CASH" ? "Cash" : m === "CARD" ? "Card" : "UPI"}
+                        {METHOD_LABEL[m]}
                       </Button>
                     ))}
                   </div>
-                  {single.method === "CASH" ? (
-                    <Input className="col-span-3" inputMode="decimal" placeholder="Cash tendered ₹ (optional — change is computed)" value={single.tendered} onChange={(e) => setSingle({ ...single, tendered: e.target.value })} />
-                  ) : (
-                    <Input className="col-span-3" placeholder={single.method === "UPI" ? "UTR / reference" : "Card last 4"} value={single.reference} onChange={(e) => setSingle({ ...single, reference: e.target.value })} />
-                  )}
+                  <ProofFields className="col-span-3" value={single} onChange={(patch) => setSingle({ ...single, ...patch })} />
+                  {single.method === "UPI" ? <div className="col-span-3"><UpiQr amountPaise={quote?.total ?? null} note="Shop sale" /></div> : null}
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
                   {rows.map((r, i) => (
                     <div key={i} className="grid grid-cols-12 gap-2">
-                      <Select className="col-span-3" value={r.method} aria-label="Method" onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, method: e.target.value as PayRow["method"] } : x)))}>
-                        <option value="CASH">Cash</option>
-                        <option value="CARD">Card</option>
-                        <option value="UPI">UPI</option>
-                      </Select>
-                      <Input className="col-span-3" inputMode="decimal" placeholder="₹" aria-label="Amount" value={r.amount} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))} />
-                      {r.method === "CASH" ? (
-                        <Input className="col-span-5" inputMode="decimal" placeholder="Tendered ₹" aria-label="Tendered" value={r.tendered} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, tendered: e.target.value } : x)))} />
-                      ) : (
-                        <Input className="col-span-5" placeholder="Reference" aria-label="Reference" value={r.reference} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, reference: e.target.value } : x)))} />
-                      )}
+                      <MethodSelect className="col-span-12 sm:col-span-3" methods={methods} value={r.method} onChange={(m) => setRows(rows.map((x, j) => (j === i ? { ...x, method: m } : x)))} />
+                      <Input className="col-span-5 sm:col-span-3" inputMode="decimal" placeholder="₹" aria-label="Amount" value={r.amount} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))} />
+                      <ProofFields className="col-span-6 sm:col-span-5" value={r} onChange={(patch) => setRows(rows.map((x, j) => (j === i ? { ...x, ...patch } : x)))} />
                       <Button className="col-span-1" size="icon" variant="ghost" aria-label="Remove row" disabled={rows.length <= 1} onClick={() => setRows(rows.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></Button>
                     </div>
                   ))}
-                  {rows.length < 4 ? <Button size="sm" variant="outline" onClick={() => setRows([...rows, { method: "CARD", amount: "", reference: "", tendered: "" }])}><Plus className="h-4 w-4" /> Add row</Button> : null}
+                  {rows.length < 4 ? <Button size="sm" variant="outline" onClick={() => setRows([...rows, emptyTender(methods[methods.length - 1])])}><Plus className="h-4 w-4" /> Add row</Button> : null}
                   <p className="text-xs text-muted-foreground">Rows must add up exactly to the server total{quote ? ` (${formatINR(quote.total)})` : ""}.</p>
                 </div>
               )}
-              <RejectionBanner error={error} />
+              {error?.code === "DRAWER_NOT_OPEN" ? <DrawerOpener defaultArea="SHOP" onOpened={() => setError(null)} /> : <RejectionBanner error={error} />}
               <Button size="xl" disabled={busy || !quote} onClick={submit} data-testid="pos-submit">
                 {busy ? "Completing…" : quote ? `Complete sale · ${formatINR(quote.total)}` : "Complete sale"}
               </Button>
