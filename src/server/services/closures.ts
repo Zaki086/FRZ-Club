@@ -20,7 +20,9 @@ import { createBookingTx, insertReservation } from "./booking";
 import { memberAudience, notifyGuest, notifyMember } from "./channels";
 import { refundTx } from "./payments";
 import { getSettings } from "./settings";
+import { signResolutionToken } from "./signed-links";
 import { cancelSocialSessionTx, notifySocialCancelled } from "./social";
+import { waAmount, waDate, waDateTime, waFirstName, waSession, waTime, type WaMessage } from "./whatsapp/templates";
 
 export const CLOSURE_REASONS = ["MAINTENANCE", "WET_COURT", "WEATHER", "EVENT", "OTHER"] as const;
 export const CLOSURE_REASON_LABEL: Record<(typeof CLOSURE_REASONS)[number], string> = {
@@ -157,7 +159,7 @@ export async function closeCourts(actor: Actor, raw: z.input<typeof closureSchem
         await closeBill(tx, bill.id, `Cancelled by the club (${closure.code})`, now);
       }
       await audit(tx, actor, "booking.cancel_by_club", "booking", b.id, { before: { status: "CONFIRMED" }, after: { status: "CANCELLED_BY_CLUB", closure: closure.code, paid: b.paid, resolution: resolution ? "PENDING_CHOICE" : "NOTHING_OWED" }, reason: why });
-      await notifyCancelled(tx, actor, b, why, resolution ? { paid: b.paid, deadline, windowDays: s.reschedule_window_days } : null);
+      await notifyCancelled(tx, actor, b, why, resolution ? { paid: b.paid, deadline, windowDays: s.reschedule_window_days, ccId: resolution } : null);
     }
     for (const ss of affected.social) {
       const r = await cancelSocialSessionTx(tx, actor, ss.id, `Closed by the club — ${why}`, { byClub: true });
@@ -177,8 +179,22 @@ export async function closeCourts(actor: Actor, raw: z.input<typeof closureSchem
  * CC-3: the booker and every member player (and a Junior's guardian) hear it on every channel; guests hear it by email
  * and on their phone. The booker's message carries the choice: reschedule or refund in My bookings, by the deadline.
  */
-async function notifyCancelled(tx: Tx, actor: Actor, b: Affected["bookings"][number], why: string, paid: { paid: number; deadline: Date; windowDays: number } | null) {
+async function notifyCancelled(tx: Tx, actor: Actor, b: Affected["bookings"][number], why: string, paid: { paid: number; deadline: Date; windowDays: number; ccId: string } | null) {
   const booking = await tx.booking.findUniqueOrThrow({ where: { id: b.id }, include: { players: true } });
+  // v4 §5.2/§5.5: every affected person gets one WhatsApp. Whoever chooses (the booker of a paid booking, or a Junior
+  // booker's guardian) gets club_session_cancelled with the "Choose option" button → /r/<token> (signed, valid until
+  // the deadline; it acts as the booker, so only they get it — CC-4/CC-5: only the booker or the desk chooses).
+  // Everyone else (other players, an unpaid booking) gets booking_cancelled_refund saying what happens to the money.
+  const court = await tx.court.findUnique({ where: { id: b.courtId }, select: { sport: true } });
+  const waFor = (name: string | null | undefined, chooses: boolean): WaMessage => paid && chooses ? {
+    template: "club_session_cancelled",
+    vars: { name: waFirstName(name), session: waSession(court?.sport, b.court), date: waDate(b.startAt), time: waTime(b.startAt), reason: why, amount: waAmount(paid.paid), deadline: waDateTime(paid.deadline) },
+    button: { token: signResolutionToken(paid.ccId, paid.deadline) },
+  } : {
+    template: "booking_cancelled_refund",
+    vars: { name: waFirstName(name), booking: b.code, date: waDate(b.startAt), time: waTime(b.startAt), refund: paid ? "the person who booked chooses a new time or a refund" : "nothing was charged" },
+    button: { ref: b.code },
+  };
   const s = await getSettings(tx);
   const slot = `${b.court}, ${fmtDate(istDate(b.startAt))} ${fmtRange(b.startAt, b.endAt)}`;
   const title = `Cancelled by the club: ${slot}`;
@@ -189,18 +205,22 @@ async function notifyCancelled(tx: Tx, actor: Actor, b: Affected["bookings"][num
   const audience = await memberAudience(tx, [booking.primaryMemberId, ...booking.players.filter((p) => !p.removedAt).map((p) => p.memberId)]);
   for (const a of audience) {
     const isBooker = a.memberId === booking.primaryMemberId;
+    const recipient = await tx.user.findUnique({ where: { id: a.userId }, select: { name: true } });
     await notifyMember(tx, {
-      event: "BOOKING_CANCELLED_BY_CLUB", userId: a.userId, memberId: a.memberId, actor, title,
+      event: "BOOKING_CANCELLED_BY_CLUB", userId: a.userId, memberId: a.memberId, actor, title, sessionAt: b.startAt,
       body: `${what}${isBooker ? choice : " The person who booked chooses a new time or a refund."}`,
       link: "/portal/bookings", dedupeKey: `club-cancel:${b.id}:${a.memberId}${a.userId === (audience.find((x) => x.memberId === a.memberId)?.userId) ? "" : `:${a.userId}`}`,
       params: [b.primary, b.court, slot, why, "/portal/bookings"],
+      wa: waFor(recipient?.name, isBooker),
     });
   }
   const call = s.club.phone ? ` Call the club on ${s.club.phone}` : " Reply or call the club";
   const guestIds = [...new Set([booking.primaryGuestId, ...booking.players.filter((p) => !p.removedAt).map((p) => p.guestId)].filter((x): x is string => !!x))];
   for (const g of guestIds) {
+    const guest = await tx.guest.findUnique({ where: { id: g }, select: { name: true } });
     await notifyGuest(tx, {
       event: "BOOKING_CANCELLED_BY_CLUB", guestId: g, title, actor, dedupeKey: `club-cancel:${b.id}:${g}`, params: [b.primary, b.court, slot, why, ""],
+      wa: waFor(guest?.name, g === booking.primaryGuestId),
       body: `${what}${g === booking.primaryGuestId && paid ? ` You paid ${formatINR(paid.paid)}.${call} by ${fmtDateTime(paid.deadline)} to move it to another time (no extra charge) or get a refund; otherwise it is refunded automatically.` : ""}`,
     });
   }
@@ -263,15 +283,22 @@ async function notifyRescheduled(tx: Tx, actor: Actor, ccId: string, oldId: stri
   const audience = await memberAudience(tx, [now.primaryMemberId, ...players.map((p) => p.memberId)]);
   const names = await playerNames(tx, [...audience.map((a) => ({ memberId: a.memberId, guestId: null })), ...players.filter((p) => p.guestId).map((p) => ({ memberId: null, guestId: p.guestId }))]);
   const params = (name: string) => [name, old.bookingCode, now.reservation.court.name, fmtDateTime(now.reservation.startAt)];
+  // v4 §5.2 booking_rescheduled: the button opens portal/bookings/<new booking code>.
+  const wa = (name: string | null | undefined): WaMessage => ({
+    template: "booking_rescheduled",
+    vars: { name: waFirstName(name), court: now.reservation.court.name, time: waTime(now.reservation.startAt), date: waDate(now.reservation.startAt), booking: now.bookingCode },
+    button: { booking: now.bookingCode },
+  });
   for (const [i, a] of audience.entries()) {
+    const recipient = await tx.user.findUnique({ where: { id: a.userId }, select: { name: true } });
     await notifyMember(tx, {
       event: "BOOKING_RESCHEDULED", userId: a.userId, memberId: a.memberId, actor, title, body, link: "/portal/bookings",
-      dedupeKey: `club-reschedule:${ccId}:${a.memberId}:${a.userId}`, params: params(names[i]),
+      dedupeKey: `club-reschedule:${ccId}:${a.memberId}:${a.userId}`, params: params(names[i]), wa: wa(recipient?.name ?? names[i]),
     });
   }
   for (const g of [...new Set([now.primaryGuestId, ...players.map((p) => p.guestId)].filter((x): x is string => !!x))]) {
     const guest = await tx.guest.findUnique({ where: { id: g }, select: { name: true } });
-    await notifyGuest(tx, { event: "BOOKING_RESCHEDULED", guestId: g, title, body, actor, dedupeKey: `club-reschedule:${ccId}:${g}`, params: params(guest?.name ?? "") });
+    await notifyGuest(tx, { event: "BOOKING_RESCHEDULED", guestId: g, title, body, actor, dedupeKey: `club-reschedule:${ccId}:${g}`, params: params(guest?.name ?? ""), wa: wa(guest?.name) });
   }
 }
 

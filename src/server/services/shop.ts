@@ -16,6 +16,7 @@ import { addBillLines, billDue, closeBill, createBill, netPaid, refreshBill, voi
 import { findOrCreateGuest } from "./guests";
 import { idempotent } from "./idempotency";
 import { counterDecrement, fulfil, release, reserve, restock } from "./inventory";
+import { notifyMember } from "./channels";
 import { notify, queueEmail } from "./notifications";
 import { recordSplitPaymentsTx, refundTx, startOnlinePaymentTx } from "./payments";
 import { asTaxCategory, priceLine, quoteShop, type ShopItem } from "./pricing";
@@ -284,7 +285,10 @@ async function notifyOrderCustomer(tx: Tx, order: { id: string; code: string; me
   const title = `Order ${order.code}: ${status.replace(/_/g, " ").toLowerCase()}`;
   if (order.memberId) {
     const m = await tx.member.findUnique({ where: { id: order.memberId }, select: { userId: true } });
-    if (m?.userId) await notify(tx, { userIds: [m.userId], type: "ORDER_STATUS", title, body: note, link: "/portal/orders", dedupeKey: `order-status:${order.id}:${status}`, email: true });
+    if (m?.userId && status === "READY_FOR_PICKUP") {
+      // v4 §4.1: "order ready for pickup" — in-app, push and email.
+      await notifyMember(tx, { event: "ORDER_READY", userId: m.userId, memberId: order.memberId, title: `Ready to collect: order ${order.code}`, body: note, link: "/portal/orders", dedupeKey: `order-status:${order.id}:${status}:${m.userId}` });
+    } else if (m?.userId) await notify(tx, { userIds: [m.userId], type: "ORDER_STATUS", title, body: note, link: "/portal/orders", dedupeKey: `order-status:${order.id}:${status}`, email: true });
   } else if (order.guestId) {
     const g = await tx.guest.findUnique({ where: { id: order.guestId } });
     if (g?.email) await queueEmail(tx, { to: g.email, subject: title, body: `${note}\nTrack: ${process.env.APP_URL ?? ""}/orders/${order.trackToken}`, dedupeKey: `order-status:${order.id}:${status}` });
@@ -472,7 +476,8 @@ export async function setTicketStatus(actor: Actor, ticketId: string, status: Ti
       const body = `Your ${t.racket} is restrung and ready to collect at the shop (${t.code}).`;
       if (t.memberId) {
         const m = await tx.member.findUnique({ where: { id: t.memberId }, select: { userId: true } });
-        if (m?.userId) await notify(tx, { userIds: [m.userId], type: "RESTRING_READY", title: "Your racket is ready", body, link: "/portal/orders", dedupeKey: `restring-ready:${t.id}`, email: true });
+        // v4 §4.1: "restring ready" — in-app, push and email.
+        if (m?.userId) await notifyMember(tx, { event: "RESTRING_READY", userId: m.userId, memberId: t.memberId, actor, title: "Your racket is ready", body, link: "/portal/orders", dedupeKey: `restring-ready:${t.id}:${m.userId}` });
       } else if (t.guestId) {
         const g = await tx.guest.findUnique({ where: { id: t.guestId } });
         if (g?.email) await queueEmail(tx, { to: g.email, subject: "Your racket is ready", body, dedupeKey: `restring-ready:${t.id}` });

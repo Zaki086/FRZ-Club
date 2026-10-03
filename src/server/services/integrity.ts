@@ -11,6 +11,8 @@ const TRANSACTIONAL_TABLES = [
   "bills", "payments", "invoices", "leads", "lead_activities", "quotes", "shifts", "attendance",
   "leave_requests", "payroll_runs", "payslips", "expense_bills",
   "cash_drawer_sessions", "data_requests", "refund_requests", "notification_deliveries", "purchase_orders", "purchase_order_lines", "stock_takes", "stock_take_lines",
+  // v4 §2 (drawer_movements and safe_movements are append-only, like the ledger).
+  "cash_drawers", "bank_deposits",
 ];
 
 type Row = Record<string, unknown>;
@@ -221,5 +223,105 @@ export async function runIntegrityChecks(): Promise<Check[]> {
     });
   }
 
+  checks.push(...(await drawerChecks()));
+
   return checks;
+}
+
+/**
+ * v4 §2.7 drawer checks. The spec numbers them 11–12 against v3's ten checks; this club already had #11 (refund
+ * requests, v3 RF-5/RF-7), so they run as #12 and #13 — 13 checks in all.
+ */
+export async function drawerChecks(): Promise<Check[]> {
+  const out: Check[] = [];
+  const json = (rows: unknown) => JSON.stringify(rows, (_k, v) => (typeof v === "bigint" ? Number(v) : v));
+
+  // 12 · CD-1/CD-2/RF-9: per session, Σ CASH_SALE = Σ successful cash payments linked to it and Σ CASH_REFUND =
+  //      Σ completed cash refunds linked to it — and payment by payment, each has exactly its own movement.
+  {
+    const sums = await q(`
+      WITH p AS (
+        SELECT drawer_session_id AS sid,
+               COALESCE(sum(amount) FILTER (WHERE type = 'PAYMENT'), 0)::int AS paid,
+               COALESCE(sum(amount) FILTER (WHERE type = 'REFUND'), 0)::int AS refunded
+          FROM payments WHERE method = 'CASH' AND status = 'SUCCEEDED' AND drawer_session_id IS NOT NULL GROUP BY 1),
+      m AS (
+        SELECT session_id AS sid,
+               COALESCE(sum(amount) FILTER (WHERE type = 'CASH_SALE'), 0)::int AS sales,
+               COALESCE(-sum(amount) FILTER (WHERE type = 'CASH_REFUND'), 0)::int AS refunds
+          FROM drawer_movements GROUP BY 1)
+      SELECT COALESCE(p.sid, m.sid) AS session, COALESCE(p.paid, 0) AS paid, COALESCE(m.sales, 0) AS sales,
+             COALESCE(p.refunded, 0) AS refunded, COALESCE(m.refunds, 0) AS refunds
+        FROM p FULL OUTER JOIN m ON m.sid = p.sid
+       WHERE COALESCE(p.paid, 0) <> COALESCE(m.sales, 0) OR COALESCE(p.refunded, 0) <> COALESCE(m.refunds, 0)
+       LIMIT 5`);
+    const pairs = await q(`
+      SELECT p.id AS payment, p.type::text AS type, p.amount, p.drawer_session_id AS session, dm.session_id AS movement_session, dm.amount AS moved
+        FROM payments p LEFT JOIN drawer_movements dm ON dm.payment_id = p.id
+       WHERE p.method = 'CASH' AND p.status = 'SUCCEEDED' AND p.drawer_session_id IS NOT NULL
+         AND (dm.id IS NULL OR dm.session_id <> p.drawer_session_id
+              OR dm.amount <> CASE p.type WHEN 'PAYMENT' THEN p.amount ELSE -p.amount END
+              OR dm.type <> CASE p.type WHEN 'PAYMENT' THEN 'CASH_SALE' ELSE 'CASH_REFUND' END)
+      UNION ALL
+      SELECT dm.payment_id, dm.type, dm.amount, NULL, dm.session_id, dm.amount
+        FROM drawer_movements dm JOIN payments p ON p.id = dm.payment_id
+       WHERE p.method <> 'CASH' OR p.status <> 'SUCCEEDED' OR p.drawer_session_id IS NULL
+      LIMIT 5`);
+    const n = await q(`SELECT count(*) AS c FROM cash_drawer_sessions`);
+    out.push({
+      id: 12, name: "Every drawer session's cash sales and refunds equal its linked cash payments and refunds",
+      ok: sums.length === 0 && pairs.length === 0,
+      detail: sums.length || pairs.length ? `sessions: ${json(sums)} payments: ${json(pairs)}` : `${Number(n[0]?.c ?? 0)} sessions reconcile payment by payment`,
+    });
+  }
+
+  // 13 · CD-1/CD-6: every movement's running balance is the cumulative sum within its session (lines 1…n, no gaps);
+  //      a closed session's expected cash = Σ movements before the close (adjustment + closing drop) and what is left
+  //      = counted − dropped; the safe's running balance likewise, and every drop/pay-in has its safe row.
+  {
+    const running = await q(`
+      SELECT session_id, line_no, balance_after, s FROM (
+        SELECT session_id, line_no, balance_after,
+               sum(amount) OVER (PARTITION BY session_id ORDER BY line_no ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS s,
+               row_number() OVER (PARTITION BY session_id ORDER BY line_no) AS rn
+          FROM drawer_movements) x
+       WHERE balance_after <> s OR line_no <> rn
+       LIMIT 5`);
+    const closed = await q(`
+      SELECT d.id, d.cash_expected, d.cash_counted, d.cash_dropped, d.variance,
+             COALESCE(sum(m.amount) FILTER (WHERE NOT m.at_close), 0)::int AS before_close,
+             COALESCE(sum(m.amount), 0)::int AS total,
+             COALESCE(sum(m.amount) FILTER (WHERE m.type = 'CLOSING_ADJUSTMENT'), 0)::int AS adjustment,
+             count(m.id) FILTER (WHERE m.at_close AND m.type NOT IN ('CLOSING_ADJUSTMENT', 'CASH_DROP')) AS odd_close
+        FROM cash_drawer_sessions d LEFT JOIN drawer_movements m ON m.session_id = d.id
+       WHERE d.closed_at IS NOT NULL AND EXISTS (SELECT 1 FROM drawer_movements x WHERE x.session_id = d.id)
+       GROUP BY d.id
+      HAVING d.cash_expected IS DISTINCT FROM COALESCE(sum(m.amount) FILTER (WHERE NOT m.at_close), 0)
+          OR COALESCE(d.variance, 0) <> COALESCE(sum(m.amount) FILTER (WHERE m.type = 'CLOSING_ADJUSTMENT'), 0)
+          OR (d.cash_counted IS NOT NULL AND d.cash_counted - COALESCE(d.cash_dropped, 0) <> COALESCE(sum(m.amount), 0))
+          OR count(m.id) FILTER (WHERE m.at_close AND m.type NOT IN ('CLOSING_ADJUSTMENT', 'CASH_DROP')) > 0
+       LIMIT 5`);
+    const openAfterClose = await q(`
+      SELECT m.session_id, m.line_no FROM drawer_movements m JOIN drawer_movements c ON c.session_id = m.session_id AND c.at_close
+       WHERE NOT m.at_close AND m.line_no > c.line_no LIMIT 5`);
+    const safe = await q(`
+      SELECT line_no, balance_after, s FROM (
+        SELECT line_no, balance_after, sum(amount) OVER (ORDER BY line_no ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS s,
+               row_number() OVER (ORDER BY line_no) AS rn FROM safe_movements) x
+       WHERE balance_after <> s OR line_no <> rn LIMIT 5`);
+    const unpaired = await q(`
+      SELECT dm.id, dm.type, dm.amount, sm.amount AS safe FROM drawer_movements dm LEFT JOIN safe_movements sm ON sm.drawer_movement_id = dm.id
+       WHERE dm.type IN ('CASH_DROP', 'PAY_IN') AND (sm.id IS NULL OR sm.amount <> -dm.amount)
+       LIMIT 5`);
+    const counts = await q(`SELECT (SELECT count(*) FROM drawer_movements) AS m, (SELECT count(*) FROM safe_movements) AS s`);
+    const ok = running.length === 0 && closed.length === 0 && openAfterClose.length === 0 && safe.length === 0 && unpaired.length === 0;
+    out.push({
+      id: 13, name: "Drawer and safe running balances add up; closed sessions' expected cash = movements before the close",
+      ok,
+      detail: ok
+        ? `${Number(counts[0]?.m ?? 0)} drawer movements and ${Number(counts[0]?.s ?? 0)} safe movements add up`
+        : `running: ${json(running)} closed: ${json(closed)} after-close: ${json(openAfterClose)} safe: ${json(safe)} drops/pay-ins: ${json(unpaired)}`,
+    });
+  }
+  return out;
 }

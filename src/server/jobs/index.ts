@@ -14,12 +14,17 @@ import { expireHolds } from "../services/shop";
 import { getSettings } from "../services/settings";
 import { expireStaleLeave } from "../services/staff";
 import { flagMissingClockouts } from "../services/attendance";
-import { flushDeliveries } from "../services/channels";
+import { flushDeliveries, sweepWhatsApp } from "../services/channels";
+import { runChoiceReminders, runSessionReminders, runSocialSessionReminders } from "../services/reminders";
 import { runDuesReminders, runInvoiceDueReminders } from "../services/dues";
 import { autoRefundClubCancellations } from "../services/closures";
 import { applyDuePriceChanges } from "../services/price-book";
 
-/** Every 5 minutes: no-shows/completions (BK-9/10), order holds (SH-5), overdue leads (CR-4), stale gateway payments. */
+/**
+ * Every 5 minutes: no-shows/completions (BK-9/10), order holds (SH-5), overdue leads (CR-4), stale gateway payments,
+ * v4 §4.1 reminders (sessions and social play 2 h before, club-cancellation choice on day 3/6 in daytime), then the
+ * member messages they queued (push/email, and a WhatsApp sweep — the worker also runs both on their own clocks).
+ */
 export async function runFrequentJobs() {
   const s = await getSettings();
   return {
@@ -29,7 +34,11 @@ export async function runFrequentJobs() {
     stalePayments: await failStalePendingPayments(Math.max(30, s.online_hold_minutes * 2)),
     emails: await flushEmailOutbox(),
     missingClockOuts: await flagMissingClockouts(),
+    sessionReminders: await runSessionReminders(),
+    socialReminders: await runSocialSessionReminders(),
+    choiceReminders: await runChoiceReminders(),
     deliveries: await flushDeliveries(),
+    whatsapp: await sweepWhatsApp(),
     prices: await applyDuePriceChanges(),
   };
 }
@@ -74,6 +83,8 @@ export async function runDailyJobs() {
     dues: await runDuesReminders(),
     invoiceDues: await runInvoiceDueReminders(),
     clubCancellations: await autoRefundClubCancellations(),
+    // v4 RF-10 (REFUND): unclaimed refund reminders — 3 and 7 days, then every 14 days, max 4.
+    refundReminders: await (await import("../services/refunds")).runRefundReminders(),
   };
 }
 

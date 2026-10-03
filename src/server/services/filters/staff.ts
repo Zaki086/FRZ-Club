@@ -52,9 +52,11 @@ export const employeesList: ListDef = {
       LEFT JOIN LATERAL (SELECT sum(l.days) FILTER (WHERE l.type = 'CASUAL')::int AS casual, sum(l.days) FILTER (WHERE l.type = 'SICK')::int AS sick
                            FROM leave_requests l WHERE l.employee_id = e.id AND l.status IN ('APPROVED', 'PENDING')
                             AND l.start_date >= ${yearStart}::date AND l.start_date <= ${yearEnd}::date) lu ON TRUE
-      LEFT JOIN LATERAL (SELECT d.id, d.area, d.opening_float
-                                + COALESCE((SELECT sum(CASE WHEN p.type = 'PAYMENT' THEN p.amount ELSE -p.amount END) FROM payments p
-                                             WHERE p.drawer_session_id = d.id AND p.method = 'CASH' AND p.status = 'SUCCEEDED'), 0) AS expected
+      LEFT JOIN LATERAL (SELECT d.id, d.area,
+                                -- v4 CD-1: the cash in the drawer is its last running balance (pay-ins, pay-outs and drops included).
+                                COALESCE((SELECT m.balance_after FROM drawer_movements m WHERE m.session_id = d.id ORDER BY m.line_no DESC LIMIT 1),
+                                         d.opening_float + COALESCE((SELECT sum(CASE WHEN p.type = 'PAYMENT' THEN p.amount ELSE -p.amount END) FROM payments p
+                                             WHERE p.drawer_session_id = d.id AND p.method = 'CASH' AND p.status = 'SUCCEEDED'), 0)) AS expected
                            FROM cash_drawer_sessions d WHERE d.user_id = u.id AND d.closed_at IS NULL ORDER BY d.opened_at DESC LIMIT 1) dr ON TRUE`;
   },
   search: ["b.name", "b.phone"],

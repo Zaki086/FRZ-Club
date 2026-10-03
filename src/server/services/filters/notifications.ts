@@ -3,6 +3,7 @@
 import { Prisma } from "@prisma/client";
 import type { ListDef } from "./core";
 import { membersList } from "./members";
+import { WA_TEMPLATE_OPTIONS } from "./messages";
 
 const CHANNEL_OPTIONS = [
   { value: "IN_APP", label: "In-app" }, { value: "PUSH", label: "Push" }, { value: "EMAIL", label: "Email" },
@@ -16,9 +17,20 @@ const EVENT_OPTIONS = [
   { value: "MEMBERSHIP_WELCOME", label: "Welcome + login link" }, { value: "MEMBERSHIP_RENEWED", label: "Membership confirmed" },
   { value: "MEMBERSHIP_EXPIRY", label: "Expiry reminder" }, { value: "DUES_REMINDER", label: "Dues reminder" },
   { value: "REFUND_COMPLETED", label: "Refund paid" }, { value: "CREDENTIALS_REISSUED", label: "New login link" },
-  { value: "BOOKING_CANCELLED_BY_CLUB", label: "Cancelled by the club" }, { value: "BOOKING_CANCELLED", label: "Booking cancelled by the desk" },
+  { value: "BOOKING_CANCELLED_BY_CLUB", label: "Cancelled by the club" }, { value: "BOOKING_CANCELLED", label: "Booking cancelled" },
   { value: "BOOKING_RESCHEDULED", label: "Booking moved" }, { value: "BOOKING_AUTO_REFUNDED", label: "Refunded automatically" },
   { value: "REFUND_REQUESTED", label: "Refund asked for" }, { value: "REFUND_APPROVED", label: "Refund approved" }, { value: "REFUND_REJECTED", label: "Refund not approved" },
+  // v4 §4.1 catalogue
+  { value: "REFUND_READY_TO_COLLECT", label: "Refund ready to collect" }, { value: "REFUND_COLLECTED", label: "Refund collected" },
+  { value: "REFUND_UNCLAIMED_REMINDER", label: "Refund waiting (reminder)" }, { value: "BOOKING_CONFIRMED", label: "Booking confirmed" },
+  { value: "BOOKING_PLAYER_ADDED", label: "Added to a booking" }, { value: "SESSION_REMINDER", label: "Session reminder (2 h)" },
+  { value: "SOCIAL_SESSION_REMINDER", label: "Social play reminder (2 h)" }, { value: "CANCELLATION_CHOICE_REMINDER", label: "Reschedule or refund? (reminder)" },
+  { value: "ORDER_READY", label: "Order ready to collect" }, { value: "RESTRING_READY", label: "Racket ready" },
+  { value: "LEAD_ASSIGNED", label: "Staff: lead assigned" }, { value: "LEAD_ESCALATED", label: "Staff: lead escalated" },
+  { value: "REFUND_APPROVAL_NEEDED", label: "Staff: refund to approve" }, { value: "DRAWER_VARIANCE", label: "Staff: drawer variance" },
+  { value: "LEAVE_DECIDED", label: "Staff: leave decided" },
+  // v4 §5.4 step 6: an inbound WhatsApp message (other than STOP) waiting for the front desk to answer.
+  { value: "WHATSAPP_REPLY", label: "Member replied on WhatsApp" },
 ];
 
 export const notificationsList: ListDef = {
@@ -27,7 +39,12 @@ export const notificationsList: ListDef = {
   view: ["notifications.log"],
   exportCaps: ["dashboard.ops"],
   base: () => Prisma.sql`
-    SELECT d.id, d.event, d.channel, d.status, d.created_at, d.sent_at, d.delivered_at, d.opened_at, d.title, d.body, d.error, d.to_address,
+    SELECT d.id, d.event, d.channel, d.status, d.created_at, d.sent_at, d.delivered_at, d.opened_at, d.title, d.body, d.error,
+      -- v4 §5.4: automatic WhatsApp recipients are shown masked; the desk needs the full number only for manual ones.
+      CASE WHEN d.channel = 'WHATSAPP_API' AND d.to_address IS NOT NULL THEN '+91 ••••••' || right(d.to_address, 4) ELSE d.to_address END AS to_address,
+      d.wa_template, d.attempts, d.urgent, d.wa_status, d.wa_read_at,
+      CASE WHEN d.status = 'QUEUED' THEN d.not_before END AS next_try_at,
+      CASE WHEN d.status = 'FAILED' THEN COALESCE(d.wa_failed_at, d.updated_at) END AS failed_at,
       d.member_id, m.name AS member_name, m.member_code, COALESCE(u.name, gu.name || ' (guest)') AS recipient, d.user_id,
       CASE WHEN d.triggered_by IS NULL OR d.triggered_by = 'system' THEN 'system' ELSE 'staff' END AS trigger,
       tu.name AS triggered_by_name, hu.name AS handled_by_name
@@ -43,6 +60,7 @@ export const notificationsList: ListDef = {
     { key: "type", label: "Type", expr: "b.event", options: EVENT_OPTIONS },
     { key: "channel", label: "Channel", expr: "b.channel", options: CHANNEL_OPTIONS },
     { key: "status", label: "Status", expr: "b.status", options: STATUS_OPTIONS },
+    { key: "template", label: "WhatsApp template", expr: "b.wa_template", options: WA_TEMPLATE_OPTIONS },
     { key: "member", label: "Member", expr: "b.member_id", labelsSql: "SELECT id AS value, name || ' · ' || member_code AS label FROM members" },
     { key: "trigger", label: "Triggered by", expr: "b.trigger", options: [{ value: "system", label: "System" }, { value: "staff", label: "Staff" }] },
   ],
@@ -61,6 +79,8 @@ export const notificationsList: ListDef = {
     { key: "created_at", label: "When", format: "datetime" }, { key: "event", label: "Type" }, { key: "channel", label: "Channel" }, { key: "status", label: "Status" },
     { key: "recipient", label: "Recipient" }, { key: "member_code", label: "Member code" }, { key: "to_address", label: "To" }, { key: "title", label: "Title" },
     { key: "error", label: "Reason / error" }, { key: "trigger", label: "Triggered by" }, { key: "handled_by_name", label: "Sent by hand by" },
+    { key: "wa_template", label: "WhatsApp template" }, { key: "attempts", label: "Tries" }, { key: "sent_at", label: "Sent", format: "datetime" },
+    { key: "delivered_at", label: "Delivered", format: "datetime" }, { key: "wa_read_at", label: "Read", format: "datetime" }, { key: "failed_at", label: "Failed", format: "datetime" },
   ],
   defaults: () => ({ range: "LAST_7" }),
 };

@@ -65,8 +65,13 @@ export const payExpenseSchema = z.object({ method: z.enum(["CASH", "CARD", "UPI"
 /** EX-1: UNPAID → PAID with an OUT ledger entry (EXPENSE), in one transaction. */
 export async function payExpense(actor: Actor, expenseId: string, raw: z.infer<typeof payExpenseSchema>, outer?: Tx) {
   assertCan(actor, "expenses.manage");
+  return withTx((tx) => payExpenseTx(tx, actor, expenseId, raw), outer);
+}
+
+/** Internal (also v4 PAY_OUT petty cash from a drawer): pay an expense inside the caller's transaction. */
+export async function payExpenseTx(tx: Tx, actor: Actor, expenseId: string, raw: z.infer<typeof payExpenseSchema>) {
   const input = payExpenseSchema.parse(raw);
-  return withTx(async (tx) => {
+  {
     const locked = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM expense_bills WHERE id = ${expenseId} FOR UPDATE`;
     if (!locked.length) throw new DomainError("NOT_FOUND", "Expense bill was not found.");
     const e = await tx.expenseBill.findUniqueOrThrow({ where: { id: expenseId } });
@@ -80,7 +85,7 @@ export async function payExpense(actor: Actor, expenseId: string, raw: z.infer<t
     });
     await audit(tx, actor, "expense.pay", "expense_bill", e.id, { before: { status: "UNPAID" }, after: { status: "PAID", method: input.method, amount: e.amount } });
     return updated;
-  }, outer);
+  }
 }
 
 export async function cancelExpense(actor: Actor, expenseId: string, reason: string) {

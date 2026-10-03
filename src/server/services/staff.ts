@@ -8,6 +8,7 @@ import { pgErrorCode, prisma, withTx, type Tx } from "../db";
 import { DomainError } from "../errors";
 import { actorId, SYSTEM, type Actor, type UserActor } from "../rbac/actor";
 import { assertCan, can } from "../rbac/permissions";
+import { APPROVAL_HREF } from "./approval-links";
 import { audit } from "./audit";
 import { attendanceLog } from "./attendance";
 import { notify } from "./notifications";
@@ -278,7 +279,7 @@ export async function requestLeave(actor: Actor, raw: z.infer<typeof leaveSchema
     await notify(tx, {
       roles: ["MANAGER", "OWNER"], type: "LEAVE_REQUESTED", title: `Leave request: ${actor.kind === "USER" ? actor.name : ""}`,
       body: `${input.type.toLowerCase()} · ${fmtDate(input.startDate)} – ${fmtDate(input.endDate)} (${days} day${days > 1 ? "s" : ""}) · ${input.reason}`,
-      link: "/app/staff/leave", dedupeKey: `leave-requested:${lr.id}`,
+      link: APPROVAL_HREF.leave(employeeId), dedupeKey: `leave-requested:${lr.id}`, // v4 RN-4: same page as the approvals row
     });
     return lr;
   }, outer);
@@ -322,8 +323,10 @@ export async function decideLeave(actor: Actor, leaveId: string, decision: "APPR
       }
     }
     await audit(tx, actor, `leave.${decision.toLowerCase()}`, "leave_request", lr.id, { before: { status: "PENDING" }, after: { status: decision, unassignedShifts: unassigned }, reason: note ?? null });
-    await notify(tx, {
-      userIds: [emp.userId], type: "LEAVE_DECIDED", title: `Leave ${decision.toLowerCase()}`,
+    // v4 §4.1 (NT-5): "leave decided" reaches the employee in the app and by push.
+    const { notifyMember } = await import("./channels");
+    await notifyMember(tx, {
+      event: "LEAVE_DECIDED", userId: emp.userId, actor, channels: ["PUSH"], title: `Leave ${decision.toLowerCase()}`,
       body: `${lr.type.toLowerCase()} leave ${fmtDate(fromDbDate(lr.startDate))} – ${fmtDate(fromDbDate(lr.endDate))}${note ? ` · ${note}` : ""}`,
       link: "/app/staff/me", dedupeKey: `leave-decided:${lr.id}`,
     });

@@ -22,14 +22,54 @@ const TX_TIMEOUT_MS = Number(process.env.TX_TIMEOUT_MS ?? 60_000);
  */
 export async function withTx<T>(fn: (tx: Tx) => Promise<T>, outer?: Tx): Promise<T> {
   if (outer) return fn(outer);
-  return prisma.$transaction(
+  const opened: { tx: Tx | null } = { tx: null };
+  const result = await prisma.$transaction(
     async (tx) => {
+      opened.tx = tx;
       await tx.$executeRaw`SELECT set_config('app.now', ${clock.now().toISOString()}, true)`;
       return fn(tx);
     },
     // Generous by default; TX_TIMEOUT_MS lets a loaded test machine wait longer instead of failing.
     { maxWait: TX_TIMEOUT_MS / 2, timeout: TX_TIMEOUT_MS },
   );
+  if (opened.tx) runAfterCommit(opened.tx);
+  return result;
+}
+
+// ───────── after commit (v4 §5.4: nothing is sent before the business transaction commits) ─────────
+const afterCommitHooks = new WeakMap<Tx, Array<() => unknown>>();
+const inFlight = new Set<Promise<unknown>>();
+
+/**
+ * Run `fn` once the transaction `tx` (opened by `withTx`) has committed — never when it rolls back. Hooks run in the
+ * background in the order they were added; a failing hook is logged and changes nothing that was committed.
+ */
+export function afterCommit(tx: Tx, fn: () => unknown): void {
+  const list = afterCommitHooks.get(tx);
+  if (list) list.push(fn);
+  else afterCommitHooks.set(tx, [fn]);
+}
+
+function runAfterCommit(tx: Tx) {
+  const hooks = afterCommitHooks.get(tx);
+  if (!hooks?.length) return;
+  afterCommitHooks.delete(tx);
+  const p = (async () => {
+    for (const h of hooks) {
+      try {
+        await h();
+      } catch (e) {
+        console.error("[afterCommit] hook failed", e);
+      }
+    }
+  })();
+  inFlight.add(p);
+  void p.finally(() => inFlight.delete(p));
+}
+
+/** Wait for every after-commit hook started so far (tests, and a worker that is about to exit). */
+export async function settleAfterCommit(): Promise<void> {
+  while (inFlight.size) await Promise.all([...inFlight]);
 }
 
 /** Next value of a Postgres sequence (human-readable codes, §2). */

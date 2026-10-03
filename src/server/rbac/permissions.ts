@@ -45,6 +45,8 @@ export const CAPABILITIES = {
   "roster.view_own": EMPLOYEES,
   "staff.self": EMPLOYEES,
   "cash.reconcile": [O, M, AC],
+  // v4 CD-6: drawer variances over the tolerance wait for a Manager or the Owner.
+  "cash.approve_variance": [O, M],
   "users.manage": [O],
   "password.links": [O, M, FD],
   "leave.approve": [O, M],
@@ -77,10 +79,12 @@ export const CAPABILITIES = {
   // v3 LA-7: reassigning a lead (with a reason).
   "leads.assign": [O, M],
   // v3 §9.2: the price book (base prices, bands, special dates, promotions); §9.3 product admin uses shop.stock.
-  "pricing.manage": [O, M],
+  // v4 RN-3: the price book is the Owner's alone (the Manager's v3 PR-11 rights and approvals are gone).
+  "pricing.manage": [O],
   // D-79: shop staff price their own goods — shop product/variant prices and product discounts (scope PRODUCTS only),
   // through the same price book and guardrails. Courts, social play, plans and the bar menu stay `pricing.manage`.
-  "shop.pricing": [O, M, SS],
+  // v4 RN-3: no longer the Manager; a shop discount above `max_staff_discount_pct` waits for the Owner.
+  "shop.pricing": [O, SS],
 } as const satisfies Record<string, Role[]>;
 
 export type Capability = keyof typeof CAPABILITIES;

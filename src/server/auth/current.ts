@@ -1,8 +1,9 @@
 // Request-scoped actor for Next.js server components and route handlers.
 import { cookies, headers } from "next/headers";
-import { redirect } from "next/navigation";
+import { forbidden, redirect } from "next/navigation";
 import type { Role } from "@prisma/client";
 import { PUBLIC, type Actor, type UserActor } from "../rbac/actor";
+import { canOpenPage } from "../rbac/page-access";
 import { syncClockOffset } from "../services/settings";
 import { SESSION_COOKIE, actorFromToken } from "./sessions";
 
@@ -35,6 +36,11 @@ export async function requireUser(roles?: Role[], next?: string): Promise<UserAc
     redirect(`/login${q.size ? `?${q.toString()}` : ""}`);
   }
   if (roles && !roles.includes(actor.role)) redirect(actor.role === "MEMBER" ? "/portal" : "/app/forbidden");
+  // v4 RN-1: the Manager and Front desk open only their menu's pages and the detail pages reached from them (403
+  // otherwise). Every staff page calls requireUser, and the proxy stamps each request (soft navigations too) with
+  // its own path, so the rule holds for client-side navigation as well as full loads.
+  const path = (await headers()).get("x-cc-path");
+  if (path && !canOpenPage(actor.role, path)) forbidden();
   return actor;
 }
 

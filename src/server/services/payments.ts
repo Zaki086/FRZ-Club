@@ -19,7 +19,7 @@ import { audit } from "./audit";
 import { billDue, lockBill, netPaid, refreshBill } from "./bills";
 import { onBillPaid, onBillPaymentChanged } from "./bill-events";
 import { assertCapability, isEnabled, type CapabilityName } from "./capabilities";
-import { requireDrawer } from "./drawers";
+import { assertChangeAvailableTx, cashAvailableTx, insufficientCash, requireDrawer, writeCashRefundTx, writeCashSaleTx } from "./drawers";
 import { activeGateway, gatewayByName, razorpayGateway } from "./gateway";
 import { idempotent } from "./idempotency";
 import { LEDGER_SOURCE_FOR_BILL, writeLedger } from "./ledger";
@@ -126,6 +126,8 @@ export async function recordPaymentTx(tx: Tx, actor: Actor, raw: CounterPaymentI
   }
   const drawerSessionId = DRAWER_METHODS.includes(input.method) ? await requireDrawer(tx, actor) : null;
   const changeGiven = input.method === "CASH" && input.tendered ? input.tendered - input.amount : 0;
+  // v4 CD-4: the change must already be in the drawer (never the customer's own notes).
+  if (input.method === "CASH" && drawerSessionId) await assertChangeAvailableTx(tx, drawerSessionId, changeGiven);
   const now = clock.now();
   const payment = await tx.payment.create({
     data: {
@@ -143,6 +145,8 @@ export async function recordPaymentTx(tx: Tx, actor: Actor, raw: CounterPaymentI
     taxAmount: proportionalTax(before, input.amount), billId: before.id, paymentId: payment.id,
     description: `${METHOD_LABEL[input.method]} payment · ${before.customerName}`, occurredAt: now,
   });
+  // v4 CD-1/CD-2: the drawer grows by the amount applied to the bill (not the tendered amount), in this transaction.
+  if (input.method === "CASH" && drawerSessionId) await writeCashSaleTx(tx, actor, drawerSessionId, payment.id, input.amount);
   const bill = await refreshBill(tx, before.id);
   await audit(tx, actor, "payment.record", "payment", payment.id, {
     after: { billId: bill.id, method: input.method, amount: input.amount, reference: payment.reference, cardLast4: payment.cardLast4 },
@@ -380,7 +384,15 @@ export async function refundTx(tx: Tx, actor: Actor, billId: string, amount: num
         (chosen === "BANK_TRANSFER" && !!opts.reference);
       const methodOn = chosen ? (chosen === "BANK_TRANSFER" ? bill.sourceType === "INVOICE" : await isEnabled(METHOD_CAPABILITY[chosen]!)) : false;
       const needsDrawer = chosen ? DRAWER_METHODS.includes(chosen) : false;
-      if (!opts.deskLater && chosen && proofOk && methodOn && (!needsDrawer || staffWithDrawer)) {
+      // v4 RF-9: cash goes back only from cash that is in the drawer. Asked for explicitly → INSUFFICIENT_CASH_IN_DRAWER;
+      // the automatic "same way it was paid" refund waits at the desk instead (PENDING).
+      let cashOk = true;
+      if (chosen === "CASH" && staffWithDrawer && !opts.deskLater && methodOn) {
+        const available = await cashAvailableTx(tx, staffWithDrawer.id);
+        cashOk = available >= take;
+        if (!cashOk && opts.method === "CASH") throw insufficientCash(available, take, "pay out");
+      }
+      if (!opts.deskLater && chosen && proofOk && methodOn && cashOk && (!needsDrawer || staffWithDrawer)) {
         method = chosen;
         reference = chosen === "CARD" ? (opts.approvalCode ?? opts.reference ?? null) : (opts.reference ?? null);
         drawerSessionId = needsDrawer ? staffWithDrawer!.id : null;
@@ -400,6 +412,7 @@ export async function refundTx(tx: Tx, actor: Actor, billId: string, amount: num
         source: LEDGER_SOURCE_FOR_BILL[bill.sourceType], direction: "IN", method: method!, amount: -take, taxAmount: proportionalTax(bill, -take),
         billId, paymentId: refund.id, description: `refund (${METHOD_LABEL[method!]}) · ${bill.customerName} · ${opts.reason}`, occurredAt: now,
       });
+      if (method === "CASH" && drawerSessionId) await writeCashRefundTx(tx, actor, drawerSessionId, refund.id, take);
     } else {
       pending += take;
     }
@@ -418,7 +431,7 @@ export async function refundTx(tx: Tx, actor: Actor, billId: string, amount: num
 export const completeRefundSchema = tenderSchema.pick({ method: true, reference: true, approvalCode: true });
 
 /** Pay out a PENDING refund at the counter (needs the bill's capability, an enabled method and an open drawer). */
-export async function completeRefund(actor: Actor, refundId: string, raw: z.infer<typeof completeRefundSchema>) {
+export async function completeRefund(actor: Actor, refundId: string, raw: z.infer<typeof completeRefundSchema>, outer?: Tx) {
   const input = completeRefundSchema.parse(raw);
   return withTx(async (tx) => {
     const locked = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM payments WHERE id = ${refundId} FOR UPDATE`;
@@ -436,12 +449,14 @@ export async function completeRefund(actor: Actor, refundId: string, raw: z.infe
       source: LEDGER_SOURCE_FOR_BILL[bill.sourceType], direction: "IN", method: input.method, amount: -r.amount, taxAmount: proportionalTax(bill, -r.amount),
       billId: bill.id, paymentId: r.id, description: `refund (${METHOD_LABEL[input.method]}) · ${bill.customerName} · ${r.note ?? ""}`, occurredAt: now,
     });
+    // v4 RF-9: the cash leaves the open drawer (CASH_REFUND movement) — or INSUFFICIENT_CASH_IN_DRAWER.
+    if (input.method === "CASH" && drawerSessionId) await writeCashRefundTx(tx, actor, drawerSessionId, r.id, r.amount);
     const after = await refreshBill(tx, bill.id);
     await onBillPaymentChanged(tx, after);
     await audit(tx, actor, "payment.refund.complete", "payment", r.id, { after: { method: input.method, amount: r.amount, reference } });
     if (r.refundRequestId) await settleRequestIfPaid(tx, actor, r.refundRequestId);
     return { refundId: r.id, amount: r.amount, method: input.method };
-  });
+  }, outer); // v4 RF-9: payOutRefund pays every waiting part of a request in one transaction
 }
 
 export async function listPendingRefunds(actor: Actor) {

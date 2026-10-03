@@ -10,6 +10,7 @@ import { prisma, withTx, type Tx } from "../db";
 import { DomainError } from "../errors";
 import { actorId, SYSTEM, type Actor } from "../rbac/actor";
 import { assertCan } from "../rbac/permissions";
+import { APPROVAL_HREF } from "./approval-links";
 import { audit } from "./audit";
 import { notify } from "./notifications";
 
@@ -57,8 +58,8 @@ export { hmm } from "@/lib/duration";
  */
 export async function flagMissingClockouts() {
   return withTx(async (tx) => {
-    const rows = await tx.$queryRaw<{ id: string; name: string; clock_in: Date; expected_end: Date }[]>(Prisma.sql`
-      SELECT x.id, x.name, x.clock_in, x.expected_end FROM (${Prisma.raw(ATTENDANCE_ROWS_SQL)}) x
+    const rows = await tx.$queryRaw<{ id: string; employee_id: string; name: string; clock_in: Date; expected_end: Date }[]>(Prisma.sql`
+      SELECT x.id, x.employee_id, x.name, x.clock_in, x.expected_end FROM (${Prisma.raw(ATTENDANCE_ROWS_SQL)}) x
         JOIN attendance a ON a.id = x.id
        WHERE a.clock_out IS NULL AND a.missing_flagged_at IS NULL AND x.missing
        FOR UPDATE OF a`);
@@ -68,7 +69,7 @@ export async function flagMissingClockouts() {
       await notify(tx, {
         roles: ["MANAGER"], type: "MISSING_CLOCK_OUT", title: `Missing clock-out: ${r.name}`,
         body: `Clocked in ${fmtDateTime(r.clock_in)} and still not clocked out (expected by ${fmtDateTime(r.expected_end)}). Correct it with a reason on the attendance page.`,
-        link: `/app/staff/attendance?flag=missing`, dedupeKey: `missing-clock-out:${r.id}`,
+        link: APPROVAL_HREF.attendance(r.employee_id), dedupeKey: `missing-clock-out:${r.id}`, // v4 RN-4: same page as the approvals row
       });
     }
     return { flagged: rows.length };

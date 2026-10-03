@@ -13,7 +13,7 @@ export const usersList: ListDef = {
   base: () => Prisma.sql`
     SELECT u.id, u.name, u.phone, u.email, u.role::text AS role, u.active, u.last_login_at, u.created_at,
       (u.locked_until IS NOT NULL AND u.locked_until > app_now()) AS locked,
-      e.monthly_salary, to_char(e.join_date, 'YYYY-MM-DD') AS join_day
+      e.monthly_salary, to_char(e.join_date, 'YYYY-MM-DD') AS join_day, e.id AS employee_id
     FROM users u
     LEFT JOIN employees e ON e.user_id = u.id
     WHERE u.role <> 'MEMBER'`,

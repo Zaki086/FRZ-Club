@@ -83,9 +83,12 @@ export function pushConfigured(): { ok: boolean; reason: string } {
   return { ok: true, reason: "VAPID keys set, HTTPS" };
 }
 
-/** WhatsApp Cloud API (Meta): token, phone number id and the app secret that signs delivery webhooks. */
+/** v4 §5.1 WhatsApp Cloud API (Meta): every env variable the setup needs (names only in the reason, never values). */
 export function whatsappConfigured(): { ok: boolean; reason: string } {
-  const missing = ["WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_APP_SECRET"].filter((k) => !process.env[k]);
+  const missing = [
+    "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_BUSINESS_ACCOUNT_ID",
+    "WHATSAPP_APP_SECRET", "WHATSAPP_WEBHOOK_VERIFY_TOKEN", "WHATSAPP_GRAPH_API_VERSION",
+  ].filter((k) => !(process.env[k] ?? "").trim());
   return missing.length ? { ok: false, reason: `${missing.join(", ")} not set` } : { ok: true, reason: "credentials set" };
 }
 
@@ -134,11 +137,15 @@ export async function computeCapabilities(): Promise<Capabilities> {
       const p = pushConfigured();
       return { enabled: p.ok, reason: p.reason };
     })(),
+    // v4 §5.1 WA-14: env present AND the access token check passed AND a test message succeeded. Each event also
+    // needs its own template mapped and APPROVED (whatsapp/config.ts templateFor), else it falls back.
     "whatsapp.api": (() => {
       const w = whatsappConfigured();
       if (!w.ok) return { enabled: false, reason: w.reason };
-      if (!Object.keys(s.whatsapp_templates).length) return { enabled: false, reason: "no approved message templates entered in Settings" };
-      if (!s.whatsapp_verified_at) return { enabled: false, reason: "send a test message from Settings first" };
+      if (s.whatsapp_health.token_ok !== true) {
+        return { enabled: false, reason: s.whatsapp_health.token_ok === false ? `Meta rejected the access token: ${s.whatsapp_health.token_reason ?? "check it in Settings → WhatsApp"}` : "check the access token in Settings → WhatsApp first" };
+      }
+      if (!s.whatsapp_verified_at) return { enabled: false, reason: "send a test message from Settings → WhatsApp first" };
       return { enabled: true, reason: `verified ${s.whatsapp_verified_at}` };
     })(),
   };

@@ -1,10 +1,10 @@
 // v3 §9.2 the price book: base prices (court and social fees per tier, product and menu prices), time bands, special
-// dates and promotions — managed by the Manager/Owner, applied only by the pricing engine (pricing.ts). Nothing here
-// computes a customer's price except the simulator, which calls the engine.
+// dates and promotions — managed by the Owner (v4 RN-3: the Manager's v3 PR-11 rights are gone), applied only by the
+// pricing engine (pricing.ts). Nothing here computes a customer's price except the simulator, which calls the engine.
 // D-79: shop staff (`shop.pricing`) also set shop product prices and discounts on shop products (scope PRODUCTS) only.
 //
-// PR-11 guardrails: a promotion above the creator's limit (Manager `max_manager_discount_pct`, shop staff
-// `max_staff_discount_pct`, flat-₹ promotions by anyone but the Owner) waits for approval. PR-12: every change has an
+// PR-11 guardrails (v4 RN-3): a shop-staff discount above `max_staff_discount_pct`, or a flat-₹ promotion by anyone but
+// the Owner, waits for the Owner's approval — the Owner is the only approver. PR-12: every change has an
 // effective datetime (now or later), is versioned (a base price is a new dated row; a rule is ended and replaced,
 // never edited) and audited; bills keep their snapshots.
 import type { Sport } from "@prisma/client";
@@ -192,21 +192,21 @@ async function assertNoBandOverlap(tx: Tx, r: Shaped, from: Date, to: Date | nul
   }
 }
 
-/** PR-11: who may switch this on without anyone else. */
+/** PR-11 / v4 RN-3: who may switch this on without the Owner. Only the Owner and shop staff create rules now. */
 async function needsApproval(tx: Tx, actor: Actor, r: Shaped): Promise<string | null> {
   if (actor.kind !== "USER" || actor.role === "OWNER") return null;
   if (r.kind !== "PROMOTION") return null;
   const s = await getSettings(tx);
   if (r.adjustType === "FLAT") return "a flat ₹ promotion needs the Owner's approval";
-  const limit = actor.role === "MANAGER" ? s.max_manager_discount_pct : s.max_staff_discount_pct;
-  return (r.adjustPct ?? 0) > limit ? `above the ${limit}% limit for ${actor.role === "MANAGER" ? "managers" : "shop staff"}` : null;
+  const limit = s.max_staff_discount_pct;
+  return (r.adjustPct ?? 0) > limit ? `above the ${limit}% limit for shop staff` : null;
 }
 
 /** Who may create, change or end this rule. D-79: shop staff only a discount on shop products (never courts, social, menu). */
 function assertMayCreate(actor: Actor, r: { kind: string; scope: string }) {
   if (can(actor, "pricing.manage")) return;
   if (can(actor, "shop.pricing") && r.kind === "PROMOTION" && r.scope === "PRODUCTS") return;
-  throw new DomainError("FORBIDDEN", "Not allowed: only the owner or manager can change pricing rules.");
+  throw new DomainError("FORBIDDEN", "Not allowed: only the owner can change pricing rules.");
 }
 
 async function createRuleTx(tx: Tx, actor: Actor, input: z.infer<typeof ruleSchema>, replacesId?: string) {
@@ -260,7 +260,7 @@ export async function endRule(actor: Actor, id: string, at?: string) {
   });
 }
 
-/** The Owner approves anything; a Manager approves shop-staff promotions within the manager limit. */
+/** v4 RN-3: only the Owner approves or rejects a waiting rule (`pricing.manage` is the Owner's alone). */
 export async function decideRule(actor: Actor, id: string, decision: "APPROVE" | "REJECT") {
   assertCan(actor, "pricing.manage");
   return withTx(async (tx) => {
@@ -268,10 +268,6 @@ export async function decideRule(actor: Actor, id: string, decision: "APPROVE" |
     if (!r) throw new DomainError("NOT_FOUND", "Rule was not found.");
     if (r.status !== "PENDING_APPROVAL") throw new DomainError("ORDER_STATE_INVALID", `This rule is ${r.status.toLowerCase().replace("_", " ")}.`);
     if (actor.kind === "USER" && actor.userId === r.createdBy) throw new DomainError("FORBIDDEN", "Not allowed: you can't approve your own rule.");
-    if (decision === "APPROVE" && actor.kind === "USER" && actor.role !== "OWNER") {
-      const s = await getSettings(tx);
-      if (r.adjustType === "FLAT" || (r.adjustPct ?? 0) > s.max_manager_discount_pct) throw new DomainError("FORBIDDEN", `Not allowed: only the Owner approves promotions above ${s.max_manager_discount_pct}% or flat ₹ promotions.`);
-    }
     if (decision === "APPROVE") await assertNoBandOverlap(tx, r as unknown as Shaped, r.effectiveFrom, r.effectiveTo, r.id);
     const now = clock.now();
     await tx.priceRule.update({ where: { id }, data: decision === "APPROVE" ? { status: "ACTIVE", approvedBy: actorId(actor), approvedAt: now, effectiveFrom: r.effectiveFrom < now ? now : r.effectiveFrom } : { status: "REJECTED" } });
@@ -290,7 +286,7 @@ export async function setGuardrails(actor: Actor, raw: { maxManagerDiscountPct?:
 // ───────── the page: everything in the price book ─────────
 
 export async function priceBook(actor: Actor) {
-  if (!can(actor, "pricing.manage")) throw new DomainError("FORBIDDEN", "Not allowed: the price book is for the owner and manager.");
+  if (!can(actor, "pricing.manage")) throw new DomainError("FORBIDDEN", "Not allowed: the price book is for the owner.");
   const now = clock.now();
   const s = await getSettings();
   const changes = await prisma.priceChange.findMany({ where: { cancelledAt: null }, orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }], take: 2000 });

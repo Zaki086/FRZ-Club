@@ -9,6 +9,7 @@ import { DomainError } from "../errors";
 import type { Actor } from "../rbac/actor";
 import { assertCan } from "../rbac/permissions";
 import { hashPassword } from "../auth/password";
+import { revokeSessions } from "../auth/sessions";
 import { audit } from "./audit";
 
 export const createStaffSchema = z.object({
@@ -81,4 +82,50 @@ export async function setUserActive(actor: Actor, userId: string, active: boolea
     });
     return user;
   });
+}
+
+// ───────── v4 §1.2 Employees (Owner): role, salary, join date, force logout ─────────
+
+export const updateStaffSchema = z
+  .object({
+    role: z.enum(["OWNER", "MANAGER", "FRONT_DESK", "SHOP_STAFF", "BAR_STAFF", "ACCOUNTANT", "KITCHEN"]).optional(),
+    monthlySalary: z.number().int().min(0).optional(),
+    joinDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  })
+  .refine((v) => v.role !== undefined || v.monthlySalary !== undefined || v.joinDate !== undefined, "Change the role, the salary or the join date.");
+
+/** The Owner changes a staff member's role, salary or join date (each change audited with before/after). */
+export async function updateStaff(actor: Actor, userId: string, raw: z.input<typeof updateStaffSchema>) {
+  assertCan(actor, "users.manage");
+  const input = updateStaffSchema.parse(raw);
+  return withTx(async (tx) => {
+    const before = await tx.user.findUnique({ where: { id: userId }, include: { employee: true } });
+    if (!before || before.role === "MEMBER") throw new DomainError("NOT_FOUND", "Staff member was not found.");
+    if (input.role && input.role !== before.role && actor.kind === "USER" && actor.userId === userId) {
+      throw new DomainError("VALIDATION_FAILED", "You cannot change your own role.");
+    }
+    if (input.role && input.role !== before.role) await tx.user.update({ where: { id: userId }, data: { role: input.role as Role } });
+    if (input.monthlySalary !== undefined || input.joinDate !== undefined) {
+      const data = { ...(input.monthlySalary !== undefined ? { monthlySalary: input.monthlySalary } : {}), ...(input.joinDate ? { joinDate: dbDate(input.joinDate) } : {}) };
+      if (before.employee) await tx.employee.update({ where: { userId }, data });
+      else await tx.employee.create({ data: { userId, monthlySalary: input.monthlySalary ?? 0, joinDate: dbDate(input.joinDate ?? new Date().toISOString().slice(0, 10)) } });
+    }
+    await audit(tx, actor, "user.update", "user", userId, {
+      before: { role: before.role, monthlySalary: before.employee?.monthlySalary ?? null, joinDate: before.employee?.joinDate ?? null },
+      after: { role: input.role ?? before.role, monthlySalary: input.monthlySalary ?? before.employee?.monthlySalary ?? null, joinDate: input.joinDate ?? before.employee?.joinDate ?? null },
+    });
+    return { id: userId, role: input.role ?? before.role };
+  });
+}
+
+/** Force logout: every session of that person ends now (their next click asks them to log in again). */
+export async function forceLogout(actor: Actor, userId: string) {
+  assertCan(actor, "users.manage");
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
+  if (!u || u.role === "MEMBER") throw new DomainError("NOT_FOUND", "Staff member was not found.");
+  if (actor.kind === "USER" && actor.userId === userId) throw new DomainError("VALIDATION_FAILED", "Use “Log out everywhere” in My account to end your own sessions.");
+  const open = await prisma.session.count({ where: { userId, expiresAt: { gt: new Date() } } });
+  await revokeSessions(userId);
+  await audit(prisma, actor, "user.force_logout", "user", userId, { after: { sessionsEnded: open } });
+  return { id: userId, sessionsEnded: open };
 }

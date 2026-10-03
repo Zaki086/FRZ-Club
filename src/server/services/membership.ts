@@ -48,6 +48,8 @@ export const createMemberSchema = z.object({
   guardianPhone: z.string().optional().or(z.literal("").transform(() => undefined)).transform((p) => (p ? normalisePhone(p) : undefined)).refine((p) => !p || isIndianMobile(p), "guardian's mobile must be a 10-digit Indian mobile number"),
   // DPDP: the member agreed to the club storing their details (ticked at the desk).
   consent: z.boolean().optional(),
+  // v4 §5.1: a separate tick — "Send me booking and refund updates on WhatsApp" (stored with the time).
+  whatsappOptIn: z.boolean().optional(),
   plan: z
     .object({
       code: z.enum(["GOLD", "SILVER", "JUNIOR"]),
@@ -111,11 +113,12 @@ export async function createMemberTx(tx: Tx, actor: Actor, input: z.infer<typeof
       guardianPhone: input.guardianPhone ?? null,
       guardianMemberId: guardian?.id ?? null,
       consentAt: input.consent ? clock.now() : null,
+      whatsappOptInAt: input.whatsappOptIn ? clock.now() : null,
       createdBy: actorId(actor),
     },
   });
   await audit(tx, actor, "member.create", "member", member.id, {
-    after: { code: member.memberCode, name: member.name, phone: member.phone },
+    after: { code: member.memberCode, name: member.name, phone: member.phone, whatsappOptIn: !!member.whatsappOptInAt },
   });
   return { member };
 }
@@ -164,6 +167,8 @@ export async function issueFirstCredentialsTx(tx: Tx, actor: Actor, ms: { id: st
     ].join("\n"),
     link: "/portal", dedupeKey: `membership-welcome:${ms.id}`,
     params: [ms.member.name, ms.plan.name, start, end, ms.member.memberCode, link],
+    // v4 §4.1: optional template — automatic only when the club mapped and Meta approved it.
+    wa: { template: "membership_welcome", vars: { name: ms.member.name.split(" ")[0], plan: ms.plan.name, memberCode: ms.member.memberCode, end } },
   });
   return token;
 }
@@ -665,6 +670,7 @@ export async function runMembershipJob(outer?: Tx) {
           await notifyMember(tx, {
             event: "MEMBERSHIP_EXPIRY", userId, memberId: m.member.id, actor, title, body, link: "/portal/membership",
             dedupeKey: `membership-reminder:${m.id}:${type}:${userId}`, params: [m.member.name, m.plan.name, fmtDate(end)],
+            wa: { template: "membership_expiring", vars: { name: m.member.name.split(" ")[0], plan: m.plan.name, end: fmtDate(end) } }, // v4 §4.1 optional template
           });
         }
       }
