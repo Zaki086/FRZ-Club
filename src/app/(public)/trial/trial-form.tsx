@@ -12,6 +12,7 @@ import { cn } from "@/components/ui/cn";
 import { addDays, fmtDateTime, fmtDay, fmtRange } from "@/lib/time";
 import { formatINR } from "@/lib/money";
 import { ConsentFields } from "@/components/consent-fields";
+import { WhatsAppOptIn } from "@/components/whatsapp-opt-in";
 import { useCapabilities } from "@/components/capabilities";
 
 type Slot = { time: string; bookable: boolean };
@@ -30,6 +31,7 @@ export function TrialForm() {
   const [time, setTime] = useState(params.get("time") ?? "");
   const [f, setF] = useState({ name: "", phone: "", email: "" });
   const [consent, setConsent] = useState(false);
+  const [whatsappOptIn, setWhatsappOptIn] = useState(false);
   const [website, setWebsite] = useState("");
   const caps = useCapabilities();
   const [busy, setBusy] = useState(false);
@@ -73,7 +75,7 @@ export function TrialForm() {
               if (!courtId || !time) return setError({ message: "Choose a court and a start time." });
               setBusy(true);
               try {
-                setResult(await api<Result>("/api/trial", { body: { name: f.name, phone: f.phone, email: f.email || undefined, courtId, date: selectedDate, startTime: time, consent, website: website || undefined } }));
+                setResult(await api<Result>("/api/trial", { body: { name: f.name, phone: f.phone, email: f.email || undefined, courtId, date: selectedDate, startTime: time, consent, whatsappOptIn, website: website || undefined } }));
               } catch (err) {
                 setError(err instanceof ApiError ? { code: err.code, message: err.message } : { message: String(err) });
                 void state.reload();
@@ -122,6 +124,7 @@ export function TrialForm() {
                   <Field label="Email (optional)"><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} autoComplete="email" /></Field>
                 </div>
                 <ConsentFields consent={consent} onConsent={setConsent} website={website} onWebsite={setWebsite} clubName={caps?.clubName} />
+                <WhatsAppOptIn checked={whatsappOptIn} onChange={setWhatsappOptIn} />
               </CardContent>
             </Card>
             <RejectionBanner error={error} />

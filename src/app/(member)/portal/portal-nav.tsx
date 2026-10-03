@@ -11,6 +11,8 @@ const LINKS = [
   { href: "/portal/orders", label: "Shop orders" },
   { href: "/portal/tab", label: "Bar tab" },
   { href: "/portal/invoices", label: "Invoices" },
+  { href: "/portal/payments", label: "Payments" },
+  { href: "/portal/refunds", label: "Refunds" },
   { href: "/portal/membership", label: "Membership" },
   { href: "/portal/family", label: "Family" },
   { href: "/portal/account", label: "My account" },
