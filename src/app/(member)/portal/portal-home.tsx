@@ -3,6 +3,7 @@ import Link from "next/link";
 import { CalendarPlus, AlertTriangle, Beer } from "lucide-react";
 import { useApi } from "@/components/api";
 import { useNow } from "./_components/use-now";
+import { RefundReadyBanner } from "./_components/refund-banner";
 import { DataState, Empty } from "@/components/states";
 import { MemberCard } from "@/components/member-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,6 +33,7 @@ export function PortalHome({ memberId }: { memberId: string }) {
           <div className="flex flex-col gap-4">
             <h1 className="text-2xl font-bold">Hi {d.member.name.split(" ")[0]}</h1>
             <MemberCard memberId={memberId} />
+            <RefundReadyBanner />
             {d.status.status !== "ACTIVE" ? (
               <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
                 <AlertTriangle className="h-4 w-4" /> Your membership is not active, so walk-in prices apply.{" "}

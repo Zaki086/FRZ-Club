@@ -11,17 +11,32 @@ self.addEventListener("fetch", (e) => {
   e.respondWith(fetch(e.request).catch(() => caches.match(OFFLINE)));
 });
 
-// v3 §6.3 Web Push: show the club's notification and open its page when tapped.
+// v3 §6.3 / v4 §4.2 Web Push. The payload is { title, body, url, tag }: show it (a newer message with the same tag
+// replaces the older one); a tap focuses an open tab of the app and takes it to the deep link, or opens one.
 self.addEventListener("push", (e) => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch { d = { title: e.data ? e.data.text() : "" }; }
-  e.waitUntil(self.registration.showNotification(d.title || "Notification", { body: d.body || "", data: { url: d.url || "/" }, icon: "/icon" }));
+  const options = { body: d.body || "", data: { url: d.url || "/" }, icon: "/icon", badge: "/icon" };
+  if (d.tag) options.tag = d.tag;
+  e.waitUntil(self.registration.showNotification(d.title || "Notification", options));
 });
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
-  const url = (e.notification.data && e.notification.data.url) || "/";
-  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
-    for (const c of list) if ("focus" in c && new URL(c.url).pathname === url) return c.focus();
-    return self.clients.openWindow(url);
+  // Only links inside this app are followed.
+  let target;
+  try {
+    target = new URL((e.notification.data && e.notification.data.url) || "/", self.location.origin);
+    if (target.origin !== self.location.origin) target = new URL("/", self.location.origin);
+  } catch { target = new URL("/", self.location.origin); }
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (list) => {
+    const same = list.find((c) => new URL(c.url).pathname === target.pathname);
+    if (same && "focus" in same) return same.focus();
+    const open = list.find((c) => new URL(c.url).origin === self.location.origin && "focus" in c);
+    if (open) {
+      const focused = await open.focus();
+      if ("navigate" in focused) return focused.navigate(target.href).catch(() => self.clients.openWindow(target.href));
+      return focused;
+    }
+    return self.clients.openWindow(target.href);
   }));
 });
