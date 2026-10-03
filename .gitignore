@@ -13,3 +13,5 @@ next-env.d.ts
 *.log
 .claude/
 /uploads/
+Branches.md
+Orchestration.md
