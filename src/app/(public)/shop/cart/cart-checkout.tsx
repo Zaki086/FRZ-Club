@@ -7,7 +7,8 @@ import { api, ApiError, newIdempotencyKey, useApi } from "@/components/api";
 import { Empty, RejectionBanner } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Field, Input, Textarea } from "@/components/ui/input";
+import { Field, Input, Select, Textarea } from "@/components/ui/input";
+import { useCapabilities } from "@/components/capabilities";
 import { cn } from "@/components/ui/cn";
 import { QuoteLines, useShopQuote } from "@/components/shop-quote";
 import { clearCart, setCartQty, useCart } from "@/components/cart";
@@ -22,9 +23,12 @@ export function CartCheckout() {
   const me = useApi<Me>("/api/auth/me");
   const isMember = me.data?.kind === "USER" && me.data.role === "MEMBER";
   const isStaff = me.data?.kind === "USER" && me.data.role !== "MEMBER";
-  const [fulfilment, setFulfilment] = useState<"PICKUP" | "DELIVERY">("PICKUP");
+  const caps = useCapabilities();
+  const [wantFulfilment, setFulfilment] = useState<"PICKUP" | "DELIVERY">("PICKUP");
+  const fulfilment = wantFulfilment === "DELIVERY" && caps?.delivery ? "DELIVERY" : "PICKUP";
   const [paymentOption, setPaymentOption] = useState<"ONLINE" | "PAY_AT_PICKUP">("ONLINE");
   const [address, setAddress] = useState("");
+  const [pincode, setPincode] = useState("");
   const [guest, setGuest] = useState({ name: "", phone: "", email: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
@@ -32,7 +36,11 @@ export function CartCheckout() {
 
   const items = useMemo(() => cart.map((l) => ({ variantId: l.variantId, qty: l.qty })), [cart]);
   const { quote, error: quoteError, loading } = useShopQuote(items.length ? { items, fulfilment } : null);
-  const effectivePayment = isMember && fulfilment === "PICKUP" ? paymentOption : "ONLINE";
+  // Only what the club can really take (completion pass §2): online needs a live gateway; otherwise pickup orders
+  // are paid at the counter and deliveries on delivery.
+  const online = !!caps?.online;
+  const effectivePayment =
+    fulfilment === "DELIVERY" ? (online ? "ONLINE" : "PAY_ON_DELIVERY") : !online ? "PAY_AT_PICKUP" : isMember ? paymentOption : "ONLINE";
 
   if (!cart.length) {
     return <Empty title="Your cart is empty" hint="Browse rackets, balls, shoes and more." action={<Button asChild><Link href="/shop">Go to the shop</Link></Button>} />;
@@ -64,16 +72,26 @@ export function CartCheckout() {
         <CardHeader><CardTitle>Checkout</CardTitle></CardHeader>
         <CardContent className="flex flex-col gap-3">
           {isStaff ? <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm">You are signed in as staff — staff sell at the counter POS. Log out to order as a visitor.</p> : null}
-          <div className="grid grid-cols-2 gap-2">
-            {(["PICKUP", "DELIVERY"] as const).map((f) => (
+          <div className={cn("grid gap-2", caps?.delivery ? "grid-cols-2" : "grid-cols-1")}>
+            {(caps?.delivery ? (["PICKUP", "DELIVERY"] as const) : (["PICKUP"] as const)).map((f) => (
               <button key={f} type="button" onClick={() => setFulfilment(f)} className={cn("rounded-lg border p-3 text-left text-sm", fulfilment === f ? "border-primary bg-accent ring-2 ring-primary" : "hover:bg-muted")}>
                 <p className="font-semibold">{f === "PICKUP" ? "Collect at the club" : "Deliver to me"}</p>
-                <p className="text-xs text-muted-foreground">{f === "PICKUP" ? "Pick up at the shop counter" : "Flat delivery fee, shown in the total"}</p>
+                <p className="text-xs text-muted-foreground">{f === "PICKUP" ? "Pick up at the shop counter" : `${formatINR(caps?.delivery?.fee ?? 0)} delivery, shown in the total`}</p>
               </button>
             ))}
           </div>
           {fulfilment === "DELIVERY" ? (
-            <Field label="Delivery address"><Textarea value={address} onChange={(e) => setAddress(e.target.value)} placeholder="House, street, area, city, PIN" /></Field>
+            <>
+              <Field label="Delivery address"><Textarea value={address} onChange={(e) => setAddress(e.target.value)} placeholder="House, street, area, city" /></Field>
+              <Field label="PIN code" hint="We deliver to these PIN codes only">
+                <Select value={pincode} onChange={(e) => setPincode(e.target.value)} aria-label="PIN code">
+                  <option value="">Choose…</option>
+                  {(caps?.delivery?.pincodes ?? []).map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </Select>
+              </Field>
+            </>
           ) : null}
           {!isMember ? (
             <div className="flex flex-col gap-2">
@@ -82,7 +100,7 @@ export function CartCheckout() {
               <Field label="Email" hint="For order updates (optional)"><Input type="email" value={guest.email} onChange={(e) => setGuest({ ...guest, email: e.target.value })} autoComplete="email" /></Field>
             </div>
           ) : null}
-          {isMember && fulfilment === "PICKUP" ? (
+          {isMember && fulfilment === "PICKUP" && online ? (
             <div className="grid grid-cols-2 gap-2">
               {(["ONLINE", "PAY_AT_PICKUP"] as const).map((p) => (
                 <Button key={p} type="button" variant={paymentOption === p ? "default" : "outline"} onClick={() => setPaymentOption(p)}>
@@ -90,10 +108,11 @@ export function CartCheckout() {
                 </Button>
               ))}
             </div>
-          ) : (
+          ) : effectivePayment === "ONLINE" ? (
             <p className="text-xs text-muted-foreground">Payment: online. Unpaid orders are released after a short hold.</p>
-          )}
-          {effectivePayment === "PAY_AT_PICKUP" ? <p className="text-xs text-muted-foreground">We hold your items for 48 hours; pay when you collect.</p> : null}
+          ) : null}
+          {effectivePayment === "PAY_AT_PICKUP" ? <p className="text-xs text-muted-foreground">Pay at the shop counter when you collect. We hold your items for 48 hours.</p> : null}
+          {effectivePayment === "PAY_ON_DELIVERY" ? <p className="text-xs text-muted-foreground">Pay when your order is delivered.</p> : null}
           <RejectionBanner error={error} />
           <Button
             size="lg"
@@ -108,6 +127,7 @@ export function CartCheckout() {
                     items,
                     fulfilment,
                     address: fulfilment === "DELIVERY" ? address : undefined,
+                    pincode: fulfilment === "DELIVERY" ? pincode || undefined : undefined,
                     paymentOption: effectivePayment,
                     guest: isMember ? undefined : { name: guest.name, phone: guest.phone, email: guest.email || undefined },
                   },

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Money } from "@/components/money";
 import { cn } from "@/components/ui/cn";
+import { useCapabilities } from "@/components/capabilities";
 import { addDays, fmtDay } from "@/lib/time";
 import { PortalQuoteView, usePortalQuote, type PortalPlayerInput } from "../_components/booking-quote";
 
@@ -25,7 +26,9 @@ export function PortalBook({ memberId, memberName, today }: { memberId: string; 
   const [partners, setPartners] = useState<Partner[]>([]);
   const [code, setCode] = useState("");
   const [guestName, setGuestName] = useState("");
-  const [payOnline, setPayOnline] = useState(true);
+  const caps = useCapabilities();
+  const [preferOnline, setPayOnline] = useState(true);
+  const payOnline = !!caps?.online && preferOnline;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   const [result, setResult] = useState<Result | null>(null);
@@ -42,7 +45,8 @@ export function PortalBook({ memberId, memberName, today }: { memberId: string; 
   };
 
   return (
-    <div className="flex flex-col gap-4">
+    // While a slot is picked the booking card sticks to the bottom; the padding lets every slot scroll clear of it.
+    <div className={cn("flex flex-col gap-4", pick && "pb-[28rem]")}>
       <h1 className="text-2xl font-bold">Book a court</h1>
       <div className="flex gap-1 overflow-x-auto pb-1">
         {days.map((d) => (
@@ -90,7 +94,7 @@ export function PortalBook({ memberId, memberName, today }: { memberId: string; 
       </DataState>
 
       {pick ? (
-        <Card className="sticky bottom-2 border-primary shadow-lg">
+        <Card className="sticky bottom-2 max-h-[60vh] overflow-y-auto border-primary shadow-lg">
           <CardHeader className="pb-1"><CardTitle>{pick.court.name} · {fmtDay(date)} · {pick.time}</CardTitle></CardHeader>
           <CardContent className="flex flex-col gap-3">
             {result ? (
@@ -117,12 +121,16 @@ export function PortalBook({ memberId, memberName, today }: { memberId: string; 
                   <div className="grid gap-2 sm:grid-cols-2">
                     <form className="flex gap-1" onSubmit={(e) => {
                       e.preventDefault();
-                      const c = code.trim().toUpperCase();
+                      // A member code (CC-000002) or a mobile number (98XXXXXXXX).
+                      const raw = code.trim();
+                      const digits = raw.replace(/\D/g, "");
+                      const isPhone = !/[a-z]/i.test(raw) && digits.length >= 10;
+                      const c = isPhone ? digits.slice(-10) : raw.toUpperCase();
                       if (c.length < 3 || partners.some((p) => p.key === c)) return;
-                      setPartners([...partners, { key: c, label: `Member ${c}`, input: { memberCode: c } }]);
+                      setPartners([...partners, { key: c, label: isPhone ? `Member with mobile ${c}` : `Member ${c}`, input: isPhone ? { memberPhone: c } : { memberCode: c } }]);
                       setCode("");
                     }}>
-                      <Input placeholder="Partner member code CC-000002" value={code} onChange={(e) => setCode(e.target.value)} aria-label="Partner member code" />
+                      <Input placeholder="Partner's member code or mobile" value={code} onChange={(e) => setCode(e.target.value)} aria-label="Partner member code or mobile" />
                       <Button type="submit" variant="outline" aria-label="Add partner"><UserPlus className="h-4 w-4" /></Button>
                     </form>
                     <form className="flex gap-1" onSubmit={(e) => {
@@ -139,10 +147,14 @@ export function PortalBook({ memberId, memberName, today }: { memberId: string; 
                 ) : null}
                 <PortalQuoteView quote={quote} loading={loading} />
                 <RejectionBanner error={quoteError} />
-                <div className="flex flex-col gap-1 text-sm">
-                  <label className="flex items-center gap-2"><input type="radio" checked={payOnline} onChange={() => setPayOnline(true)} /> Pay online now</label>
-                  <label className="flex items-center gap-2"><input type="radio" checked={!payOnline} onChange={() => setPayOnline(false)} /> Pay at the desk (before check-in)</label>
-                </div>
+                {caps?.online ? (
+                  <div className="flex flex-col gap-1 text-sm">
+                    <label className="flex items-center gap-2"><input type="radio" checked={payOnline} onChange={() => setPayOnline(true)} /> Pay online now</label>
+                    <label className="flex items-center gap-2"><input type="radio" checked={!payOnline} onChange={() => setPayOnline(false)} /> Pay at the desk (before check-in)</label>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Any fee is paid at the front desk before check-in.</p>
+                )}
                 <RejectionBanner error={error} />
                 <Button
                   size="lg"

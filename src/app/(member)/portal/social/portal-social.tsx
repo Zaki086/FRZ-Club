@@ -9,10 +9,13 @@ import { ConfirmButton } from "@/components/confirm";
 import { Badge } from "@/components/ui/badge";
 import { fmtDay, fmtRange } from "@/lib/time";
 import { formatINR } from "@/lib/money";
+import { useCapabilities } from "@/components/capabilities";
+import { refundSummary } from "@/components/tender-fields";
 
 type Session = { id: string; title: string; date: string; startAt: string; endAt: string; status: string; courts: string[]; capacity: number; joined: number; myParticipantId: string | null };
 
 function Join({ session, memberId, onDone }: { session: Session; memberId: string; onDone: (m: string) => void }) {
+  const caps = useCapabilities();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   const join = async (kind: "ONLINE" | "LATER") => {
@@ -37,8 +40,8 @@ function Join({ session, memberId, onDone }: { session: Session; memberId: strin
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" disabled={busy} onClick={() => join("ONLINE")}>Join & pay online</Button>
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => join("LATER")}>Join, pay at desk</Button>
+        {caps?.online ? <Button size="sm" disabled={busy} onClick={() => join("ONLINE")}>Join & pay online</Button> : null}
+        <Button size="sm" variant={caps?.online ? "outline" : "default"} disabled={busy} onClick={() => join("LATER")}>Join, pay at desk</Button>
       </div>
       <RejectionBanner error={error} />
     </div>
@@ -82,8 +85,8 @@ export function PortalSocial({ memberId, today }: { memberId: string; today: str
                         description="Leaving 2 hours or more before the start refunds your fee."
                         confirmLabel="Leave session"
                         onConfirm={async () => {
-                          const r = await api<{ refunded: number }>(`/api/social/participants/${s.myParticipantId}/leave`, { body: {} });
-                          done(r.refunded > 0 ? `You left ${s.title} — ${formatINR(r.refunded)} refunded.` : `You left ${s.title}.`);
+                          const r = await api<{ refunded: number; refundPending: number }>(`/api/social/participants/${s.myParticipantId}/leave`, { body: {} });
+                          done(r.refunded > 0 || r.refundPending > 0 ? `You left ${s.title} — ${refundSummary(r.refunded, r.refundPending)}.` : `You left ${s.title}.`);
                         }}
                       />
                     ) : left > 0 ? (

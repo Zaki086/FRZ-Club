@@ -3,6 +3,10 @@ import Link from "next/link";
 import { Beer, Clock, ShoppingBag, Trophy } from "lucide-react";
 import { getSettings } from "@/server/services/settings";
 import { listCourts } from "@/server/services/courts";
+import { getCapabilities } from "@/server/services/capabilities";
+import { prisma } from "@/server/db";
+import { clock } from "@/lib/clock";
+import { istDate, istDayRange, istTime } from "@/lib/time";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,7 +17,20 @@ export const dynamic = "force-dynamic";
 const SPORT_LABEL: Record<string, string> = { TENNIS: "Tennis court", CRICKET: "Cricket net", PADEL: "Padel court", BADMINTON: "Badminton court" };
 
 export default async function FacilitiesPage() {
-  const [s, courts] = await Promise.all([getSettings(), listCourts()]);
+  const [s, courts, caps] = await Promise.all([getSettings(), listCourts(), getCapabilities()]);
+  // Completion pass §9: the badge comes from real maintenance blocks (now, or later today).
+  const now = clock.now();
+  const [, dayEnd] = istDayRange(istDate(now));
+  const maintenance = await prisma.courtReservation.findMany({
+    where: { kind: "MAINTENANCE", status: "ACTIVE", endAt: { gt: now }, startAt: { lt: dayEnd } },
+    orderBy: { startAt: "asc" },
+  });
+  const badge = (courtId: string) => {
+    const m = maintenance.find((x) => x.courtId === courtId);
+    if (!m) return { tone: "green" as const, text: "Open" };
+    if (m.startAt.getTime() <= now.getTime()) return { tone: "red" as const, text: `Maintenance until ${istTime(m.endAt)}` };
+    return { tone: "amber" as const, text: `Maintenance ${istTime(m.startAt)}–${istTime(m.endAt)}` };
+  };
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-10">
       <div>
@@ -37,7 +54,7 @@ export default async function FacilitiesPage() {
                     <p className="font-semibold">{c.name}</p>
                     <p className="text-sm text-muted-foreground">{SPORT_LABEL[c.sport] ?? c.sport} · up to {c.maxPlayers} players</p>
                   </div>
-                  <Badge tone="green">Open</Badge>
+                  <Badge tone={badge(c.id).tone} data-testid="court-status">{badge(c.id).text}</Badge>
                 </div>
               ))}
             </div>
@@ -52,7 +69,7 @@ export default async function FacilitiesPage() {
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><ShoppingBag className="h-5 w-5" /> Gear shop</CardTitle></CardHeader>
           <CardContent className="text-sm">
-            <p>Rackets, balls, shoes, accessories and apparel. Order online and collect at the club, or have it delivered. Broken string? We restring at the counter.</p>
+            <p>Rackets, balls, shoes, accessories and apparel. Order online and collect at the club{caps.delivery.enabled ? ", or have it delivered" : ""}. Broken string? We restring at the counter.</p>
             <Link href="/shop" className="mt-2 inline-block font-medium text-primary">Browse the shop</Link>
           </CardContent>
         </Card>

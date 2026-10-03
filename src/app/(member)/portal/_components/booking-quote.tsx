@@ -5,7 +5,7 @@ import { api, ApiError } from "@/components/api";
 import { TierBadge } from "@/components/badges";
 import { Money } from "@/components/money";
 
-export type PortalPlayerInput = { memberId: string } | { memberCode: string } | { guest: { name: string } };
+export type PortalPlayerInput = { memberId: string } | { memberCode: string } | { memberPhone: string } | { guest: { name: string } };
 export type PortalQuote = { total: number; players: Array<{ name: string; tier: string; fee: number; explanation: string }> };
 
 export function usePortalQuote(courtId: string | null, date: string, startTime: string | null, players: PortalPlayerInput[]) {

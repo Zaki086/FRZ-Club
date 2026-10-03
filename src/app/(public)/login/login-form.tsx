@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, ApiError } from "@/components/api";
@@ -26,11 +27,12 @@ export function LoginForm() {
             setError(null);
             try {
               const res = await api<{ home: string }>("/api/auth/login", { body: { identifier, password } });
+              // Deep links win; a bare "/app" or "/portal" goes to the role's own home page (§6).
               const next = params.get("next");
-              router.push(next && next.startsWith("/") ? next : res.home);
+              router.push(next && next.startsWith("/") && next !== "/app" && next !== "/portal" ? next : res.home);
               router.refresh();
             } catch (err) {
-              setError(err instanceof ApiError ? { message: err.message } : { message: String(err) });
+              setError(err instanceof ApiError ? { code: err.code === "RATE_LIMITED" ? err.code : undefined, message: err.message } : { message: String(err) });
               setBusy(false);
             }
           }}
@@ -60,6 +62,7 @@ export function LoginForm() {
           <Button type="submit" size="lg" disabled={busy}>
             {busy ? "Signing in…" : "Log in"}
           </Button>
+          <Link href="/forgot-password" className="text-center text-sm text-primary underline">Forgot your password?</Link>
         </form>
       </CardContent>
     </Card>

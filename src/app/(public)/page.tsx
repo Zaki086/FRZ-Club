@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { ArrowRight, Beer, CalendarCheck, MapPin, Phone, ShoppingBag, Trophy } from "lucide-react";
 import { getSettings } from "@/server/services/settings";
+import { getCapabilities } from "@/server/services/capabilities";
+import { prisma } from "@/server/db";
+import { clock } from "@/lib/clock";
 import { listPlans } from "@/server/services/plans";
 import { listCatalogue } from "@/server/services/shop";
 import { listCourts } from "@/server/services/courts";
@@ -12,7 +15,10 @@ import { TierBadge } from "@/components/badges";
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const [s, plans, catalogue, courts] = await Promise.all([getSettings(), listPlans({ activeOnly: true }), listCatalogue(), listCourts()]);
+  const [s, plans, catalogue, courts, caps, socialSoon] = await Promise.all([
+    getSettings(), listPlans({ activeOnly: true }), listCatalogue(), listCourts(), getCapabilities(),
+    prisma.socialSession.count({ where: { status: "SCHEDULED", startAt: { gt: clock.now() } } }),
+  ]);
   const tennis = courts.filter((c) => c.sport === "TENNIS").length;
   const cricket = courts.filter((c) => c.sport === "CRICKET").length;
   const teaser = catalogue.filter((p) => p.trackStock).slice(0, 4);
@@ -68,8 +74,8 @@ export default async function HomePage() {
 
       <section className="bg-muted/50">
         <div className="mx-auto grid max-w-6xl gap-4 px-4 py-12 md:grid-cols-3">
-          <Card><CardContent className="flex flex-col gap-2 pt-5"><Trophy className="h-6 w-6 text-primary" /><h3 className="font-semibold">Courts &amp; nets</h3><p className="text-sm text-muted-foreground">{courts.map((c) => c.name).join(", ")}. One-hour sessions starting every half hour, plus Friday social play.</p><Link href="/facilities" className="text-sm font-medium text-primary">Facilities</Link></CardContent></Card>
-          <Card><CardContent className="flex flex-col gap-2 pt-5"><ShoppingBag className="h-6 w-6 text-primary" /><h3 className="font-semibold">Gear shop</h3><p className="text-sm text-muted-foreground">Rackets, balls, shoes, accessories and apparel — order online for pickup or delivery, or get a racket restrung.</p><Link href="/shop" className="text-sm font-medium text-primary">Visit the shop</Link></CardContent></Card>
+          <Card><CardContent className="flex flex-col gap-2 pt-5"><Trophy className="h-6 w-6 text-primary" /><h3 className="font-semibold">Courts &amp; nets</h3><p className="text-sm text-muted-foreground">{courts.map((c) => c.name).join(", ")}. One-hour sessions starting every half hour{socialSoon ? ", plus social play sessions" : ""}.</p><Link href="/facilities" className="text-sm font-medium text-primary">Facilities</Link></CardContent></Card>
+          <Card><CardContent className="flex flex-col gap-2 pt-5"><ShoppingBag className="h-6 w-6 text-primary" /><h3 className="font-semibold">Gear shop</h3><p className="text-sm text-muted-foreground">Rackets, balls, shoes, accessories and apparel — order online for pickup{caps.delivery.enabled ? " or delivery" : ""}, or get a racket restrung.</p><Link href="/shop" className="text-sm font-medium text-primary">Visit the shop</Link></CardContent></Card>
           <Card><CardContent className="flex flex-col gap-2 pt-5"><Beer className="h-6 w-6 text-primary" /><h3 className="font-semibold">Bar &amp; cafeteria</h3><p className="text-sm text-muted-foreground">Food and drinks after the match. Members get their plan discount automatically.</p></CardContent></Card>
         </div>
       </section>
@@ -101,8 +107,8 @@ export default async function HomePage() {
           <CardContent className="flex flex-col gap-4 pt-5 md:flex-row md:items-center md:justify-between">
             <div>
               <h2 className="text-xl font-bold">How to reach us</h2>
-              <p className="mt-1 flex items-center gap-2 text-sm"><MapPin className="h-4 w-4" /> {s.club.address}</p>
-              <p className="flex items-center gap-2 text-sm"><Phone className="h-4 w-4" /> {s.club.phone} · {s.club.email}</p>
+              {s.club.address ? <p className="mt-1 flex items-center gap-2 text-sm"><MapPin className="h-4 w-4" /> {s.club.address}</p> : null}
+              {s.club.phone || s.club.email ? <p className="flex items-center gap-2 text-sm"><Phone className="h-4 w-4" /> {[s.club.phone, s.club.email].filter(Boolean).join(" · ")}</p> : null}
             </div>
             <div className="flex flex-wrap gap-2">
               <Button asChild><Link href="/enquire">Send an enquiry</Link></Button>

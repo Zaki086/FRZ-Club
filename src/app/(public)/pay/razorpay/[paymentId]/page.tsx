@@ -28,9 +28,6 @@ export default async function RazorpayPage({
   const returnUrl = ret && ret.startsWith("/") && !ret.startsWith("//") ? ret : (payment.returnUrl ?? "/");
   return (
     <div className="mx-auto flex max-w-lg flex-col gap-4 px-4 py-8">
-      <div className="rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900">
-        Razorpay <strong>test mode</strong>: use Razorpay test cards; no real money moves.
-      </div>
       <div className="rounded-lg border bg-card p-4">
         <p className="text-sm text-muted-foreground">Paying</p>
         <p className="text-3xl font-bold">{formatINR(payment.amount)}</p>
