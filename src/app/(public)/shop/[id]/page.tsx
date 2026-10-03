@@ -1,10 +1,18 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { listCatalogue } from "@/server/services/shop";
 import { categoryLabel } from "@/components/shop-categories";
 import { ProductBuy } from "./product-buy";
+import { ProductImage } from "@/components/product-image";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params;
+  const product = (await listCatalogue()).find((p) => p.id === id);
+  return product ? { title: product.name, description: product.description || `${product.brand} ${product.name}` } : { title: "Product not found" };
+}
 
 export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -15,6 +23,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
       <Link href="/shop" className="text-sm text-primary underline">← Back to the shop</Link>
       <p className="mt-4 text-xs uppercase tracking-wide text-muted-foreground">{product.brand} · {categoryLabel(product.category)}</p>
       <h1 className="text-3xl font-bold">{product.name}</h1>
+      <ProductImage url={product.imageUrl} category={product.category} name={product.name} className="mt-3 aspect-[4/3] w-full max-w-md" />
       <p className="mt-2 text-muted-foreground">{product.description}</p>
       <ProductBuy product={JSON.parse(JSON.stringify(product))} />
     </div>

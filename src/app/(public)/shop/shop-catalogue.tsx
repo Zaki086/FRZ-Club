@@ -9,6 +9,7 @@ import { Empty } from "@/components/states";
 import { Money } from "@/components/money";
 import { categoryLabel, StockLabel, type CatalogueProduct } from "@/components/shop-quote";
 import { addToCart, useCart } from "@/components/cart";
+import { ProductImage } from "@/components/product-image";
 
 const CATS = ["RACKETS", "BALLS", "SHOES", "ACCESSORIES", "APPAREL"];
 
@@ -43,6 +44,9 @@ export function ShopCatalogue({ products, initialCategory }: { products: Catalog
             const single = p.variants.length === 1;
             return (
               <Card key={p.id} className="flex flex-col gap-2 p-4">
+                <Link href={`/shop/${p.id}`} aria-hidden tabIndex={-1}>
+                  <ProductImage url={p.imageUrl} category={p.category} name={p.name} className="aspect-[4/3] w-full" />
+                </Link>
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">{p.brand} · {categoryLabel(p.category)}</p>

@@ -7,11 +7,16 @@ import { RejectionBanner } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
+import { ConsentFields } from "@/components/consent-fields";
+import { useCapabilities } from "@/components/capabilities";
 
 const INTERESTS = ["Gold membership", "Silver membership", "Junior membership", "Coaching", "Corporate package", "Court booking", "Other"];
 
 export function EnquiryForm() {
   const [f, setF] = useState({ name: "", phone: "", email: "", interest: INTERESTS[0], message: "" });
+  const [consent, setConsent] = useState(false);
+  const [website, setWebsite] = useState("");
+  const caps = useCapabilities();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   const [ref, setRef] = useState<string | null>(null);
@@ -40,7 +45,7 @@ export function EnquiryForm() {
             setBusy(true);
             setError(null);
             try {
-              const r = await api<{ leadCode: string }>("/api/enquiry", { body: { name: f.name, phone: f.phone || undefined, email: f.email || undefined, interest: f.interest, message: f.message } });
+              const r = await api<{ leadCode: string }>("/api/enquiry", { body: { name: f.name, phone: f.phone || undefined, email: f.email || undefined, interest: f.interest, message: f.message, consent, website: website || undefined } });
               setRef(r.leadCode);
             } catch (err) {
               setError(err instanceof ApiError ? { code: err.code, message: err.message } : { message: String(err) });
@@ -61,6 +66,7 @@ export function EnquiryForm() {
             </Select>
           </Field>
           <Field label="Message"><Textarea value={f.message} onChange={(e) => setF({ ...f, message: e.target.value })} rows={4} /></Field>
+          <ConsentFields consent={consent} onConsent={setConsent} website={website} onWebsite={setWebsite} clubName={caps?.clubName} />
           <RejectionBanner error={error} />
           <Button type="submit" size="lg" disabled={busy}>{busy ? "Sending…" : "Send enquiry"}</Button>
         </form>

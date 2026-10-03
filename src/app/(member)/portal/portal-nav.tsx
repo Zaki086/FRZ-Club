@@ -12,6 +12,8 @@ const LINKS = [
   { href: "/portal/tab", label: "Bar tab" },
   { href: "/portal/invoices", label: "Invoices" },
   { href: "/portal/membership", label: "Membership" },
+  { href: "/portal/family", label: "Family" },
+  { href: "/portal/account", label: "My account" },
 ];
 
 export function PortalNav() {

@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/components/api";
 import { Button } from "@/components/ui/button";
 import { RejectionBanner } from "@/components/states";
+import { useCapabilities } from "@/components/capabilities";
 
 type RazorpayResponse = { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string };
 type RazorpayCtor = new (opts: Record<string, unknown>) => { open(): void; on(ev: string, cb: (r: { error: { metadata?: { payment_id?: string } } }) => void): void };
 
 export function RazorpayCheckout(props: { keyId: string; orderId: string; amount: number; paymentId: string; returnUrl: string }) {
+  const clubName = useCapabilities()?.clubName ?? "";
   const router = useRouter();
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
@@ -36,7 +38,7 @@ export function RazorpayCheckout(props: { keyId: string; orderId: string; amount
             order_id: props.orderId,
             amount: props.amount,
             currency: "INR",
-            name: "The Champions Club",
+            name: clubName || "Club",
             handler: (r: RazorpayResponse) => void finish({ ...r, outcome: "SUCCESS" }),
           });
           rzp.on("payment.failed", (r) => void finish({ outcome: "FAIL", razorpay_payment_id: r.error.metadata?.payment_id ?? "unknown" }));

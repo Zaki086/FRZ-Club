@@ -16,6 +16,8 @@ export default async function TestGatewayPage({
   params: Promise<{ paymentId: string }>;
   searchParams: Promise<{ return?: string }>;
 }) {
+  // Completion pass §2.1: the Test Gateway only exists in the test environment.
+  if (process.env.NODE_ENV !== "test") notFound();
   const { paymentId } = await params;
   const { return: ret } = await searchParams;
   let payment;

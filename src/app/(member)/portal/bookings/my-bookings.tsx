@@ -45,6 +45,7 @@ function BookingRow({ b, memberId, onChanged, upcoming }: { b: B; memberId: stri
       <div className="text-sm">
         <p className="font-semibold">{b.court} · {fmtDay(istDate(new Date(b.startAt)))} {fmtRange(b.startAt, b.endAt)}</p>
         <p className="text-xs text-muted-foreground"><span className="font-mono">{b.code}</span> · {b.players.map((p) => p.name).join(", ")}</p>
+        <a className="text-xs text-primary underline" href={`/api/bookings/${b.id}/ics`} download>Add to calendar</a>
         <p className="mt-0.5 flex flex-wrap items-center gap-2 text-xs">
           <StatusBadge status={b.status} /> Total <Money paise={b.total} />
           {b.due > 0 ? <span className="font-semibold text-amber-700">· {formatINR(b.due)} due</span> : null}

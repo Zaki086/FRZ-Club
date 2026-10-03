@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { Menu, ShoppingBag, X } from "lucide-react";
 import { cn } from "@/components/ui/cn";
+import { clubInitials } from "@/lib/codes";
 
 const LINKS = [
   { href: "/", label: "Home" },
@@ -15,15 +16,15 @@ const LINKS = [
   { href: "/enquire", label: "Enquire" },
 ];
 
-export function PublicNav({ account }: { account: { href: string; label: string } }) {
+export function PublicNav({ account, clubName }: { account: { href: string; label: string }; clubName: string }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   return (
     <header className="no-print sticky top-0 z-30 border-b bg-card/95 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4">
         <Link href="/" className="flex items-center gap-2 font-bold">
-          <span className="rounded bg-primary px-1.5 py-0.5 text-sm text-white">CC</span>
-          The Champions Club
+          <span className="rounded bg-primary px-1.5 py-0.5 text-sm text-white">{clubInitials(clubName)}</span>
+          {clubName}
         </Link>
         <nav className="hidden items-center gap-1 md:flex">
           {LINKS.map((l) => (

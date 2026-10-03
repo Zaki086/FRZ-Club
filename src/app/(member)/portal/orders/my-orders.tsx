@@ -12,6 +12,7 @@ import { Money } from "@/components/money";
 import { ConfirmButton } from "@/components/confirm";
 import { fmtDateTime } from "@/lib/time";
 import { formatINR } from "@/lib/money";
+import { refundSummary } from "@/components/tender-fields";
 
 type Order = {
   id: string; code: string; status: string; fulfilment: string; paymentOption: string; createdAt: string; billId: string;
@@ -29,14 +30,14 @@ const FINAL = ["COLLECTED", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"];
 
 function OrderCard({ o, onChange }: { o: Order; onChange: () => void }) {
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
-  const [refunded, setRefunded] = useState<number | null>(null);
+  const [refunded, setRefunded] = useState<{ refunded: number; refundPending: number } | null>(null);
   return (
     <Card>
       <CardContent className="flex flex-col gap-2 pt-4 text-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <p className="font-mono font-semibold">{o.code}</p>
-            <p className="text-xs text-muted-foreground">{fmtDateTime(o.createdAt)} · {o.fulfilment === "DELIVERY" ? "Delivery" : "Pickup"} · {o.paymentOption === "ONLINE" ? "Online payment" : "Pay at pickup"}</p>
+            <p className="text-xs text-muted-foreground">{fmtDateTime(o.createdAt)} · {o.fulfilment === "DELIVERY" ? "Delivery" : "Pickup"} · {o.paymentOption === "ONLINE" ? "Online payment" : o.paymentOption === "PAY_ON_DELIVERY" ? "Pay on delivery" : "Pay at pickup"}</p>
           </div>
           <StatusBadge status={o.status} label={LABEL[o.status]} />
         </div>
@@ -46,7 +47,7 @@ function OrderCard({ o, onChange }: { o: Order; onChange: () => void }) {
         <p className="flex justify-between font-semibold"><span>Total</span><Money paise={o.total} /></p>
         {o.due > 0 && o.status !== "CANCELLED" ? <p className="text-amber-700">To pay: {formatINR(o.due)}</p> : null}
         {o.cancelReason ? <p className="text-destructive">Cancelled: {o.cancelReason}</p> : null}
-        {refunded !== null ? <p className="text-green-700">Cancelled{refunded ? ` — ${formatINR(refunded)} refunded` : ""}.</p> : null}
+        {refunded !== null ? <p className="text-green-700">Cancelled{refunded.refunded || refunded.refundPending ? ` — ${refundSummary(refunded.refunded, refunded.refundPending)}` : ""}.</p> : null}
         <details>
           <summary className="cursor-pointer text-xs text-muted-foreground">Tracking</summary>
           <ol className="mt-1 flex flex-col gap-1 border-l-2 border-primary/30 pl-3 text-xs">
@@ -72,8 +73,8 @@ function OrderCard({ o, onChange }: { o: Order; onChange: () => void }) {
               requireReason
               confirmLabel="Cancel order"
               onConfirm={async (reason) => {
-                const r = await api<{ refunded: number }>(`/api/shop/orders/${o.id}/cancel`, { body: { reason } });
-                setRefunded(r.refunded);
+                const r = await api<{ refunded: number; refundPending: number }>(`/api/shop/orders/${o.id}/cancel`, { body: { reason } });
+                setRefunded(r);
                 onChange();
               }}
             />
