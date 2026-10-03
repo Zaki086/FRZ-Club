@@ -19,3 +19,5 @@ Plan.md
 AGENTS.md
 CLAUDE.md
 /backups/
+/.bin/
+/.tunnel-url

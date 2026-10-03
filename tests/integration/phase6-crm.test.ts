@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { clock } from "@/lib/clock";
 import { prisma } from "@/server/db";
 import { createStaff } from "@/server/services/users";
+import { clockIn } from "@/server/services/staff";
 import { SYSTEM } from "@/server/rbac/actor";
 import {
   createEnquiry, createLead, createQuote, createTrialBooking, flagOverdueLeads, getQuoteByToken, listLeads, logActivity, markInterested, markLost,
@@ -12,13 +13,17 @@ import { makeWorld, type World, utr } from "../helpers/world";
 import { expectIntegrity } from "../helpers/integrity";
 
 let w: World;
+let desk2: Awaited<ReturnType<typeof createStaff>>;
 beforeEach(async () => {
   w = await makeWorld();
-  await createStaff(SYSTEM, { name: "Second Desk", phone: "9000000099", email: "desk2@test.club", role: "FRONT_DESK", password: "password123", monthlySalary: 2_500_000, joinDate: "2025-01-01" });
+  desk2 = await createStaff(SYSTEM, { name: "Second Desk", phone: "9000000099", email: "desk2@test.club", role: "FRONT_DESK", password: "password123", monthlySalary: 2_500_000, joinDate: "2025-01-01" });
 });
 
 describe("Phase 6 — enquiries can't vanish (CR-1…CR-5, R-36, E-17)", () => {
-  it("R-36/CR-3: an enquiry becomes a lead, is assigned round-robin, notifies front desk + managers, follow-up in 24h", async () => {
+  it("R-36/CR-3: an enquiry becomes a lead, is spread across the desk on shift, notifies front desk + managers, follow-up in 24h", async () => {
+    // v3 LA-2 replaces round robin (D-74): with both desks clocked in, the two leads go to different people.
+    await clockIn(w.actors.FRONT_DESK);
+    await clockIn({ kind: "USER", userId: desk2.user.id, role: "FRONT_DESK", name: "Second Desk", memberId: null, employeeId: desk2.employee.id });
     const a = await createEnquiry({ consent: true, name: "Stranger Sana", phone: "9876512345", email: "sana@example.com", interest: "Gold membership", message: "Do you have coaching?" });
     const b = await createEnquiry({ consent: true, name: "Second Sid", email: "sid@example.com" });
     const leads = await prisma.lead.findMany({ orderBy: { createdAt: "asc" } });

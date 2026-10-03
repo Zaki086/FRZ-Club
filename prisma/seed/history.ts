@@ -144,10 +144,10 @@ async function signUp(ctx: Ctx, opts: { plan: "GOLD" | "SILVER" | "JUNIOR"; mont
   const r = await attempt("member.signup", () =>
     createMember(ctx.staff[pick(["desk", "desk2"])], {
       name: nm, phone: nextPhone(), email: opts.email === false ? undefined : `${nm.toLowerCase().replace(/[^a-z]/g, ".")}.${phoneSeq}@example.com`, dob,
-      password: MEMBER_PASSWORD(), emergencyContactName: "Family", emergencyContactPhone: "9820000000",
+      emergencyContactName: "Family", emergencyContactPhone: "9820000000",
       ...(ageOn(dob, today) < 18 ? { guardianName: `${nm.split(" ")[1]} (parent)`, guardianPhone: String(9_600_000_000 + phoneSeq - 9_700_000_000) } : {}),
       plan: { code: opts.plan, months: opts.months, payment: anyMethod("UPI", "UPI", "CARD", "CASH") },
-    }),
+    }, null, { password: MEMBER_PASSWORD() }),
   );
   if (r) {
     ctx.members.push(r.memberId);
@@ -393,8 +393,8 @@ function planCrm(ctx: Ctx, q: DayQueue, day: string, d: number) {
         const m = await attempt("crm.convert", () =>
           createMember(ctx.staff.desk, {
             name: l.name, phone: l.phone ?? nextPhone(), email: l.email ?? undefined, dob: addDays(addMonths(day, -12 * between(20, 45)), -between(0, 200)),
-            password: MEMBER_PASSWORD(), leadId: l.id, plan: { code: "SILVER", months: 3, payment: tender("UPI") },
-          }),
+            leadId: l.id, plan: { code: "SILVER", months: 3, payment: tender("UPI") },
+          }, null, { password: MEMBER_PASSWORD() }),
         );
         if (m) ctx.members.push(m.memberId);
       } else if (r > 0.85) {

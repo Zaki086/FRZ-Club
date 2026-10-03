@@ -20,5 +20,14 @@ module.exports = {
       max_memory_restart: "500M",
       restart_delay: 5000,
     },
+    {
+      // HTTPS while ports 80/443 belong to another project's Caddy (v3 §1, Path B): a Cloudflare quick tunnel.
+      // Its address changes when it restarts; scripts/tunnel.mjs keeps APP_URL in .env in step.
+      name: "champions-tunnel",
+      cwd: __dirname,
+      script: "scripts/tunnel.mjs",
+      max_memory_restart: "200M",
+      restart_delay: 10000,
+    },
   ],
 };

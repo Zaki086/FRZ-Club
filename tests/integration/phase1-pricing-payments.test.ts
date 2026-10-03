@@ -4,7 +4,7 @@ import { createBill } from "@/server/services/bills";
 import { getSettings } from "@/server/services/settings";
 import { priceLine, quoteCourt, quoteShop, quoteManual } from "@/server/services/pricing";
 import {
-  issueRefund,
+  listPendingRefunds,
   recordCounterPayment,
   startOnlinePayment,
   verifyOnlinePayment,
@@ -12,6 +12,8 @@ import {
 import { testGateway } from "@/server/services/gateway";
 import { makeWorld, type World, utr, CARD_PROOF } from "../helpers/world";
 import { expectIntegrity } from "../helpers/integrity";
+import { approvedRefund } from "../helpers/refunds";
+import { payOutRefund, requestRefund, approveRefund } from "@/server/services/refunds";
 
 let w: World;
 
@@ -101,11 +103,14 @@ describe("Phase 1 — payments, refunds and the ledger (§5.10)", () => {
   it("PY-4: a refund can't exceed the amount paid; refunds are negative IN entries under the original source", async () => {
     const bill = await makeBill(55000);
     await recordCounterPayment(w.actors.FRONT_DESK, { billId: bill.id, method: "CARD", amount: 55000, ...CARD_PROOF });
+    // v3 RF-3: a discretionary refund is asked for, approved by someone else, then paid out at the desk (D-68).
     await expect(
-      issueRefund(w.actors.MANAGER, { billId: bill.id, amount: 60000, reason: "test" }),
+      requestRefund(w.actors.MANAGER, { billId: bill.id, amount: 60000, reason: "GOODWILL", note: "test" }),
     ).rejects.toMatchObject({ code: "REFUND_EXCEEDS_PAID" });
-    const r = await issueRefund(w.actors.MANAGER, { billId: bill.id, amount: 15000, approvalCode: "RFND01", reason: "goodwill" });
-    expect(r.refunded).toBe(15000);
+    const r = await approvedRefund(w, bill.id, 15000);
+    expect(r.pending).toBe(15000);
+    const done = await payOutRefund(w.actors.FRONT_DESK, r.id, { method: "CARD", approvalCode: "RFND01" });
+    expect(done.status).toBe("COMPLETED");
     const ledger = await prisma.ledgerEntry.findMany({ where: { billId: bill.id }, orderBy: { createdAt: "asc" } });
     expect(ledger.map((l) => [l.source, l.direction, l.amount])).toEqual([
       ["COURTS", "IN", 55000],
@@ -114,10 +119,13 @@ describe("Phase 1 — payments, refunds and the ledger (§5.10)", () => {
     await expectIntegrity();
   });
 
-  it("RBAC: discretionary refunds are OWNER/MANAGER only", async () => {
+  it("RBAC (v3 RF-1/RF-3): the desk may ask for a refund but only OWNER/MANAGER approve; bar staff can't ask on a court bill", async () => {
     const bill = await makeBill(10000);
     await recordCounterPayment(w.actors.FRONT_DESK, { billId: bill.id, method: "CASH", amount: 10000 });
-    await expect(issueRefund(w.actors.FRONT_DESK, { billId: bill.id, amount: 100, reason: "nope" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(requestRefund(w.actors.BAR_STAFF, { billId: bill.id, amount: 100, reason: "OTHER", note: "nope" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const req = await requestRefund(w.actors.FRONT_DESK, { billId: bill.id, amount: 100, reason: "OTHER", note: "rounding" });
+    await expect(approveRefund(w.actors.FRONT_DESK, req.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(await listPendingRefunds(w.actors.FRONT_DESK)).toEqual([]);
   });
 
   it("RBAC: bar staff cannot take payment for a court booking bill", async () => {
@@ -175,7 +183,8 @@ describe("Phase 1 — payments, refunds and the ledger (§5.10)", () => {
     const start = await startOnlinePayment(w.actors.FRONT_DESK, bill.id, "/done");
     const gpid = testGateway.newGatewayPaymentId();
     await verifyOnlinePayment(start.paymentId, { gatewayPaymentId: gpid, outcome: "SUCCESS", signature: testGateway.sign(start.paymentId, gpid, "SUCCESS") });
-    await issueRefund(w.actors.OWNER, { billId: bill.id, amount: 30000, reason: "duplicate booking" });
+    const r = await approvedRefund(w, bill.id, 30000, { by: w.actors.OWNER, approver: w.actors.MANAGER, reason: "DUPLICATE_CHARGE", note: "duplicate booking" });
+    expect([r.status, r.pending]).toEqual(["COMPLETED", 0]);
     const refund = await prisma.payment.findFirstOrThrow({ where: { billId: bill.id, type: "REFUND" } });
     expect(refund.method).toBe("ONLINE");
     expect(refund.reference).toMatch(/^test_refund_/);

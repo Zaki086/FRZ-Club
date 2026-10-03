@@ -3,7 +3,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/server/db";
 import { setCapabilityOverridesForTests } from "@/server/services/capabilities";
-import { flushEmailOutbox, setMailTransportForTests } from "@/server/services/notifications";
+import { setMailTransportForTests } from "@/server/services/notifications";
+import { flushDeliveries } from "@/server/services/channels";
 import { listMessages, sendTestEmail, waNumber, whatsappLink } from "@/server/services/messages";
 import { completeSetup, isSetupComplete, setupStatus } from "@/server/services/setup";
 import { getSettings, updateSetting } from "@/server/services/settings";
@@ -12,6 +13,7 @@ import { createMember } from "@/server/services/membership";
 import { SYSTEM, type UserActor } from "@/server/rbac/actor";
 import { makeWorld, type World } from "../helpers/world";
 import { book, guest } from "../helpers/booking";
+import { utr } from "../helpers/world";
 
 let w: World;
 const sent: Array<{ to: string; subject: string }> = [];
@@ -23,24 +25,26 @@ beforeEach(async () => {
 afterEach(() => setMailTransportForTests(null));
 
 describe("Completion §3 — email only when it really works", () => {
+  // v3 WK-2/§6.3 (D-70): the welcome now goes out when the first membership is paid, through the channel log.
+  const paidPlan = { code: "SILVER" as const, months: 1 as const, payment: { method: "UPI" as const, reference: utr() } };
   it("email off: nothing is queued (no promise); on: queued, delivered and logged", async () => {
     setCapabilityOverridesForTests({ email: false });
-    await createMember(w.actors.FRONT_DESK, { name: "No Mail Nia", phone: "9811122233", dob: "1990-01-01", email: "nia@example.com" });
-    expect(await prisma.emailOutbox.count()).toBe(0);
+    await createMember(w.actors.FRONT_DESK, { name: "No Mail Nia", phone: "9811122233", dob: "1990-01-01", email: "nia@example.com", plan: paidPlan });
+    expect(await prisma.notificationDelivery.count({ where: { channel: "EMAIL", status: { not: "SKIPPED" } } })).toBe(0);
     setCapabilityOverridesForTests({ email: true });
-    await createMember(w.actors.FRONT_DESK, { name: "Mail Mo", phone: "9811122234", dob: "1990-01-01", email: "mo@example.com" });
-    expect(await prisma.emailOutbox.count({ where: { to: "mo@example.com" } })).toBe(1);
+    await createMember(w.actors.FRONT_DESK, { name: "Mail Mo", phone: "9811122234", dob: "1990-01-01", email: "mo@example.com", plan: { ...paidPlan, payment: { method: "UPI", reference: utr() } } });
+    expect(await prisma.notificationDelivery.count({ where: { channel: "EMAIL", status: "QUEUED", toAddress: "mo@example.com" } })).toBe(1);
     setMailTransportForTests({ sendMail: async (m) => void sent.push(m) });
-    expect(await flushEmailOutbox()).toMatchObject({ sent: 1, failed: 0 });
+    expect(await flushDeliveries()).toMatchObject({ sent: 1, failed: 0 });
     expect(sent[0].subject).toMatch(/^Welcome to The Champions Club/);
     const log = await listMessages(w.actors.OWNER, { channel: "EMAIL" });
     expect(log[0]).toMatchObject({ to: "mo@example.com", status: "SENT" });
   });
 
   it("a failed delivery is logged as FAILED with the SMTP error", async () => {
-    await createMember(w.actors.FRONT_DESK, { name: "Bounce Bo", phone: "9811122235", dob: "1990-01-01", email: "bo@example.com" });
+    await createMember(w.actors.FRONT_DESK, { name: "Bounce Bo", phone: "9811122235", dob: "1990-01-01", email: "bo@example.com", plan: { ...paidPlan, payment: { method: "UPI", reference: utr() } } });
     setMailTransportForTests({ sendMail: async () => { throw new Error("550 mailbox unavailable"); } });
-    expect(await flushEmailOutbox()).toMatchObject({ sent: 0, failed: 1 });
+    expect(await flushDeliveries()).toMatchObject({ sent: 0, failed: 1 });
     expect((await listMessages(w.actors.OWNER, { status: "FAILED" }))[0]).toMatchObject({ to: "bo@example.com", error: "550 mailbox unavailable" });
   });
 

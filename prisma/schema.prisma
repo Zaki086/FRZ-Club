@@ -64,6 +64,7 @@ enum BookingStatus {
   CANCELLED
   COMPLETED
   NO_SHOW
+  CANCELLED_BY_CLUB
 }
 
 enum BookingChannel {
@@ -84,6 +85,7 @@ enum SocialStatus {
 enum ParticipantStatus {
   JOINED
   LEFT
+  CANCELLED_BY_CLUB
 }
 
 enum ProductCategory {
@@ -275,6 +277,7 @@ enum LeaveStatus {
   PENDING
   APPROVED
   REJECTED
+  EXPIRED
 }
 
 enum PayrollStatus {
@@ -312,6 +315,11 @@ model User {
   failedLoginCount  Int       @default(0) @map("failed_login_count")
   lockedUntil       DateTime? @map("locked_until") @db.Timestamptz(3)
   passwordChangedAt DateTime? @map("password_changed_at") @db.Timestamptz(3)
+  /// v3 §6.3 member preferences (in-app can't be turned off) and §6.4 WK-2 first credentials.
+  notifyPush          Boolean   @default(true) @map("notify_push")
+  notifyEmail         Boolean   @default(true) @map("notify_email")
+  notifyWhatsapp      Boolean   @default(true) @map("notify_whatsapp")
+  credentialsIssuedAt DateTime? @map("credentials_issued_at") @db.Timestamptz(3)
   createdAt         DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -325,13 +333,17 @@ model User {
 }
 
 model Session {
-  id        String   @id @default(cuid())
-  userId    String   @map("user_id")
-  tokenHash String   @unique @map("token_hash")
-  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
-  createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-  user      User     @relation(fields: [userId], references: [id])
+  id                String    @id @default(cuid())
+  userId            String    @map("user_id")
+  tokenHash         String    @unique @map("token_hash")
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(3)
+  // v3 §6.1 sliding sessions: MEMBER | STAFF | KIOSK decide the idle and absolute windows.
+  kind              String    @default("STAFF")
+  lastSeenAt        DateTime? @map("last_seen_at") @db.Timestamptz(3)
+  absoluteExpiresAt DateTime? @map("absolute_expires_at") @db.Timestamptz(3)
+  createdAt         DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user              User      @relation(fields: [userId], references: [id])
 
   @@map("sessions")
 }
@@ -511,6 +523,7 @@ model CourtReservation {
   kind        ReservationKind
   status      ReservationStatus   @default(ACTIVE)
   note        String?
+  closureId   String?             @map("closure_id")
   createdBy   String?             @map("created_by")
   createdAt   DateTime            @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -936,6 +949,7 @@ model Payment {
   failureReason    String?       @map("failure_reason")
   note             String?
   returnUrl        String?       @map("return_url")
+  refundRequestId  String?       @map("refund_request_id")
   occurredAt       DateTime      @map("occurred_at") @db.Timestamptz(3)
   createdAt        DateTime      @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -1052,6 +1066,9 @@ model Lead {
   guestId           String?        @map("guest_id")
   bookingId         String?        @map("booking_id")
   consentAt         DateTime?      @map("consent_at") @db.Timestamptz(3)
+  assignmentReason  String?        @map("assignment_reason")
+  assignedAt        DateTime?      @map("assigned_at") @db.Timestamptz(3)
+  escalatedAt       DateTime?      @map("escalated_at") @db.Timestamptz(3)
   createdAt         DateTime       @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
   activities        LeadActivity[]
@@ -1123,17 +1140,24 @@ model Shift {
 }
 
 model Attendance {
-  id           String    @id @default(cuid())
-  employeeId   String    @map("employee_id")
-  shiftId      String?   @map("shift_id")
-  clockIn      DateTime  @map("clock_in") @db.Timestamptz(3)
-  clockOut     DateTime? @map("clock_out") @db.Timestamptz(3)
-  openingFloat Int       @default(0) @map("opening_float")
-  cashExpected Int?      @map("cash_expected")
-  cashCounted  Int?      @map("cash_counted")
-  variance     Int?
-  createdAt    DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id               String    @id @default(cuid())
+  employeeId       String    @map("employee_id")
+  shiftId          String?   @map("shift_id")
+  clockIn          DateTime  @map("clock_in") @db.Timestamptz(3)
+  clockOut         DateTime? @map("clock_out") @db.Timestamptz(3)
+  openingFloat     Int       @default(0) @map("opening_float")
+  cashExpected     Int?      @map("cash_expected")
+  cashCounted      Int?      @map("cash_counted")
+  variance         Int?
+  // v3 AT-5: a manager's correction keeps the original times; AT-4: missing clock-out flagged once.
+  originalClockIn  DateTime? @map("original_clock_in") @db.Timestamptz(3)
+  originalClockOut DateTime? @map("original_clock_out") @db.Timestamptz(3)
+  correctedBy      String?   @map("corrected_by")
+  correctedAt      DateTime? @map("corrected_at") @db.Timestamptz(3)
+  correctionReason String?   @map("correction_reason")
+  missingFlaggedAt DateTime? @map("missing_flagged_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@index([employeeId])
   @@map("attendance")
@@ -1417,4 +1441,215 @@ model StockTakeLine {
   stockTake   StockTake @relation(fields: [stockTakeId], references: [id])
 
   @@map("stock_take_lines")
+}
+
+// ───────────────────────────── v3 ─────────────────────────────
+
+/**
+ * v3 §3.1: a user's saved filter for a list (name + query string), at most 10 per list.
+ */
+model SavedView {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  list      String
+  name      String
+  query     String
+  createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([userId, list, name])
+  @@map("saved_views")
+}
+
+/// v3 §5.2: REQUESTED → APPROVED → COMPLETED, side exits REJECTED / FAILED / CANCELLED. Money moves only through
+/// REFUND payments (refund_request_id) and their ledger entries.
+model RefundRequest {
+  id            String    @id @default(cuid())
+  code          String    @unique
+  billId        String    @map("bill_id")
+  amount        Int
+  reason        String
+  note          String    @default("")
+  status        String    @default("REQUESTED")
+  autoApproved  Boolean   @default(false) @map("auto_approved")
+  policy        String?
+  requestedVia  String    @map("requested_via")
+  requestedBy   String?   @map("requested_by")
+  decidedBy     String?   @map("decided_by")
+  decidedAt     DateTime? @map("decided_at") @db.Timestamptz(3)
+  decisionNote  String?   @map("decision_note")
+  completedAt   DateTime? @map("completed_at") @db.Timestamptz(3)
+  failureReason String?   @map("failure_reason")
+  retryOfId     String?   @map("retry_of_id")
+  createdAt     DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([status, createdAt])
+  @@index([billId])
+  @@map("refund_requests")
+}
+
+/// v3 §6.3: every attempt to reach someone, per channel. Exactly once per dedupe key + channel.
+model NotificationDelivery {
+  id           String    @id @default(cuid())
+  event        String
+  dedupeKey    String    @map("dedupe_key")
+  channel      String // IN_APP | PUSH | EMAIL | WHATSAPP_API | WHATSAPP_MANUAL
+  status       String // QUEUED | SENT | DELIVERED | FAILED | LINK_OPENED | SKIPPED
+  userId       String?   @map("user_id")
+  guestId      String?   @map("guest_id")
+  memberId     String?   @map("member_id")
+  toAddress    String?   @map("to_address")
+  title        String
+  body         String
+  link         String?
+  whatsappText String?   @map("whatsapp_text")
+  providerId   String?   @map("provider_id")
+  error        String?
+  triggeredBy  String?   @map("triggered_by")
+  handledBy    String?   @map("handled_by")
+  sentAt       DateTime? @map("sent_at") @db.Timestamptz(3)
+  deliveredAt  DateTime? @map("delivered_at") @db.Timestamptz(3)
+  openedAt     DateTime? @map("opened_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([dedupeKey, channel], map: "notification_deliveries_once")
+  @@index([channel, status], map: "notification_deliveries_queue_idx")
+  @@map("notification_deliveries")
+}
+
+model PushSubscription {
+  id            String    @id @default(cuid())
+  userId        String    @map("user_id")
+  endpoint      String    @unique
+  p256dh        String
+  auth          String
+  userAgent     String?   @map("user_agent")
+  lastSuccessAt DateTime? @map("last_success_at") @db.Timestamptz(3)
+  createdAt     DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([userId], map: "push_subscriptions_user_idx")
+  @@map("push_subscriptions")
+}
+
+/// v3 NT-2: at most three dues reminders per bill.
+model DuesReminder {
+  id        String   @id @default(cuid())
+  billId    String   @map("bill_id")
+  seq       Int
+  sentAt    DateTime @map("sent_at") @db.Timestamptz(3)
+  createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([billId, seq], map: "dues_reminders_once")
+  @@map("dues_reminders")
+}
+
+/// v3 §7.2 CC-1: the Manager/Owner closed these courts for this range, with a reason.
+model CourtClosure {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  courtIds  String[] @map("court_ids")
+  startAt   DateTime @map("start_at") @db.Timestamptz(3)
+  endAt     DateTime @map("end_at") @db.Timestamptz(3)
+  reason    String
+  note      String   @default("")
+  createdBy String?  @map("created_by")
+  createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("court_closures")
+}
+
+/// v3 CC-2…CC-6: a paid booking the club cancelled — PENDING_CHOICE until rescheduled or refunded.
+model ClubCancellation {
+  id              String    @id @default(cuid())
+  closureId       String    @map("closure_id")
+  bookingId       String    @unique @map("booking_id")
+  billId          String    @map("bill_id")
+  amountPaid      Int       @map("amount_paid")
+  status          String    @default("PENDING_CHOICE")
+  deadlineAt      DateTime  @map("deadline_at") @db.Timestamptz(3)
+  newBookingId    String?   @map("new_booking_id")
+  refundRequestId String?   @map("refund_request_id")
+  resolvedBy      String?   @map("resolved_by")
+  resolvedVia     String?   @map("resolved_via")
+  resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([status, deadlineAt], map: "club_cancellations_status_idx")
+  @@map("club_cancellations")
+}
+
+/// v3 §9.2 PR-12: a dated base-price version; the latest one in effect wins (COURT_FEE:<TIER>:<SPORT>,
+/// SOCIAL_FEE:<TIER>, VARIANT:<id>, MENU:<id>).
+model PriceChange {
+  id          String    @id @default(cuid())
+  target      String
+  price       Int
+  effectiveAt DateTime  @map("effective_at") @db.Timestamptz(3)
+  note        String?
+  cancelledAt DateTime? @map("cancelled_at") @db.Timestamptz(3)
+  createdBy   String?   @map("created_by")
+  createdAt   DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([target, effectiveAt(sort: Desc)], map: "price_changes_target_idx")
+  @@map("price_changes")
+}
+
+/// v3 §9.2: time bands, special dates and promotions (versioned: a change ends one row and starts the next).
+model PriceRule {
+  id                String    @id @default(cuid())
+  code              String    @unique
+  kind              String
+  name              String
+  scope             String
+  sports            String[]  @default([])
+  courtIds          String[]  @default([]) @map("court_ids")
+  productCategories String[]  @default([]) @map("product_categories")
+  productIds        String[]  @default([]) @map("product_ids")
+  menuCategories    String[]  @default([]) @map("menu_categories")
+  menuItemIds       String[]  @default([]) @map("menu_item_ids")
+  daysOfWeek        Int[]     @default([]) @map("days_of_week")
+  startMinute       Int?      @map("start_minute")
+  endMinute         Int?      @map("end_minute")
+  dateFrom          DateTime? @map("date_from") @db.Date
+  dateTo            DateTime? @map("date_to") @db.Date
+  adjustType        String    @map("adjust_type")
+  adjustPct         Int?      @map("adjust_pct")
+  fixedPrices       Json?     @map("fixed_prices")
+  flatAmount        Int?      @map("flat_amount")
+  audience          String    @default("ALL")
+  tiers             String[]  @default([])
+  priority          Int       @default(0)
+  status            String
+  effectiveFrom     DateTime  @map("effective_from") @db.Timestamptz(3)
+  effectiveTo       DateTime? @map("effective_to") @db.Timestamptz(3)
+  replacesId        String?   @map("replaces_id")
+  createdBy         String?   @map("created_by")
+  approvedBy        String?   @map("approved_by")
+  approvedAt        DateTime? @map("approved_at") @db.Timestamptz(3)
+  createdAt         DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([kind, scope, status], map: "price_rules_active_idx")
+  @@map("price_rules")
+}
+
+/// v3 §9.3: product photos (first = cover), resized to 1200 px with a 400 px thumbnail.
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId String   @map("product_id")
+  url       String
+  thumbUrl  String   @map("thumb_url")
+  sort      Int
+  createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([productId, sort], map: "product_images_product_idx")
+  @@map("product_images")
 }
