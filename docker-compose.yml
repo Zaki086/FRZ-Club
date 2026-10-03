@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: champions-postgres
+    environment:
+      POSTGRES_USER: champions
+      POSTGRES_PASSWORD: champions
+      POSTGRES_DB: champions
+    ports:
+      - "5442:5432"
+    volumes:
+      - champions-pg:/var/lib/postgresql/data
+      - ./prisma/docker-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U champions"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+volumes:
+  champions-pg:

@@ -1,0 +1,1266 @@
+// The Champions Club — data model (plan.md §6).
+// Money columns are integer paise. Timestamps are timestamptz (UTC); business dates (@db.Date) are IST calendar dates.
+// Constraints Prisma cannot express (exclusion constraints, partial unique indexes, CHECKs, append-only triggers,
+// generated tstzrange columns) live in prisma/migrations/0002_constraints/migration.sql.
+// Columns that exist only in raw SQL: court_reservations.period, shifts.period (generated tstzrange, BK-1 / ST-2).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── enums ─────────────────────────────
+
+enum Role {
+  OWNER
+  MANAGER
+  FRONT_DESK
+  SHOP_STAFF
+  BAR_STAFF
+  ACCOUNTANT
+  MEMBER
+}
+
+enum PlanCode {
+  GOLD
+  SILVER
+  JUNIOR
+}
+
+enum MembershipStatus {
+  PENDING_PAYMENT
+  SCHEDULED
+  ACTIVE
+  EXPIRED
+  CHANGED
+  CANCELLED
+}
+
+enum Sport {
+  TENNIS
+  CRICKET
+  PADEL
+  BADMINTON
+}
+
+enum ReservationKind {
+  REGULAR
+  SOCIAL
+  MAINTENANCE
+}
+
+enum ReservationStatus {
+  ACTIVE
+  CANCELLED
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum BookingChannel {
+  FRONT_DESK
+  PHONE
+  MESSAGE
+  WALK_IN
+  ONLINE_MEMBER
+  ONLINE_TRIAL
+}
+
+enum SocialStatus {
+  SCHEDULED
+  CANCELLED
+  COMPLETED
+}
+
+enum ParticipantStatus {
+  JOINED
+  LEFT
+}
+
+enum ProductCategory {
+  RACKETS
+  BALLS
+  SHOES
+  ACCESSORIES
+  APPAREL
+  SERVICES
+}
+
+enum StockReason {
+  RECEIPT
+  COUNTER_SALE
+  RESERVE
+  RELEASE
+  ONLINE_FULFIL
+  ADJUSTMENT
+  RETURN
+}
+
+enum Fulfilment {
+  PICKUP
+  DELIVERY
+}
+
+enum PaymentOption {
+  ONLINE
+  PAY_AT_PICKUP
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  READY_FOR_PICKUP
+  COLLECTED
+  PACKED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum TicketStatus {
+  RECEIVED
+  IN_PROGRESS
+  READY
+  COLLECTED
+  CANCELLED
+}
+
+enum MenuCategory {
+  FOOD
+  BEVERAGE
+  ALCOHOL
+}
+
+enum TabStatus {
+  OPEN
+  SETTLED
+  CARRIED
+  VOID
+}
+
+enum TabLineStatus {
+  NEW
+  PREPARING
+  READY
+  SERVED
+  VOID
+}
+
+enum BillSource {
+  BOOKING
+  SOCIAL_JOIN
+  COUNTER_SALE
+  SHOP_ORDER
+  SERVICE_TICKET
+  BAR_TAB
+  MEMBERSHIP
+  INVOICE
+}
+
+enum BillStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  VOID
+  PARTIALLY_REFUNDED
+  REFUNDED
+}
+
+enum PaymentType {
+  PAYMENT
+  REFUND
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  ONLINE
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+enum LedgerSource {
+  COURTS
+  SOCIAL
+  SHOP
+  BAR
+  MEMBERSHIP
+  INVOICE
+  EXPENSE
+  PAYROLL
+}
+
+enum Direction {
+  IN
+  OUT
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+enum LeadSource {
+  WEBSITE_ENQUIRY
+  TRIAL_BOOKING
+  WALK_IN
+  PHONE
+  REFERRAL
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUOTED
+  WON
+  LOST
+}
+
+enum ActivityType {
+  CALL
+  NOTE
+  EMAIL
+  QUOTE_SENT
+  INTERESTED
+  STATUS_CHANGE
+  ASSIGNED
+}
+
+enum QuoteStatus {
+  SENT
+  INTERESTED
+  ACCEPTED
+  EXPIRED
+}
+
+enum ShiftArea {
+  FRONT_DESK
+  BAR
+  KITCHEN
+  SHOP
+  COURTS
+}
+
+enum ShiftStatus {
+  ASSIGNED
+  OPEN
+}
+
+enum LeaveType {
+  CASUAL
+  SICK
+  UNPAID
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PayrollStatus {
+  DRAFT
+  APPROVED
+  PAID
+}
+
+enum ExpenseCategory {
+  STOCK_PURCHASE
+  UTILITIES
+  RENT
+  MAINTENANCE
+  MARKETING
+  OTHER
+}
+
+enum ExpenseStatus {
+  UNPAID
+  PAID
+  CANCELLED
+}
+
+// ───────────────────────────── identity & auth ─────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  phone        String   @unique
+  email        String?  @unique
+  passwordHash String?  @map("password_hash")
+  role         Role
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  sessions      Session[]
+  member        Member?
+  employee      Employee?
+  notifications Notification[]
+  setTokens     PasswordSetToken[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@map("sessions")
+}
+
+model PasswordSetToken {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@map("password_set_tokens")
+}
+
+// ───────────────────────────── members & memberships ─────────────────────────────
+
+model Member {
+  id                    String   @id @default(cuid())
+  userId                String?  @unique @map("user_id")
+  memberCode            String   @unique @map("member_code")
+  name                  String
+  phone                 String   @unique
+  email                 String?
+  dob                   DateTime @db.Date
+  photoUrl              String?  @map("photo_url")
+  emergencyContactName  String?  @map("emergency_contact_name")
+  emergencyContactPhone String?  @map("emergency_contact_phone")
+  nextPlanId            String?  @map("next_plan_id")
+  nextPlanMonths        Int?     @map("next_plan_months")
+  leadId                String?  @map("lead_id")
+  createdBy             String?  @map("created_by")
+  createdAt             DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user                  User?    @relation(fields: [userId], references: [id])
+  nextPlan              Plan?    @relation("NextPlan", fields: [nextPlanId], references: [id])
+
+  memberships Membership[]
+
+  @@map("members")
+}
+
+model Guest {
+  id           String    @id @default(cuid())
+  name         String
+  phone        String?   @unique
+  email        String?
+  idVerifiedAt DateTime? @map("id_verified_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("guests")
+}
+
+model Plan {
+  id                 String         @id @default(cuid())
+  code               PlanCode       @unique
+  name               String
+  description        String         @default("")
+  price1m            Int            @map("price_1m")
+  price3m            Int            @map("price_3m")
+  price12m           Int            @map("price_12m")
+  socialFee          Int            @map("social_fee")
+  shopDiscountPct    Int            @map("shop_discount_pct")
+  barDiscountPct     Int            @map("bar_discount_pct")
+  advanceBookingDays Int            @map("advance_booking_days")
+  alcoholAllowed     Boolean        @map("alcohol_allowed")
+  rank               Int
+  active             Boolean        @default(true)
+  createdAt          DateTime       @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  courtFees          PlanCourtFee[]
+  memberships        Membership[]
+  nextFor            Member[]       @relation("NextPlan")
+
+  @@map("plans")
+}
+
+model PlanCourtFee {
+  id        String   @id @default(cuid())
+  planId    String   @map("plan_id")
+  sport     Sport
+  fee       Int
+  createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  plan      Plan     @relation(fields: [planId], references: [id])
+
+  @@unique([planId, sport])
+  @@map("plan_court_fees")
+}
+
+model Membership {
+  id             String           @id @default(cuid())
+  memberId       String           @map("member_id")
+  planId         String           @map("plan_id")
+  startDate      DateTime         @map("start_date") @db.Date
+  endDate        DateTime         @map("end_date") @db.Date
+  durationMonths Int              @map("duration_months")
+  status         MembershipStatus
+  price          Int
+  creditApplied  Int              @default(0) @map("credit_applied")
+  billId         String?          @unique @map("bill_id")
+  changedFromId  String?          @map("changed_from_id")
+  kind           String           @default("NEW") // NEW | RENEWAL | UPGRADE | DOWNGRADE_RENEWAL
+  cancelReason   String?          @map("cancel_reason")
+  createdBy      String?          @map("created_by")
+  createdAt      DateTime         @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  member         Member           @relation(fields: [memberId], references: [id])
+  plan           Plan             @relation(fields: [planId], references: [id])
+
+  @@index([memberId])
+  @@map("memberships")
+}
+
+model MembershipReminder {
+  id           String   @id @default(cuid())
+  membershipId String   @map("membership_id")
+  reminderType String   @map("reminder_type") // D7 | D1 | EXPIRED
+  sentAt       DateTime @map("sent_at") @db.Timestamptz(3)
+  createdAt    DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([membershipId, reminderType])
+  @@map("membership_reminders")
+}
+
+model Visit {
+  id           String    @id @default(cuid())
+  memberId     String?   @map("member_id")
+  guestId      String?   @map("guest_id")
+  bookingId    String?   @map("booking_id")
+  checkedInAt  DateTime  @map("checked_in_at") @db.Timestamptz(3)
+  checkedOutAt DateTime? @map("checked_out_at") @db.Timestamptz(3)
+  byUserId     String?   @map("by_user_id")
+  createdAt    DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([memberId])
+  @@map("visits")
+}
+
+// ───────────────────────────── courts & bookings ─────────────────────────────
+
+model Court {
+  id           String             @id @default(cuid())
+  name         String             @unique
+  sport        Sport
+  maxPlayers   Int                @map("max_players")
+  sortOrder    Int                @default(0) @map("sort_order")
+  active       Boolean            @default(true)
+  archivedAt   DateTime?          @map("archived_at") @db.Timestamptz(3)
+  createdAt    DateTime           @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  reservations CourtReservation[]
+
+  @@map("courts")
+}
+
+model CourtReservation {
+  id          String              @id @default(cuid())
+  courtId     String              @map("court_id")
+  startAt     DateTime            @map("start_at") @db.Timestamptz(3)
+  endAt       DateTime            @map("end_at") @db.Timestamptz(3)
+  // period tstzrange GENERATED ALWAYS AS (tstzrange(start_at, end_at, '[)')) STORED — raw SQL, BK-1
+  kind        ReservationKind
+  status      ReservationStatus   @default(ACTIVE)
+  note        String?
+  createdBy   String?             @map("created_by")
+  createdAt   DateTime            @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  court       Court               @relation(fields: [courtId], references: [id])
+  booking     Booking?
+  socialCourt SocialSessionCourt?
+
+  @@index([courtId, startAt])
+  @@map("court_reservations")
+}
+
+model Booking {
+  id              String           @id @default(cuid())
+  bookingCode     String           @unique @map("booking_code")
+  reservationId   String           @unique @map("reservation_id")
+  primaryMemberId String?          @map("primary_member_id")
+  primaryGuestId  String?          @map("primary_guest_id")
+  channel         BookingChannel
+  status          BookingStatus    @default(CONFIRMED)
+  billId          String?          @unique @map("bill_id")
+  note            String?
+  cancelledAt     DateTime?        @map("cancelled_at") @db.Timestamptz(3)
+  cancelledBy     String?          @map("cancelled_by")
+  cancelReason    String?          @map("cancel_reason")
+  createdBy       String?          @map("created_by")
+  createdAt       DateTime         @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  reservation     CourtReservation @relation(fields: [reservationId], references: [id])
+  players         BookingPlayer[]
+
+  @@map("bookings")
+}
+
+model BookingPlayer {
+  id           String    @id @default(cuid())
+  bookingId    String    @map("booking_id")
+  memberId     String?   @map("member_id")
+  guestId      String?   @map("guest_id")
+  feeSnapshot  Int       @map("fee_snapshot")
+  tierSnapshot String    @map("tier_snapshot")
+  billLineId   String?   @unique @map("bill_line_id")
+  checkedInAt  DateTime? @map("checked_in_at") @db.Timestamptz(3)
+  removedAt    DateTime? @map("removed_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  booking      Booking   @relation(fields: [bookingId], references: [id])
+
+  @@index([memberId])
+  @@index([guestId])
+  @@map("booking_players")
+}
+
+model SocialSession {
+  id               String               @id @default(cuid())
+  title            String
+  seriesId         String?              @map("series_id")
+  date             DateTime             @db.Date
+  startAt          DateTime             @map("start_at") @db.Timestamptz(3)
+  endAt            DateTime             @map("end_at") @db.Timestamptz(3)
+  capacityPerCourt Int                  @map("capacity_per_court")
+  status           SocialStatus         @default(SCHEDULED)
+  createdBy        String?              @map("created_by")
+  createdAt        DateTime             @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+  courts           SocialSessionCourt[]
+  participants     SocialParticipant[]
+
+  @@map("social_sessions")
+}
+
+model SocialSessionCourt {
+  id            String           @id @default(cuid())
+  sessionId     String           @map("session_id")
+  courtId       String           @map("court_id")
+  reservationId String           @unique @map("reservation_id")
+  createdAt     DateTime         @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  session       SocialSession    @relation(fields: [sessionId], references: [id])
+  reservation   CourtReservation @relation(fields: [reservationId], references: [id])
+
+  @@map("social_session_courts")
+}
+
+model SocialParticipant {
+  id           String            @id @default(cuid())
+  sessionId    String            @map("session_id")
+  memberId     String?           @map("member_id")
+  guestId      String?           @map("guest_id")
+  feeSnapshot  Int               @map("fee_snapshot")
+  tierSnapshot String            @map("tier_snapshot")
+  status       ParticipantStatus @default(JOINED)
+  billId       String?           @unique @map("bill_id")
+  channel      BookingChannel
+  checkedInAt  DateTime?         @map("checked_in_at") @db.Timestamptz(3)
+  leftAt       DateTime?         @map("left_at") @db.Timestamptz(3)
+  createdBy    String?           @map("created_by")
+  createdAt    DateTime          @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  session      SocialSession     @relation(fields: [sessionId], references: [id])
+
+  @@index([memberId])
+  @@map("social_participants")
+}
+
+// ───────────────────────────── shop & inventory ─────────────────────────────
+
+model Product {
+  id          String           @id @default(cuid())
+  name        String
+  brand       String           @default("")
+  category    ProductCategory
+  description String           @default("")
+  imageUrl    String?          @map("image_url")
+  trackStock  Boolean          @default(true) @map("track_stock")
+  isRestring  Boolean          @default(false) @map("is_restring")
+  archivedAt  DateTime?        @map("archived_at") @db.Timestamptz(3)
+  createdAt   DateTime         @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  variants    ProductVariant[]
+
+  @@map("products")
+}
+
+model ProductVariant {
+  id              String    @id @default(cuid())
+  productId       String    @map("product_id")
+  sku             String    @unique
+  label           String
+  price           Int
+  onHand          Int       @default(0) @map("on_hand")
+  reserved        Int       @default(0)
+  reorderLevel    Int       @map("reorder_level")
+  taxCategory     String    @map("tax_category")
+  hsnSac          String    @map("hsn_sac")
+  lowStockAlerted Boolean   @default(false) @map("low_stock_alerted")
+  archivedAt      DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  product         Product   @relation(fields: [productId], references: [id])
+
+  @@map("product_variants")
+}
+
+model StockMovement {
+  id               String      @id @default(cuid())
+  variantId        String      @map("variant_id")
+  qtyOnHandDelta   Int         @map("qty_on_hand_delta")
+  qtyReservedDelta Int         @map("qty_reserved_delta")
+  reason           StockReason
+  refType          String?     @map("ref_type")
+  refId            String?     @map("ref_id")
+  unitCost         Int?        @map("unit_cost")
+  note             String?
+  actorId          String?     @map("actor_id")
+  createdAt        DateTime    @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([variantId])
+  @@map("stock_movements")
+}
+
+model CounterSale {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  memberId  String?  @map("member_id")
+  guestId   String?  @map("guest_id")
+  billId    String   @unique @map("bill_id")
+  soldBy    String   @map("sold_by")
+  createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("counter_sales")
+}
+
+model ShopOrder {
+  id            String           @id @default(cuid())
+  code          String           @unique
+  memberId      String?          @map("member_id")
+  guestId       String?          @map("guest_id")
+  fulfilment    Fulfilment
+  address       String?
+  deliveryFee   Int              @default(0) @map("delivery_fee")
+  paymentOption PaymentOption    @map("payment_option")
+  status        OrderStatus
+  holdExpiresAt DateTime?        @map("hold_expires_at") @db.Timestamptz(3)
+  billId        String           @unique @map("bill_id")
+  cancelReason  String?          @map("cancel_reason")
+  trackToken    String           @unique @map("track_token")
+  createdBy     String?          @map("created_by")
+  createdAt     DateTime         @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  lines         ShopOrderLine[]
+  events        ShopOrderEvent[]
+
+  @@map("shop_orders")
+}
+
+model ShopOrderLine {
+  id        String    @id @default(cuid())
+  orderId   String    @map("order_id")
+  variantId String    @map("variant_id")
+  qty       Int
+  unitPrice Int       @map("unit_price")
+  netAmount Int       @map("net_amount")
+  createdAt DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  order     ShopOrder @relation(fields: [orderId], references: [id])
+
+  @@map("shop_order_lines")
+}
+
+model ShopOrderEvent {
+  id        String      @id @default(cuid())
+  orderId   String      @map("order_id")
+  status    OrderStatus
+  note      String?
+  actorId   String?     @map("actor_id")
+  at        DateTime    @db.Timestamptz(3)
+  createdAt DateTime    @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  order     ShopOrder   @relation(fields: [orderId], references: [id])
+
+  @@map("shop_order_events")
+}
+
+model ServiceTicket {
+  id           String       @id @default(cuid())
+  code         String       @unique
+  memberId     String?      @map("member_id")
+  guestId      String?      @map("guest_id")
+  customerName String       @map("customer_name")
+  variantId    String       @map("product_variant_id")
+  racket       String       @default("")
+  notes        String       @default("")
+  status       TicketStatus @default(RECEIVED)
+  promisedAt   DateTime     @map("promised_at") @db.Timestamptz(3)
+  billId       String       @map("bill_id")
+  createdBy    String?      @map("created_by")
+  createdAt    DateTime     @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("service_tickets")
+}
+
+// ───────────────────────────── bar & cafeteria ─────────────────────────────
+
+model MenuItem {
+  id          String       @id @default(cuid())
+  name        String
+  category    MenuCategory
+  price       Int
+  isAlcoholic Boolean      @map("is_alcoholic")
+  taxCategory String       @map("tax_category")
+  hsnSac      String       @map("hsn_sac")
+  available   Boolean      @default(true)
+  sortOrder   Int          @default(0) @map("sort_order")
+  archivedAt  DateTime?    @map("archived_at") @db.Timestamptz(3)
+  createdAt   DateTime     @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("menu_items")
+}
+
+model BarTable {
+  id        String   @id @default(cuid())
+  number    Int      @unique
+  capacity  Int
+  area      String
+  createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("bar_tables")
+}
+
+model Tab {
+  id              String    @id @default(cuid())
+  code            String    @unique
+  memberId        String?   @map("member_id")
+  guestId         String?   @map("guest_id")
+  tableId         String?   @map("table_id")
+  status          TabStatus @default(OPEN)
+  guestIdVerified Boolean   @default(false) @map("guest_id_verified")
+  openedBy        String    @map("opened_by")
+  billId          String    @unique @map("bill_id")
+  barDate         DateTime  @map("bar_date") @db.Date
+  carriedReason   String?   @map("carried_reason")
+  carriedBy       String?   @map("carried_by")
+  settledAt       DateTime? @map("settled_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  lines           TabLine[]
+
+  @@map("tabs")
+}
+
+model TabLine {
+  id              String        @id @default(cuid())
+  tabId           String        @map("tab_id")
+  menuItemId      String        @map("menu_item_id")
+  billLineId      String        @unique @map("bill_line_id")
+  qty             Int
+  unitPrice       Int           @map("unit_price")
+  discountPct     Int           @map("discount_pct")
+  discountAmount  Int           @map("discount_amount")
+  netAmount       Int           @map("net_amount")
+  note            String?
+  status          TabLineStatus @default(NEW)
+  kitchenTicketId String?       @map("kitchen_ticket_id")
+  addedBy         String        @map("added_by")
+  preparingAt     DateTime?     @map("preparing_at") @db.Timestamptz(3)
+  readyAt         DateTime?     @map("ready_at") @db.Timestamptz(3)
+  servedAt        DateTime?     @map("served_at") @db.Timestamptz(3)
+  voidedBy        String?       @map("voided_by")
+  voidReason      String?       @map("void_reason")
+  voidedAt        DateTime?     @map("voided_at") @db.Timestamptz(3)
+  createdAt       DateTime      @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  tab             Tab           @relation(fields: [tabId], references: [id])
+
+  @@map("tab_lines")
+}
+
+model KitchenTicket {
+  id        String   @id @default(cuid())
+  tabId     String   @map("tab_id")
+  tableId   String?  @map("table_id")
+  sentAt    DateTime @map("sent_at") @db.Timestamptz(3)
+  sentBy    String   @map("sent_by")
+  createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("kitchen_tickets")
+}
+
+model BarDay {
+  id        String   @id @default(cuid())
+  date      DateTime @unique @db.Date
+  closedAt  DateTime @map("closed_at") @db.Timestamptz(3)
+  closedBy  String   @map("closed_by")
+  report    Json
+  createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("bar_days")
+}
+
+// ───────────────────────────── bills, payments, ledger ─────────────────────────────
+
+model Bill {
+  id               String     @id @default(cuid())
+  sourceType       BillSource @map("source_type")
+  sourceId         String?    @map("source_id")
+  memberId         String?    @map("member_id")
+  guestId          String?    @map("guest_id")
+  businessClientId String?    @map("business_client_id")
+  customerName     String     @map("customer_name")
+  tier             String
+  total            Int        @default(0)
+  taxTotal         Int        @default(0) @map("tax_total")
+  discountTotal    Int        @default(0) @map("discount_total")
+  amountPaid       Int        @default(0) @map("amount_paid")
+  amountRefunded   Int        @default(0) @map("amount_refunded")
+  status           BillStatus @default(UNPAID)
+  closedAt         DateTime?  @map("closed_at") @db.Timestamptz(3) // cancelled/voided: nothing more is due
+  closeReason      String?    @map("close_reason")
+  createdBy        String?    @map("created_by")
+  createdAt        DateTime   @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  lines            BillLine[]
+  payments         Payment[]
+
+  @@index([sourceType, sourceId])
+  @@index([memberId])
+  @@map("bills")
+}
+
+model BillLine {
+  id             String    @id @default(cuid())
+  billId         String    @map("bill_id")
+  description    String
+  qty            Int
+  unitPrice      Int       @map("unit_price")
+  discountPct    Int       @map("discount_pct")
+  discountAmount Int       @map("discount_amount")
+  netAmount      Int       @map("net_amount")
+  taxRate        Int       @map("tax_rate")
+  taxAmount      Int       @map("tax_amount")
+  taxCategory    String    @map("tax_category")
+  hsnSac         String    @map("hsn_sac")
+  explanation    String
+  variantId      String?   @map("variant_id")
+  menuItemId     String?   @map("menu_item_id")
+  voidedAt       DateTime? @map("voided_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  bill           Bill      @relation(fields: [billId], references: [id])
+
+  @@index([billId])
+  @@map("bill_lines")
+}
+
+model Payment {
+  id               String        @id @default(cuid())
+  billId           String        @map("bill_id")
+  type             PaymentType
+  method           PaymentMethod
+  amount           Int
+  status           PaymentStatus
+  reference        String?
+  gateway          String?
+  gatewayOrderId   String?       @map("gateway_order_id")
+  gatewayPaymentId String?       @unique @map("gateway_payment_id")
+  tendered         Int?
+  changeGiven      Int?          @map("change_given")
+  receivedBy       String?       @map("received_by")
+  shiftId          String?       @map("shift_id")
+  refundOfId       String?       @map("refund_of_id")
+  failureReason    String?       @map("failure_reason")
+  note             String?
+  returnUrl        String?       @map("return_url")
+  occurredAt       DateTime      @map("occurred_at") @db.Timestamptz(3)
+  createdAt        DateTime      @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  bill             Bill          @relation(fields: [billId], references: [id])
+
+  @@index([billId])
+  @@map("payments")
+}
+
+model LedgerEntry {
+  id          String        @id @default(cuid())
+  source      LedgerSource
+  direction   Direction
+  method      PaymentMethod
+  amount      Int
+  taxAmount   Int           @default(0) @map("tax_amount")
+  billId      String?       @map("bill_id")
+  paymentId   String?       @unique @map("payment_id")
+  refType     String?       @map("ref_type")
+  refId       String?       @map("ref_id")
+  description String
+  occurredAt  DateTime      @map("occurred_at") @db.Timestamptz(3)
+  createdAt   DateTime      @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([occurredAt])
+  @@index([billId])
+  @@map("ledger_entries")
+}
+
+model IdempotencyKey {
+  id           String   @id @default(cuid())
+  key          String
+  actorKey     String   @map("actor_key")
+  endpoint     String
+  requestHash  String   @map("request_hash")
+  responseJson Json?    @map("response_json")
+  createdAt    DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([key, actorKey])
+  @@map("idempotency_keys")
+}
+
+// ───────────────────────────── invoices & clients ─────────────────────────────
+
+model BusinessClient {
+  id               String    @id @default(cuid())
+  name             String
+  gstin            String?
+  stateCode        String    @map("state_code")
+  address          String
+  contactName      String    @map("contact_name")
+  contactEmail     String?   @map("contact_email")
+  contactPhone     String?   @map("contact_phone")
+  paymentTermsDays Int       @default(15) @map("payment_terms_days")
+  archivedAt       DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("business_clients")
+}
+
+model Invoice {
+  id                String        @id @default(cuid())
+  number            String?
+  fy                String?
+  seq               Int?
+  kind              String // MEMBERSHIP | BUSINESS | MEMBER
+  businessClientId  String?       @map("business_client_id")
+  memberId          String?       @map("member_id")
+  placeOfSupply     String        @map("place_of_supply")
+  issueDate         DateTime?     @map("issue_date") @db.Date
+  dueDate           DateTime?     @map("due_date") @db.Date
+  status            InvoiceStatus @default(DRAFT)
+  billId            String        @unique @map("bill_id")
+  notes             String        @default("")
+  overdueNotifiedAt DateTime?     @map("overdue_notified_at") @db.Timestamptz(3)
+  cancelReason      String?       @map("cancel_reason")
+  createdBy         String?       @map("created_by")
+  createdAt         DateTime      @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([fy, number])
+  @@map("invoices")
+}
+
+model InvoiceCounter {
+  fy        String   @id
+  last      Int      @default(0)
+  createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("invoice_counters")
+}
+
+// ───────────────────────────── CRM ─────────────────────────────
+
+model Lead {
+  id                String         @id @default(cuid())
+  code              String         @unique
+  name              String
+  phone             String?
+  email             String?
+  source            LeadSource
+  interest          String         @default("")
+  message           String         @default("")
+  status            LeadStatus     @default(NEW)
+  lostReason        String?        @map("lost_reason")
+  assignedTo        String?        @map("assigned_to")
+  nextFollowUpAt    DateTime       @map("next_follow_up_at") @db.Timestamptz(3)
+  overdueNotifiedAt DateTime?      @map("overdue_notified_at") @db.Timestamptz(3)
+  memberId          String?        @map("member_id")
+  guestId           String?        @map("guest_id")
+  bookingId         String?        @map("booking_id")
+  createdAt         DateTime       @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  activities        LeadActivity[]
+  quotes            Quote[]
+
+  @@map("leads")
+}
+
+model LeadActivity {
+  id        String       @id @default(cuid())
+  leadId    String       @map("lead_id")
+  type      ActivityType
+  note      String
+  byUserId  String?      @map("by_user_id")
+  at        DateTime     @db.Timestamptz(3)
+  createdAt DateTime     @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  lead      Lead         @relation(fields: [leadId], references: [id])
+
+  @@map("lead_activities")
+}
+
+model Quote {
+  id         String      @id @default(cuid())
+  leadId     String      @map("lead_id")
+  token      String      @unique
+  lines      Json
+  total      Int
+  validUntil DateTime    @map("valid_until") @db.Timestamptz(3)
+  status     QuoteStatus @default(SENT)
+  createdBy  String?     @map("created_by")
+  createdAt  DateTime    @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  lead       Lead        @relation(fields: [leadId], references: [id])
+
+  @@map("quotes")
+}
+
+// ───────────────────────────── staff, payroll, expenses ─────────────────────────────
+
+model Employee {
+  id            String   @id @default(cuid())
+  userId        String   @unique @map("user_id")
+  monthlySalary Int      @map("monthly_salary")
+  joinDate      DateTime @map("join_date") @db.Date
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user          User     @relation(fields: [userId], references: [id])
+
+  @@map("employees")
+}
+
+model Shift {
+  id                 String      @id @default(cuid())
+  employeeId         String?     @map("employee_id")
+  previousEmployeeId String?     @map("previous_employee_id")
+  date               DateTime    @db.Date
+  startAt            DateTime    @map("start_at") @db.Timestamptz(3)
+  endAt              DateTime    @map("end_at") @db.Timestamptz(3)
+  // period tstzrange GENERATED ALWAYS AS (tstzrange(start_at, end_at, '[)')) STORED — raw SQL, ST-2
+  area               ShiftArea
+  status             ShiftStatus @default(ASSIGNED)
+  createdBy          String?     @map("created_by")
+  createdAt          DateTime    @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("shifts")
+}
+
+model Attendance {
+  id           String    @id @default(cuid())
+  employeeId   String    @map("employee_id")
+  shiftId      String?   @map("shift_id")
+  clockIn      DateTime  @map("clock_in") @db.Timestamptz(3)
+  clockOut     DateTime? @map("clock_out") @db.Timestamptz(3)
+  openingFloat Int       @default(0) @map("opening_float")
+  cashExpected Int?      @map("cash_expected")
+  cashCounted  Int?      @map("cash_counted")
+  variance     Int?
+  createdAt    DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([employeeId])
+  @@map("attendance")
+}
+
+model LeaveRequest {
+  id           String      @id @default(cuid())
+  employeeId   String      @map("employee_id")
+  type         LeaveType
+  startDate    DateTime    @map("start_date") @db.Date
+  endDate      DateTime    @map("end_date") @db.Date
+  days         Int
+  reason       String
+  status       LeaveStatus @default(PENDING)
+  decidedBy    String?     @map("decided_by")
+  decidedAt    DateTime?   @map("decided_at") @db.Timestamptz(3)
+  decisionNote String?     @map("decision_note")
+  createdAt    DateTime    @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("leave_requests")
+}
+
+model PayrollRun {
+  id         String         @id @default(cuid())
+  month      String         @unique // YYYY-MM
+  status     PayrollStatus  @default(DRAFT)
+  approvedBy String?        @map("approved_by")
+  approvedAt DateTime?      @map("approved_at") @db.Timestamptz(3)
+  paidAt     DateTime?      @map("paid_at") @db.Timestamptz(3)
+  method     PaymentMethod?
+  createdBy  String?        @map("created_by")
+  createdAt  DateTime       @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  payslips   Payslip[]
+
+  @@map("payroll_runs")
+}
+
+model Payslip {
+  id         String         @id @default(cuid())
+  runId      String         @map("run_id")
+  employeeId String         @map("employee_id")
+  gross      Int
+  unpaidDays Int            @map("unpaid_days")
+  deductions Int
+  net        Int
+  paidAt     DateTime?      @map("paid_at") @db.Timestamptz(3)
+  method     PaymentMethod?
+  createdAt  DateTime       @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  run        PayrollRun     @relation(fields: [runId], references: [id])
+
+  @@unique([runId, employeeId])
+  @@map("payslips")
+}
+
+model ExpenseBill {
+  id          String          @id @default(cuid())
+  vendor      String
+  category    ExpenseCategory
+  description String          @default("")
+  amount      Int
+  inputGst    Int             @default(0) @map("input_gst")
+  billDate    DateTime        @map("bill_date") @db.Date
+  dueDate     DateTime        @map("due_date") @db.Date
+  status      ExpenseStatus   @default(UNPAID)
+  paidAt      DateTime?       @map("paid_at") @db.Timestamptz(3)
+  method      PaymentMethod?
+  refType     String?         @map("ref_type")
+  refId       String?         @map("ref_id")
+  createdBy   String?         @map("created_by")
+  createdAt   DateTime        @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("expense_bills")
+}
+
+// ───────────────────────────── platform ─────────────────────────────
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  type      String
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime? @map("read_at") @db.Timestamptz(3)
+  dedupeKey String    @unique @map("dedupe_key")
+  createdAt DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+model EmailOutbox {
+  id        String    @id @default(cuid())
+  to        String
+  subject   String
+  body      String
+  dedupeKey String?   @unique @map("dedupe_key")
+  sentAt    DateTime? @map("sent_at") @db.Timestamptz(3)
+  error     String?
+  createdAt DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("email_outbox")
+}
+
+model ShareLink {
+  id           String    @id @default(cuid())
+  token        String    @unique
+  reportParams Json      @map("report_params")
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdBy    String    @map("created_by")
+  createdAt    DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("share_links")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?  @map("actor_id")
+  actorLabel String   @map("actor_label")
+  action     String
+  entity     String
+  entityId   String   @map("entity_id")
+  before     Json?
+  after      Json?
+  reason     String?
+  at         DateTime @db.Timestamptz(3)
+  createdAt  DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([entity, entityId])
+  @@index([at])
+  @@map("audit_logs")
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  verified  Boolean  @default(true)
+  createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("settings")
+}
