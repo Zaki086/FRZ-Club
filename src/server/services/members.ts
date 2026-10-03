@@ -102,7 +102,7 @@ export async function member360(actor: Actor, memberId: string) {
     billId: bp.booking.billId,
   }));
   const todays = bookings
-    .filter((b) => b.startAt >= dayStart && b.startAt < dayEnd && b.status !== "CANCELLED")
+    .filter((b) => b.startAt >= dayStart && b.startAt < dayEnd && b.status !== "CANCELLED" && b.status !== "CANCELLED_BY_CLUB")
     .sort((a, b) => a.startAt.getTime() - b.startAt.getTime());
   const todaySocial = socials
     .filter((s) => s.status === "JOINED" && s.session.startAt >= dayStart && s.session.startAt < dayEnd)

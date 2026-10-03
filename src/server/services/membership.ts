@@ -10,16 +10,18 @@ import { DomainError } from "../errors";
 import { actorId, actorKey, type Actor } from "../rbac/actor";
 import { assertCan, assertStaffOrSelf } from "../rbac/permissions";
 import { hashPassword } from "../auth/password";
-import { createPasswordSetToken } from "../auth/sessions";
+import { createPasswordSetToken, tokenHash } from "../auth/sessions";
 import { audit } from "./audit";
 import { closeBill, createBill } from "./bills";
 import { idempotent } from "./idempotency";
 import { issueMembershipInvoice } from "./invoices";
-import { notify, queueEmail } from "./notifications";
-import { recordPaymentTx, refundTx } from "./payments";
+import { notify } from "./notifications";
+import { recordPaymentTx } from "./payments";
+import { createRequestedTx } from "./refund-records";
 import { effectiveMembership, quoteMembership } from "./pricing";
 import { getSettings } from "./settings";
 import { guardianUserIds } from "./family";
+import { notifyMember } from "./channels";
 
 const today = () => istDate(clock.now());
 
@@ -40,7 +42,6 @@ export const createMemberSchema = z.object({
   photoUrl: photoSchema,
   emergencyContactName: z.string().trim().max(100).optional().or(z.literal("").transform(() => undefined)),
   emergencyContactPhone: z.string().trim().max(20).optional().or(z.literal("").transform(() => undefined)),
-  password: z.string().min(8, "password must be at least 8 characters").max(100).optional().or(z.literal("").transform(() => undefined)),
   leadId: z.string().optional(),
   // Completion pass P1: a guardian for members under 18 (required) — linked if the guardian is a member too.
   guardianName: z.string().trim().max(100).optional().or(z.literal("").transform(() => undefined)),
@@ -65,7 +66,13 @@ export const createMemberSchema = z.object({
 });
 export type CreateMemberInput = z.input<typeof createMemberSchema>;
 
-export async function createMemberTx(tx: Tx, actor: Actor, input: z.infer<typeof createMemberSchema>) {
+/**
+ * v3 §6.4 WK-1/WK-2: the desk captures identity only. The member's user record (username = phone) exists from
+ * sign-up but has no password and no link, so nobody can log in until the first membership is paid — then the
+ * one-time set-password link is issued (see issueFirstCredentialsTx). `internal.password` is for the sample-data
+ * seed and test fixtures only; no route passes it.
+ */
+export async function createMemberTx(tx: Tx, actor: Actor, input: z.infer<typeof createMemberSchema>, internal: { password?: string } = {}) {
   const t = today();
   if (input.dob >= t) throw new DomainError("VALIDATION_FAILED", "Date of birth must be in the past.");
   if (ageOn(input.dob, t) > 110) throw new DomainError("VALIDATION_FAILED", "Please check the date of birth.");
@@ -74,11 +81,11 @@ export async function createMemberTx(tx: Tx, actor: Actor, input: z.infer<typeof
   }
   if (input.guardianPhone && input.guardianPhone === input.phone) throw new DomainError("VALIDATION_FAILED", "The guardian's mobile must be different from the member's.");
   const guardian = input.guardianPhone ? await tx.member.findUnique({ where: { phone: input.guardianPhone }, select: { id: true } }) : null;
-  const passwordHash = input.password ? await hashPassword(input.password) : null;
+  const passwordHash = internal.password ? await hashPassword(internal.password) : null;
   let user;
   try {
     user = await tx.user.create({
-      data: { name: input.name, phone: input.phone, email: input.email ?? null, passwordHash, role: "MEMBER" },
+      data: { name: input.name, phone: input.phone, email: input.email ?? null, passwordHash, role: "MEMBER", credentialsIssuedAt: passwordHash ? clock.now() : null },
     });
   } catch (e) {
     if (pgErrorCode(e) === "23505") {
@@ -110,28 +117,109 @@ export async function createMemberTx(tx: Tx, actor: Actor, input: z.infer<typeof
   await audit(tx, actor, "member.create", "member", member.id, {
     after: { code: member.memberCode, name: member.name, phone: member.phone },
   });
-  let setPasswordToken: string | null = null;
-  if (!passwordHash) {
-    setPasswordToken = await createPasswordSetToken(user.id, tx);
-    if (member.email) {
-      await queueEmail(tx, {
-        to: member.email,
-        subject: `Welcome to ${(await getSettings(tx)).club.name} — set your password`,
-        body: `Hi ${member.name}, set your member portal password here: ${process.env.APP_URL ?? ""}/set-password/${setPasswordToken}`,
-        dedupeKey: `welcome:${member.id}`,
-      });
-    }
-  }
-  return { member, setPasswordToken };
+  return { member };
+}
+
+// ───────── v3 §6.4 walk-in credentials ─────────
+
+/** Links issued inside a transaction, so the desk's success screen can show the QR right away (never stored raw). */
+const issuedInTx = new WeakMap<Tx, Map<string, string>>();
+export function credentialsIssuedIn(tx: Tx, memberId: string): string | null {
+  return issuedInTx.get(tx)?.get(memberId) ?? null;
+}
+
+/** Guardian-managed Juniors under 13 get no login of their own (their guardian sees them under Family). */
+function noOwnLogin(member: { dob: Date; guardianName: string | null }, onDate: string): boolean {
+  return ageOn(fromDbDate(member.dob), onDate) < 13 && !!member.guardianName;
+}
+
+export const setPasswordUrl = (token: string) => `${(process.env.APP_URL ?? "").replace(/\/$/, "")}/set-password/${token}`;
+
+/**
+ * WK-2/WK-3/WK-4: on the first paid membership, issue the one-time set-password link (no password is ever generated)
+ * and send the welcome on every available channel. Returns the link, or null when no credentials are due.
+ */
+export async function issueFirstCredentialsTx(tx: Tx, actor: Actor, ms: { id: string; startDate: Date; endDate: Date; plan: { name: string }; member: { id: string; userId: string | null; name: string; memberCode: string; dob: Date; guardianName: string | null; phone: string } }) {
+  if (!ms.member.userId) return null;
+  const user = await tx.user.findUniqueOrThrow({ where: { id: ms.member.userId }, select: { passwordHash: true, credentialsIssuedAt: true } });
+  if (user.passwordHash || user.credentialsIssuedAt) return null; // WK-7: existing logins are unchanged
+  if (noOwnLogin(ms.member, today())) return null;
+  const s = await getSettings(tx);
+  const token = await createPasswordSetToken(ms.member.userId, tx, { ttlHours: s.credential_link_hours, createdBy: actorId(actor) });
+  await tx.user.update({ where: { id: ms.member.userId }, data: { credentialsIssuedAt: clock.now() } });
+  await audit(tx, actor, "member.credentials_issued", "member", ms.member.id, { after: { username: ms.member.phone, linkHours: s.credential_link_hours } });
+  const map = issuedInTx.get(tx) ?? new Map<string, string>();
+  map.set(ms.member.id, token);
+  issuedInTx.set(tx, map);
+  const link = setPasswordUrl(token);
+  const start = fmtDate(fromDbDate(ms.startDate));
+  const end = fmtDate(fromDbDate(ms.endDate));
+  await notifyMember(tx, {
+    event: "MEMBERSHIP_WELCOME", userId: ms.member.userId, memberId: ms.member.id, actor,
+    title: `Welcome to ${s.club.name || "the club"}, ${ms.member.name.split(" ")[0]}`,
+    body: [
+      `${ms.plan.name} membership ${start} – ${end}. Member code ${ms.member.memberCode}.`,
+      `Log in with your mobile number ${ms.member.phone}. Set your password (link works for ${s.credential_link_hours} hours, once): ${link}`,
+      `Member portal and your member card: ${(process.env.APP_URL ?? "").replace(/\/$/, "")}/portal`,
+    ].join("\n"),
+    link: "/portal", dedupeKey: `membership-welcome:${ms.id}`,
+    params: [ms.member.name, ms.plan.name, start, end, ms.member.memberCode, link],
+  });
+  return token;
+}
+
+/** WK-6: the desk issues a fresh link (the old ones stop working) and sends it again. */
+export async function reissueCredentials(actor: Actor, memberId: string) {
+  assertCan(actor, "password.links");
+  return withTx(async (tx) => {
+    const member = await tx.member.findUnique({ where: { id: memberId } });
+    if (!member?.userId) throw new DomainError("NOT_FOUND", "Member was not found.");
+    if (noOwnLogin(member, today())) throw new DomainError("VALIDATION_FAILED", `${member.name} is under 13 and managed by their guardian, so has no login of their own.`);
+    const paid = await tx.membership.count({ where: { memberId, status: { in: ["ACTIVE", "SCHEDULED", "EXPIRED"] } } });
+    if (!paid) throw new DomainError("VALIDATION_FAILED", "The login is created when the first membership is paid.");
+    const s = await getSettings(tx);
+    await tx.passwordSetToken.updateMany({ where: { userId: member.userId, usedAt: null, purpose: "SET" }, data: { usedAt: clock.now() } });
+    const token = await createPasswordSetToken(member.userId, tx, { ttlHours: s.credential_link_hours, createdBy: actorId(actor) });
+    await tx.user.update({ where: { id: member.userId }, data: { credentialsIssuedAt: clock.now() } });
+    const n = await tx.passwordSetToken.count({ where: { userId: member.userId, purpose: "SET" } });
+    await audit(tx, actor, "member.credentials_reissued", "member", memberId, { after: { username: member.phone } });
+    const link = setPasswordUrl(token);
+    await notifyMember(tx, {
+      event: "CREDENTIALS_REISSUED", userId: member.userId, memberId, actor,
+      title: "Your new login link", body: `Log in with ${member.phone}. Set your password (link works for ${s.credential_link_hours} hours, once): ${link}`,
+      link: "/login", dedupeKey: `credentials:${member.userId}:${n}`, params: [member.name, link],
+    });
+    return { token, link, username: member.phone, memberCode: member.memberCode, hours: s.credential_link_hours };
+  });
+}
+
+/** WK-5 credentials panel: username, whether the member can log in, the link's state and how the welcome went out. */
+export async function credentialsStatus(actor: Actor, memberId: string) {
+  assertCan(actor, "members.view");
+  const member = await prisma.member.findUnique({ where: { id: memberId } });
+  if (!member?.userId) throw new DomainError("NOT_FOUND", "Member was not found.");
+  const [user, link, deliveries] = await Promise.all([
+    prisma.user.findUniqueOrThrow({ where: { id: member.userId }, select: { passwordHash: true, credentialsIssuedAt: true, lastLoginAt: true } }),
+    prisma.passwordSetToken.findFirst({ where: { userId: member.userId, purpose: "SET", usedAt: null, expiresAt: { gt: new Date() } }, orderBy: { createdAt: "desc" } }),
+    prisma.notificationDelivery.findMany({ where: { memberId, event: { in: ["MEMBERSHIP_WELCOME", "CREDENTIALS_REISSUED"] } }, orderBy: { createdAt: "desc" }, take: 20 }),
+  ]);
+  const latestKey = deliveries[0]?.dedupeKey;
+  return {
+    username: member.phone, memberCode: member.memberCode,
+    canLogIn: !!user.passwordHash, lastLoginAt: user.lastLoginAt, credentialsIssuedAt: user.credentialsIssuedAt,
+    linkActiveUntil: link?.expiresAt ?? null,
+    noOwnLogin: noOwnLogin(member, today()),
+    deliveries: deliveries.filter((d) => d.dedupeKey === latestKey).map((d) => ({ id: d.id, channel: d.channel, status: d.status, error: d.error, at: d.sentAt ?? d.createdAt })),
+  };
 }
 
 /** R-01: front-desk sign-up, optionally buying a plan and paying in the same transaction. */
-export async function createMember(actor: Actor, raw: CreateMemberInput, idempotencyKey?: string | null) {
+export async function createMember(actor: Actor, raw: CreateMemberInput, idempotencyKey?: string | null, internal: { password?: string } = {}) {
   assertCan(actor, "members.manage");
   const input = createMemberSchema.parse(raw);
   return withTx((tx) =>
     idempotent(tx, { key: idempotencyKey, actorKey: actorKey(actor), endpoint: "members.create", body: input }, async () => {
-      const { member, setPasswordToken } = await createMemberTx(tx, actor, input);
+      const { member } = await createMemberTx(tx, actor, input, internal);
       let membership: Membership | null = null;
       let bill: Bill | null = null;
       if (input.plan) {
@@ -151,7 +239,8 @@ export async function createMember(actor: Actor, raw: CreateMemberInput, idempot
         membershipStatus: membership?.status ?? null,
         billId: bill?.id ?? null,
         billStatus: bill?.status ?? null,
-        setPasswordToken,
+        // WK-5: the one-time link issued on activation, for the QR on the desk's success screen (shown once).
+        setPasswordToken: credentialsIssuedIn(tx, member.id),
       };
     }),
   );
@@ -316,15 +405,15 @@ export async function onMembershipBillPaid(tx: Tx, bill: Bill, actor: Actor) {
     const { markLeadWon } = await import("./crm");
     await markLeadWon(tx, actor, ms.member.leadId, ms.memberId);
   }
-  if (ms.member.userId) {
-    await notify(tx, {
-      userIds: [ms.member.userId],
-      type: "MEMBERSHIP",
-      title: status === "SCHEDULED" ? `${ms.plan.name} renewal confirmed` : `Welcome to ${ms.plan.name}`,
+  // WK-2/WK-4: the first paid membership issues the login link with the welcome; WK-7: otherwise a confirmation.
+  const issued = await issueFirstCredentialsTx(tx, actor, ms);
+  if (!issued && ms.member.userId) {
+    await notifyMember(tx, {
+      event: "MEMBERSHIP_RENEWED", userId: ms.member.userId, memberId: ms.member.id, actor,
+      title: status === "SCHEDULED" ? `${ms.plan.name} renewal confirmed` : `${ms.plan.name} membership confirmed`,
       body: `${ms.plan.name} membership ${status === "SCHEDULED" ? "starts" : "active from"} ${fmtDate(start)} until ${fmtDate(end)}.`,
-      link: "/portal/membership",
-      dedupeKey: `membership-paid:${ms.id}`,
-      email: true,
+      link: "/portal/membership", dedupeKey: `membership-paid:${ms.id}`,
+      params: [ms.member.name, ms.plan.name, fmtDate(start), fmtDate(end)],
     });
   }
 }
@@ -469,7 +558,11 @@ export const cancelMembershipSchema = z.object({
   refundReference: z.string().trim().max(100).optional(),
 });
 
-/** MB-13: OWNER/MANAGER only, with a reason and an optional manual refund; audited. */
+/**
+ * MB-13: OWNER/MANAGER only, with a reason and an optional refund; audited. v3 RF-3: the refund is not a policy
+ * refund, so it becomes a refund request that someone else approves (Manager up to the limit, Owner above) and
+ * the desk then pays out. `refundMethod`/`refundReference` are accepted for older clients and ignored.
+ */
 export async function cancelMembership(actor: Actor, raw: z.infer<typeof cancelMembershipSchema>) {
   assertCan(actor, "membership.cancel");
   const input = cancelMembershipSchema.parse(raw);
@@ -480,15 +573,18 @@ export async function cancelMembership(actor: Actor, raw: z.infer<typeof cancelM
       throw new DomainError("CANCEL_NOT_ALLOWED", `This membership is already ${ms.status.toLowerCase()}.`);
     }
     let refundPending = 0;
+    let refundRequest: { id: string; code: string } | null = null;
     if (input.refundAmount && ms.billId) {
-      refundPending = (await refundTx(tx, actor, ms.billId, input.refundAmount, { method: input.refundMethod, reference: input.refundReference, approvalCode: input.refundReference, reason: `Membership cancelled: ${input.reason}` })).pending;
+      const r = await createRequestedTx(tx, actor, { billId: ms.billId, amount: input.refundAmount, reason: "OTHER", note: `Membership cancelled: ${input.reason}` });
+      refundRequest = { id: r.id, code: r.code };
+      refundPending = input.refundAmount;
     }
     if (ms.billId && ms.status === "PENDING_PAYMENT") await closeBill(tx, ms.billId, `Membership cancelled: ${input.reason}`, clock.now());
     const updated = await tx.membership.update({ where: { id: ms.id }, data: { status: "CANCELLED", cancelReason: input.reason } });
     await audit(tx, actor, "membership.cancel", "membership", ms.id, {
       before: { status: ms.status }, after: { status: "CANCELLED", refund: input.refundAmount ?? 0, refundPending }, reason: input.reason,
     });
-    return { ...updated, refundPending };
+    return { ...updated, refundPending, refundRequest };
   });
 }
 
@@ -563,11 +659,14 @@ export async function runMembershipJob(outer?: Tx) {
           ? `${m.member.name} (${m.member.memberCode}) expired on ${fmtDate(end)} and is now priced as a walk-in until renewed.`
           : `${m.member.name} (${m.member.memberCode}) · ${m.plan.name} ends ${fmtDate(end)}. Renew to keep member rates.`;
       if (m.member.userId) {
-        await notify(tx, {
-          // Juniors' guardians get the same reminder (completion pass P1).
-          userIds: [m.member.userId, ...(await guardianUserIds([m.member.id]))], type: "MEMBERSHIP_EXPIRY", title, body, link: "/portal/membership",
-          dedupeKey: `membership-reminder:${m.id}:${type}`, email: true,
-        });
+        // NT-1: every available channel, exactly once per membership + reminder + person + channel. Juniors'
+        // guardians get the same reminder (completion pass P1).
+        for (const userId of [m.member.userId, ...(await guardianUserIds([m.member.id]))]) {
+          await notifyMember(tx, {
+            event: "MEMBERSHIP_EXPIRY", userId, memberId: m.member.id, actor, title, body, link: "/portal/membership",
+            dedupeKey: `membership-reminder:${m.id}:${type}:${userId}`, params: [m.member.name, m.plan.name, fmtDate(end)],
+          });
+        }
       }
       await notify(tx, {
         roles: ["FRONT_DESK"], type: "MEMBERSHIP_EXPIRY", title, body, link: `/app/members/${m.memberId}`,
@@ -584,4 +683,17 @@ export async function membershipPaymentSummary(membershipId: string) {
   if (!ms) throw new DomainError("NOT_FOUND", "Membership was not found.");
   const bill = ms.billId ? await prisma.bill.findUnique({ where: { id: ms.billId } }) : null;
   return { membership: ms, bill, label: `${ms.plan.name} · ${formatINR(ms.price)}` };
+}
+
+/** WK-5 welcome slip: the member's details and, only while it is valid and theirs, the set-password link. */
+export async function welcomeSlip(actor: Actor, memberId: string, token: string | undefined) {
+  assertCan(actor, "members.view");
+  const member = await prisma.member.findUnique({ where: { id: memberId } });
+  if (!member?.userId) throw new DomainError("NOT_FOUND", "Member was not found.");
+  const row = token ? await prisma.passwordSetToken.findUnique({ where: { tokenHash: tokenHash(token) } }) : null;
+  const valid = !!row && row.userId === member.userId && !row.usedAt && row.expiresAt.getTime() > Date.now();
+  return {
+    name: member.name, memberCode: member.memberCode, username: member.phone,
+    link: valid ? setPasswordUrl(token!) : null, linkExpiresAt: valid ? row!.expiresAt : null,
+  };
 }

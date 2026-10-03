@@ -17,6 +17,9 @@ export const CAPABILITY_NAMES = [
   "delivery",
   "gst",
   "photos.upload",
+  // v3 §6.3 notification channels.
+  "push",
+  "whatsapp.api",
 ] as const;
 export type CapabilityName = (typeof CAPABILITY_NAMES)[number];
 export type CapabilityState = { enabled: boolean; reason: string };
@@ -31,6 +34,8 @@ const DISABLED_MESSAGE: Record<CapabilityName, string> = {
   delivery: "Delivery is not available. Please choose pickup at the club.",
   gst: "GST is not configured for this club.",
   "photos.upload": "Photo upload is not available.",
+  push: "Push notifications are not set up for this club.",
+  "whatsapp.api": "Automatic WhatsApp messages are not set up for this club.",
 };
 
 const isTestEnv = () => process.env.NODE_ENV === "test" || !!process.env.VITEST;
@@ -69,6 +74,19 @@ async function verifyRazorpay(): Promise<{ ok: boolean; reason: string }> {
     razorpayCheck = { at: Date.now(), ok: false, reason: `Could not reach Razorpay: ${e instanceof Error ? e.message : String(e)}` };
   }
   return razorpayCheck;
+}
+
+/** Web Push needs HTTPS and a VAPID key pair (npx web-push generate-vapid-keys). */
+export function pushConfigured(): { ok: boolean; reason: string } {
+  if (!(process.env.APP_URL ?? "").startsWith("https://")) return { ok: false, reason: "APP_URL is not HTTPS (browsers only allow push on HTTPS)" };
+  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return { ok: false, reason: "VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not set" };
+  return { ok: true, reason: "VAPID keys set, HTTPS" };
+}
+
+/** WhatsApp Cloud API (Meta): token, phone number id and the app secret that signs delivery webhooks. */
+export function whatsappConfigured(): { ok: boolean; reason: string } {
+  const missing = ["WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_APP_SECRET"].filter((k) => !process.env[k]);
+  return missing.length ? { ok: false, reason: `${missing.join(", ")} not set` } : { ok: true, reason: "credentials set" };
 }
 
 export function smtpConfigured(): boolean {
@@ -112,6 +130,17 @@ export async function computeCapabilities(): Promise<Capabilities> {
         ? { enabled: false, reason: "tax rates are not confirmed by the Owner" }
         : { enabled: true, reason: `GSTIN ${s.club.gstin}` },
     "photos.upload": { enabled: true, reason: "stored on the server disk" },
+    push: (() => {
+      const p = pushConfigured();
+      return { enabled: p.ok, reason: p.reason };
+    })(),
+    "whatsapp.api": (() => {
+      const w = whatsappConfigured();
+      if (!w.ok) return { enabled: false, reason: w.reason };
+      if (!Object.keys(s.whatsapp_templates).length) return { enabled: false, reason: "no approved message templates entered in Settings" };
+      if (!s.whatsapp_verified_at) return { enabled: false, reason: "send a test message from Settings first" };
+      return { enabled: true, reason: `verified ${s.whatsapp_verified_at}` };
+    })(),
   };
   for (const [k, v] of Object.entries(overrides) as Array<[CapabilityName, boolean]>) {
     caps[k] = { enabled: v, reason: v ? "enabled (test override)" : "disabled (test override)" };
@@ -146,6 +175,8 @@ export async function publicCapabilities() {
     delivery: c.delivery.enabled ? { fee: s.delivery.fee, pincodes: s.delivery.pincodes } : null,
     gst: c.gst.enabled,
     upiVpa: c["payments.upi"].enabled ? s.payment_methods.upi_vpa : null,
+    pushKey: c.push.enabled ? process.env.VAPID_PUBLIC_KEY ?? null : null,
+    whatsappApi: c["whatsapp.api"].enabled,
     clubName: s.club.name,
     sampleData: s.instance_mode === "SAMPLE_DATA",
   };

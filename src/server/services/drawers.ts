@@ -8,7 +8,7 @@ import { istDate, istDayRange, isValidDateStr } from "@/lib/time";
 import { prisma, pgErrorCode, withTx, type Tx } from "../db";
 import { DomainError } from "../errors";
 import { actorId, type Actor } from "../rbac/actor";
-import { assertCan } from "../rbac/permissions";
+import { assertCan, can } from "../rbac/permissions";
 import { audit } from "./audit";
 import { notify } from "./notifications";
 
@@ -56,14 +56,28 @@ export async function openDrawer(actor: Actor, raw: z.infer<typeof openDrawerSch
   }, outer);
 }
 
+export const COLLECTION_METHODS = ["CASH", "UPI", "CARD", "ONLINE"] as const;
+
+/**
+ * v3 §5.1: what the session collected, by method (count + amount), and what should physically be in the drawer.
+ * Only cash is in the drawer: expected = float + cash payments − cash refunds (refund pay-outs are the only cash that
+ * leaves a drawer; expenses and salaries paid in cash are paid from the office, not from a counter drawer).
+ */
 async function drawerTotals(db: Tx | typeof prisma, sessionId: string, openingFloat: number) {
   const rows = await db.payment.groupBy({
     by: ["method", "type"],
     where: { drawerSessionId: sessionId, status: "SUCCEEDED" },
     _sum: { amount: true },
+    _count: { _all: true },
   });
   const sum = (method: string, type: string) => rows.find((r) => r.method === method && r.type === type)?._sum.amount ?? 0;
+  const n = (method: string, type: string) => rows.find((r) => r.method === method && r.type === type)?._count._all ?? 0;
+  const collections = COLLECTION_METHODS.map((m) => ({ method: m, count: n(m, "PAYMENT"), amount: sum(m, "PAYMENT"), refundCount: n(m, "REFUND"), refunded: sum(m, "REFUND") }));
   return {
+    collections,
+    totalCollected: collections.reduce((a, c) => a + c.amount, 0),
+    totalRefunded: collections.reduce((a, c) => a + c.refunded, 0),
+    online: sum("ONLINE", "PAYMENT") - sum("ONLINE", "REFUND"),
     cashIn: sum("CASH", "PAYMENT"),
     cashOut: sum("CASH", "REFUND"),
     cashExpected: openingFloat + sum("CASH", "PAYMENT") - sum("CASH", "REFUND"),
@@ -107,6 +121,31 @@ export async function myDrawer(actor: Actor) {
   const d = await currentDrawer(prisma, actor);
   if (!d) return { open: null };
   return { open: { ...d, ...(await drawerTotals(prisma, d.id, d.openingFloat)) } };
+}
+
+/**
+ * v3 §5.1 drill-down: the payments (and refunds) behind one method's total in a session. They add up exactly to the
+ * total on the drawer screen. The session's owner, and Owner/Manager/Accountant, may look.
+ */
+export async function drawerPayments(actor: Actor, sessionId: string, method: string) {
+  const d = await prisma.cashDrawerSession.findUnique({ where: { id: sessionId } });
+  if (!d) throw new DomainError("NOT_FOUND", "Drawer session was not found.");
+  const own = actor.kind === "USER" && actor.userId === d.userId;
+  if (!own && !can(actor, "cash.reconcile") && !can(actor, "dashboard.ops")) throw new DomainError("FORBIDDEN", "Not allowed: you cannot see this drawer.");
+  if (!(COLLECTION_METHODS as readonly string[]).includes(method)) throw new DomainError("VALIDATION_FAILED", "Unknown payment method.");
+  const rows = await prisma.payment.findMany({
+    where: { drawerSessionId: sessionId, status: "SUCCEEDED", method: method as (typeof COLLECTION_METHODS)[number] },
+    include: { bill: { select: { customerName: true, sourceType: true } } },
+    orderBy: { occurredAt: "asc" },
+  });
+  const list = rows.map((p) => ({ id: p.id, type: p.type, amount: p.amount, reference: p.reference ?? p.approvalCode, at: p.occurredAt, customer: p.bill.customerName, source: p.bill.sourceType, billId: p.billId }));
+  return {
+    method,
+    payments: list.filter((p) => p.type === "PAYMENT"),
+    refunds: list.filter((p) => p.type === "REFUND"),
+    total: list.filter((p) => p.type === "PAYMENT").reduce((a, p) => a + p.amount, 0),
+    refunded: list.filter((p) => p.type === "REFUND").reduce((a, p) => a + p.amount, 0),
+  };
 }
 
 /** Accountant's daily reconciliation: every drawer session opened that IST day, with totals and deposits. */

@@ -33,7 +33,9 @@ export const CAPABILITIES = {
   "bar.void_after_prep": [O, M],
   "bar.close_day": [O, M],
   "bar.report": [O, M, BS],
-  "refunds.issue": [O, M],
+  // v3 §5.2 RF-1/RF-3: staff ask for refunds on bills they can see; Owner/Manager decide (Manager up to the limit).
+  "refunds.request": [O, M, FD, SS, BS],
+  "refunds.approve": [O, M],
   "membership.cancel": [O, M],
   "crm": [O, M, FD],
   "invoices": [O, M, AC],
@@ -67,6 +69,18 @@ export const CAPABILITIES = {
   "privacy.manage": [O],
   // Completion pass §7 (manager): what each staff member did, by day.
   "staff.activity": [O, M],
+  // v3 §4: the staff directory, employee pages and attendance (Accountant read-only); AT-5 corrections.
+  "staff.directory": [O, M, AC],
+  "attendance.correct": [O, M],
+  // v3 §6.3: the notification log and the front desk's "Messages to send".
+  "notifications.log": [O, M, FD],
+  // v3 LA-7: reassigning a lead (with a reason).
+  "leads.assign": [O, M],
+  // v3 §9.2: the price book (base prices, bands, special dates, promotions); §9.3 product admin uses shop.stock.
+  "pricing.manage": [O, M],
+  // D-79: shop staff price their own goods — shop product/variant prices and product discounts (scope PRODUCTS only),
+  // through the same price book and guardrails. Courts, social play, plans and the bar menu stay `pricing.manage`.
+  "shop.pricing": [O, M, SS],
 } as const satisfies Record<string, Role[]>;
 
 export type Capability = keyof typeof CAPABILITIES;

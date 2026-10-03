@@ -12,6 +12,12 @@ import { flushEmailOutbox, notify } from "../services/notifications";
 import { failStalePendingPayments } from "../services/payments";
 import { expireHolds } from "../services/shop";
 import { getSettings } from "../services/settings";
+import { expireStaleLeave } from "../services/staff";
+import { flagMissingClockouts } from "../services/attendance";
+import { flushDeliveries } from "../services/channels";
+import { runDuesReminders, runInvoiceDueReminders } from "../services/dues";
+import { autoRefundClubCancellations } from "../services/closures";
+import { applyDuePriceChanges } from "../services/price-book";
 
 /** Every 5 minutes: no-shows/completions (BK-9/10), order holds (SH-5), overdue leads (CR-4), stale gateway payments. */
 export async function runFrequentJobs() {
@@ -22,6 +28,9 @@ export async function runFrequentJobs() {
     leads: await flagOverdueLeads(),
     stalePayments: await failStalePendingPayments(Math.max(30, s.online_hold_minutes * 2)),
     emails: await flushEmailOutbox(),
+    missingClockOuts: await flagMissingClockouts(),
+    deliveries: await flushDeliveries(),
+    prices: await applyDuePriceChanges(),
   };
 }
 
@@ -61,6 +70,10 @@ export async function runDailyJobs() {
     invoices: await markOverdueInvoices(),
     lowStock: await lowStockDigest(),
     overdueExpenses: overdueExpenses.length,
+    leave: await expireStaleLeave(),
+    dues: await runDuesReminders(),
+    invoiceDues: await runInvoiceDueReminders(),
+    clubCancellations: await autoRefundClubCancellations(),
   };
 }
 

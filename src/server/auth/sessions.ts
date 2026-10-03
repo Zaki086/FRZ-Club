@@ -9,7 +9,21 @@ import type { UserActor } from "../rbac/actor";
 import { verifyPassword } from "./password";
 
 export const SESSION_COOKIE = "cc_session";
+/** @deprecated kept for imports; the windows are in SESSION_POLICY. */
 export const SESSION_DAYS = 7;
+
+/**
+ * v3 §6.1 sliding sessions. A session ends after `idle` days without use or `absolute` days after login, whichever
+ * comes first. Using the app extends the idle window (when less than half is left, at most one write per 10 minutes).
+ */
+export const SESSION_POLICY = {
+  MEMBER: { idleDays: 30, absoluteDays: 90 },
+  STAFF: { idleDays: 7, absoluteDays: 30 },
+  KIOSK: { idleDays: 90, absoluteDays: 90 },
+} as const;
+export type SessionKind = keyof typeof SESSION_POLICY;
+const DAY_MS = 86_400_000;
+const SLIDE_MIN_INTERVAL_MS = 10 * 60_000;
 
 export function tokenHash(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -30,9 +44,15 @@ export const ROLE_HOME: Record<Role, string> = {
 export const MAX_FAILED_LOGINS = 5;
 export const LOCK_MINUTES = 15;
 
-export function findUserByIdentifier(identifier: string) {
+export async function findUserByIdentifier(identifier: string) {
   const id = identifier.trim();
-  return id.includes("@") ? prisma.user.findUnique({ where: { email: id.toLowerCase() } }) : prisma.user.findUnique({ where: { phone: normalisePhone(id) } });
+  if (id.includes("@")) return prisma.user.findUnique({ where: { email: id.toLowerCase() } });
+  // v3 WK-2: a member may also log in with their member code (CC-000123).
+  if (/^[A-Za-z]{2,4}-?\d{3,}$/.test(id)) {
+    const m = await prisma.member.findFirst({ where: { memberCode: { equals: id.toUpperCase().replace(/^([A-Z]+)-?/, "$1-"), mode: "insensitive" } }, select: { userId: true } });
+    return m?.userId ? prisma.user.findUnique({ where: { id: m.userId } }) : null;
+  }
+  return prisma.user.findUnique({ where: { phone: normalisePhone(id) } });
 }
 
 /**
@@ -57,10 +77,28 @@ export async function login(identifier: string, password: string) {
     throw new DomainError("UNAUTHENTICATED", "Wrong phone/email or password.");
   }
   const token = randomBytes(32).toString("base64url");
-  const expiresAt = new Date(Date.now() + SESSION_DAYS * 86_400_000);
-  await prisma.session.create({ data: { userId: user.id, tokenHash: tokenHash(token), expiresAt } });
+  const kind: SessionKind = user.role === "MEMBER" ? "MEMBER" : "STAFF";
+  const policy = SESSION_POLICY[kind];
+  const absoluteExpiresAt = new Date(now.getTime() + policy.absoluteDays * DAY_MS);
+  const expiresAt = new Date(now.getTime() + policy.idleDays * DAY_MS);
+  await prisma.session.create({ data: { userId: user.id, tokenHash: tokenHash(token), kind, expiresAt, absoluteExpiresAt, lastSeenAt: now } });
   await prisma.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: now } });
-  return { token, expiresAt, user: { id: user.id, name: user.name, role: user.role }, home: ROLE_HOME[user.role] };
+  // The cookie lives until the session's absolute end; the server enforces the idle window.
+  return { token, expiresAt: absoluteExpiresAt, idleExpiresAt: expiresAt, user: { id: user.id, name: user.name, role: user.role }, home: ROLE_HOME[user.role] };
+}
+
+/**
+ * v3 §6.1: turn the current staff session into a kiosk device session (the entrance tablet): 90 days, for staff who
+ * may check members in. Returns the new end for the cookie.
+ */
+export async function makeKioskSession(token: string | undefined, canCheckin: boolean) {
+  if (!token) throw new DomainError("UNAUTHENTICATED", "Please log in.");
+  if (!canCheckin) throw new DomainError("FORBIDDEN", "Not allowed: only staff who check members in can set up a kiosk.");
+  const now = Date.now();
+  const end = new Date(now + SESSION_POLICY.KIOSK.absoluteDays * DAY_MS);
+  const r = await prisma.session.updateMany({ where: { tokenHash: tokenHash(token), expiresAt: { gt: new Date(now) } }, data: { kind: "KIOSK", expiresAt: end, absoluteExpiresAt: end, lastSeenAt: new Date(now) } });
+  if (!r.count) throw new DomainError("UNAUTHENTICATED", "Your session has ended. Please log in again.");
+  return { expiresAt: end };
 }
 
 /** Expire every session of a user except `keepToken` (password change, "log out everywhere"). */
@@ -84,7 +122,16 @@ export async function actorFromToken(token: string | undefined): Promise<UserAct
     where: { tokenHash: tokenHash(token) },
     include: { user: { include: { member: { select: { id: true } }, employee: { select: { id: true } } } } },
   });
-  if (!session || session.expiresAt.getTime() < Date.now() || !session.user.active) return null;
+  const nowMs = Date.now();
+  if (!session || session.expiresAt.getTime() < nowMs || !session.user.active) return null;
+  const absolute = session.absoluteExpiresAt?.getTime() ?? session.expiresAt.getTime();
+  if (absolute < nowMs) return null;
+  // Slide the idle window: only when less than half of it is left, and at most once per 10 minutes.
+  const policy = SESSION_POLICY[(session.kind as SessionKind) in SESSION_POLICY ? (session.kind as SessionKind) : "STAFF"];
+  const idleMs = policy.idleDays * DAY_MS;
+  if (session.expiresAt.getTime() - nowMs < idleMs / 2 && (!session.lastSeenAt || nowMs - session.lastSeenAt.getTime() > SLIDE_MIN_INTERVAL_MS)) {
+    await prisma.session.update({ where: { id: session.id }, data: { expiresAt: new Date(Math.min(nowMs + idleMs, absolute)), lastSeenAt: new Date(nowMs) } });
+  }
   const u = session.user;
   return {
     kind: "USER",
@@ -97,10 +144,10 @@ export async function actorFromToken(token: string | undefined): Promise<UserAct
 }
 
 /** One-time set-password link (MB-1), or a password-reset link (completion pass §6: 1 hour, RESET). */
-export async function createPasswordSetToken(userId: string, tx?: Tx, opts: { purpose?: "SET" | "RESET"; createdBy?: string | null } = {}): Promise<string> {
+export async function createPasswordSetToken(userId: string, tx?: Tx, opts: { purpose?: "SET" | "RESET"; createdBy?: string | null; ttlHours?: number } = {}): Promise<string> {
   const token = randomBytes(24).toString("base64url");
   const purpose = opts.purpose ?? "SET";
-  const ttl = purpose === "RESET" ? 60 * 60_000 : 7 * 86_400_000;
+  const ttl = opts.ttlHours ? opts.ttlHours * 3_600_000 : purpose === "RESET" ? 60 * 60_000 : 7 * 86_400_000;
   await (tx ?? prisma).passwordSetToken.create({
     data: { userId, tokenHash: tokenHash(token), purpose, createdBy: opts.createdBy ?? null, expiresAt: new Date((purpose === "RESET" ? Date.now() : clock.now().getTime()) + ttl) },
   });

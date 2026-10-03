@@ -59,7 +59,7 @@ async function compose(input: z.infer<typeof whatsappSchema>): Promise<{ phone: 
       const due = bill ? billDue(bill) : 0;
       const when = fmtDateTime(b.reservation.startAt);
       const text =
-        b.status === "CANCELLED"
+        b.status === "CANCELLED" || b.status === "CANCELLED_BY_CLUB"
           ? `Hi ${person?.name ?? ""}, your booking ${b.bookingCode} (${b.reservation.court.name}, ${when}) has been cancelled. — ${club}`
           : `Hi ${person?.name ?? ""}, your court booking ${b.bookingCode} is confirmed: ${b.reservation.court.name}, ${when}.${due > 0 ? ` ${formatINR(due)} is due at the front desk before check-in.` : ""} — ${club}`;
       return { phone: person?.phone ?? null, text, entity: "booking", entityId: b.id };
