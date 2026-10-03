@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { forbidden } from "next/navigation";
 import { requireUser } from "@/server/auth/current";
 import { can } from "@/server/rbac/permissions";
@@ -9,7 +10,11 @@ export default async function MessagesPage() {
   if (!can(actor, "messages.log")) forbidden();
   return (
     <div>
-      <PageHeader title="Message log" subtitle="Every email the app delivered (or failed to) and every WhatsApp message staff opened. WhatsApp shows “opened”: the app can't see whether it was sent." />
+      <PageHeader
+        title="Message log"
+        subtitle="Every email the app delivered (or failed to) and every WhatsApp message sent automatically, failed or opened by staff. A WhatsApp opened by staff shows “opened”: the app can't see whether it was sent."
+        actions={<Link className="text-sm font-semibold text-primary hover:underline" href="/app/settings/messages/whatsapp">WhatsApp messages: template, status timeline, tries →</Link>}
+      />
       <MessageLogView />
     </div>
   );

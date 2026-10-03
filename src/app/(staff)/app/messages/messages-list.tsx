@@ -14,7 +14,31 @@ type Row = {
   id: string; event: string; channel: string; status: string; created_at: string; title: string; body: string; error: string | null;
   to_address: string | null; member_id: string | null; member_name: string | null; member_code: string | null; recipient: string;
   trigger: string; triggered_by_name: string | null; handled_by_name: string | null;
+  // v4 §5.4: automatic WhatsApp — template, tries and the status timeline.
+  wa_template: string | null; attempts: number; urgent: boolean; sent_at: string | null; delivered_at: string | null; wa_read_at: string | null;
+  failed_at: string | null; next_try_at: string | null;
 };
+
+const at = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+/** Queued → sent → delivered → read (or failed), with times; the next try while a retry is waiting. */
+export function DeliveryTimeline({ r }: { r: { created_at: string; sent_at: string | null; delivered_at: string | null; wa_read_at?: string | null; read_at?: string | null; failed_at: string | null; next_try_at: string | null; attempts: number } }) {
+  const steps: Array<[string, string | null | undefined]> = [
+    ["Queued", r.created_at], ["Sent", r.sent_at], ["Delivered", r.delivered_at], ["Read", r.wa_read_at ?? r.read_at], ["Failed", r.failed_at],
+  ];
+  return (
+    <ol className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" aria-label="Status timeline">
+      {steps.filter(([, t]) => !!t).map(([label, t], i) => (
+        <li key={label} className="flex items-center gap-2">
+          {i ? <span aria-hidden className="text-muted-foreground">→</span> : null}
+          <span className={label === "Failed" ? "font-semibold text-destructive" : ""}>{label} {at(t!)}</span>
+        </li>
+      ))}
+      {r.next_try_at ? <li className="text-muted-foreground">· next try {at(r.next_try_at)}</li> : null}
+      {r.attempts > 0 ? <li className="text-muted-foreground">· {r.attempts} {r.attempts === 1 ? "try" : "tries"}</li> : null}
+    </ol>
+  );
+}
 
 const CHANNEL: Record<string, string> = { IN_APP: "In-app", PUSH: "Push", EMAIL: "Email", WHATSAPP_API: "WhatsApp (auto)", WHATSAPP_MANUAL: "WhatsApp (by hand)" };
 const STATUS: Record<string, { label: string; tone: "green" | "amber" | "red" | "neutral" | "blue" }> = {
@@ -79,6 +103,8 @@ export function MessagesList({ canSend }: { canSend: boolean }) {
       rowExtra={(r) => (
         <div className="flex flex-col gap-1 text-sm">
           <p className="whitespace-pre-line">{r.body}</p>
+          {r.wa_template ? <p className="text-xs">WhatsApp template <span className="font-mono">{r.wa_template}</span></p> : null}
+          {r.channel === "WHATSAPP_API" || r.channel === "PUSH" || r.channel === "EMAIL" ? <DeliveryTimeline r={r} /> : null}
           <p className="text-xs text-muted-foreground">
             {r.trigger === "system" ? "Sent by the system" : `Triggered by ${r.triggered_by_name ?? "staff"}`}
             {r.handled_by_name ? ` · sent by hand by ${r.handled_by_name}` : ""}

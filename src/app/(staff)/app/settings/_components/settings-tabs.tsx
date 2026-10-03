@@ -9,6 +9,8 @@ import { ClubTab } from "./club-tab";
 import { CourtsTab } from "./courts-tab";
 import { UsersTab } from "./users-tab";
 import { PaymentsTab } from "./payments-tab";
+import { CashTab } from "./cash-tab";
+import { WhatsAppTab } from "./whatsapp-tab";
 import type { SettingRow } from "./shared";
 
 export function SettingsTabs({ selfUserId }: { selfUserId: string }) {
@@ -22,6 +24,8 @@ export function SettingsTabs({ selfUserId }: { selfUserId: string }) {
         <TabsTrigger value="tax">Tax rates{taxUnverified ? " ⚠" : ""}</TabsTrigger>
         <TabsTrigger value="club">Club details</TabsTrigger>
         <TabsTrigger value="payments">Payments & services</TabsTrigger>
+        <TabsTrigger value="cash">Cash drawers</TabsTrigger>
+        <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger>
         <TabsTrigger value="courts">Courts</TabsTrigger>
         <TabsTrigger value="users">Users & roles</TabsTrigger>
       </TabsList>
@@ -40,6 +44,12 @@ export function SettingsTabs({ selfUserId }: { selfUserId: string }) {
         </TabsContent>
         <TabsContent value="payments">
           <DataState state={settings}>{(rows) => <PaymentsTab rows={rows} onSaved={() => void settings.reload()} />}</DataState>
+        </TabsContent>
+        <TabsContent value="whatsapp">
+          <WhatsAppTab />
+        </TabsContent>
+        <TabsContent value="cash">
+          <DataState state={settings}>{(rows) => <CashTab rows={rows} onSaved={() => void settings.reload()} />}</DataState>
         </TabsContent>
         <TabsContent value="courts">
           <CourtsTab />

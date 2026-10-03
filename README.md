@@ -19,10 +19,12 @@ npm run seed:demo               # OPTIONAL sample club: 60 days of history throu
 npm run dev                     # http://localhost:3200   — and in a second terminal:  npm run worker
 ```
 
-`npm run worker` runs the scheduled jobs (every 5 minutes: no-shows/completions, order holds, overdue and escalated
-leads, stale gateway payments, email outbox, notification deliveries (push / email / WhatsApp API), missing clock-outs,
-scheduled price changes; daily 00:05 IST: membership expiry + reminders, dues reminders, overdue invoices, low-stock
-digest, expired leave requests, club-cancelled bookings with no choice → refund).
+`npm run worker` runs the scheduled jobs (every 30 seconds: queued WhatsApp messages; every minute: notification
+deliveries (push / email / WhatsApp API); every 5 minutes: no-shows/completions, order holds, overdue and escalated
+leads, stale gateway payments, email outbox, missing clock-outs, scheduled price changes, session and social-play
+reminders 2 hours before, club-cancellation choice reminders (day 3 and day 6, daytime); daily 00:05 IST: membership
+expiry + reminders, dues reminders, overdue invoices, low-stock digest, expired leave requests, club-cancelled bookings
+with no choice → refund, reminders for refunds not yet collected).
 
 ### A real club (first run)
 
@@ -48,6 +50,7 @@ banner), and refuses to touch a database with real club data. To rebuild the sam
 ```bash
 npm run build
 pm2 start ecosystem.config.cjs   # champions-web (port 3200, all interfaces) + champions-worker (scheduled jobs)
+                                 # + champions-https (HTTPS on its own port, see below)
 pm2 save                         # restored automatically after a reboot (pm2 startup)
 ```
 
@@ -60,11 +63,61 @@ HTTPS it is. Dev tools (time travel) are disabled in production by design.
 The camera QR scan, Web Push and secure cookies need HTTPS. Two ways (details in `PROGRESS.md`, v3 phase 1):
 - **A reverse proxy** you control (Caddy/nginx) with a real domain, forwarding to `127.0.0.1:3200` — the recommended
   set-up; the exact Caddy block is in `PROGRESS.md`.
-- **A Cloudflare quick tunnel** (what this server uses, because ports 80/443 belong to another project): the PM2 app
-  `champions-tunnel` (`scripts/tunnel.mjs`) keeps `APP_URL` in step with the tunnel's address (in `.tunnel-url`) and
-  restarts only the web and worker processes when it changes. The address changes when the tunnel restarts.
+- **Its own HTTPS port with a Let's Encrypt certificate** (what this server uses, because ports 80/443 belong to another
+  project): PM2 `champions-https` (`scripts/https.mjs`) serves `https://<HTTPS_HOSTS[0]>:<HTTPS_PORT>` and forwards to
+  `127.0.0.1:3200`. The certificate covers sslip.io / nip.io names such as `champions.38-49-215-124.sslip.io`; it is
+  obtained and renewed (30 days before expiry, no restart) with the DNS-01 challenge, which sslip.io and nip.io delegate
+  to the IP inside the name — the script answers it on `HTTPS_DNS_BIND:53` only while `lego` runs (put the lego binary
+  in `.bin/lego`; `node scripts/https.mjs --issue-only --staging` tries Let's Encrypt staging first). Set
+  `HTTPS_HOSTS` (comma-separated names, the first is the public address), `HTTPS_PORT` (default 3443),
+  `HTTPS_DNS_BIND` (this server's public IP) and optionally `ACME_EMAIL`, and `APP_URL=https://<first name>:<port>`.
+  Live address: https://champions.38-49-215-124.sslip.io:3443
 
-When `APP_URL` is HTTPS, plain-HTTP visits to that host are redirected (308) and HSTS is sent.
+When `APP_URL` is HTTPS, plain-HTTP visits to that host are redirected (308; host names are compared without the
+port) and HSTS is sent.
+
+### Web Push
+
+```bash
+npm run vapid:generate          # prints a VAPID key pair for .env (once per installation)
+```
+
+Put `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` (`mailto:` the club's email; when empty the club email
+from Settings is used) in `.env` and restart the web and worker processes; keep the private key secret, and note that
+changing the keys later makes every device turn push on again. Browsers allow push only on HTTPS, so push
+is offered only when `APP_URL` is `https://` and both keys are set. Nobody is asked on page load: members see a "Get
+alerts for bookings, refunds and renewals" card on the portal home, staff in My Account; on an iPhone, alerts work
+only after "Add to Home Screen" (iOS 16.4+). Each person's devices are listed in their notification settings with
+Remove. Non-urgent pushes are held from 22:00 to 07:00 IST; session reminders and same-day club cancellations go at once.
+
+### WhatsApp (Meta WhatsApp Cloud API)
+
+Club cancellations, reschedules and refunds are sent automatically on WhatsApp once this is set up (welcome, expiry
+and dues too, if their optional templates are approved). Without it, every message still goes out in the app, by push
+and by email, and WhatsApp becomes a task in **Messages to Send** for the desk to send from the club phone.
+
+1. In Meta for Developers, create an app with the WhatsApp product and connect the club's WhatsApp Business Account
+   and phone number.
+2. Business Settings → System users: create a system user with access to the app and the WhatsApp account, and
+   generate a permanent token with `whatsapp_business_messaging` and `whatsapp_business_management` →
+   `WHATSAPP_ACCESS_TOKEN`.
+3. WhatsApp → API Setup: the number's Phone number ID → `WHATSAPP_PHONE_NUMBER_ID`; the WhatsApp Business Account ID →
+   `WHATSAPP_BUSINESS_ACCOUNT_ID`.
+4. App settings → Basic: the App secret → `WHATSAPP_APP_SECRET` (checks the webhook's `X-Hub-Signature-256`).
+5. A long random string of your choice → `WHATSAPP_WEBHOOK_VERIFY_TOKEN`; the Graph API version shown in Meta's
+   dashboard (e.g. `v23.0`) → `WHATSAPP_GRAPH_API_VERSION` (the code has no default). Restart the web and worker
+   processes.
+6. WhatsApp → Configuration: callback URL `<APP_URL>/api/whatsapp/webhook`, verify token = the value of
+   `WHATSAPP_WEBHOOK_VERIFY_TOKEN`, subscribe to **messages**. Settings → WhatsApp then shows "Webhook verified".
+7. WhatsApp Manager → Message templates: submit the eight required templates (and, if wanted, the three optional ones)
+   exactly as written in `docs/whatsapp-templates.md` (category Utility, English) and wait for Meta's approval.
+8. Settings → WhatsApp (Owner): **Check access token**, map each template (name + language code), **Fetch templates**
+   (shows which are APPROVED), then **Send test message** to a phone. Automatic sending is on only after the token
+   check and a successful test message, and each event uses WhatsApp only while its template is mapped and APPROVED.
+
+Only people who ticked "Send me booking and refund updates on WhatsApp" (sign-up, trial and enquiry forms, or Portal →
+Notifications) get automatic messages; a reply of STOP turns it off for that number, and any other reply becomes a
+task in Messages to Send. Meta charges per message.
 
 ## Sample logins (only after `npm run seed:demo`)
 
@@ -94,9 +147,11 @@ anywhere in the code or the docs. Log in at `/login` with phone or email. All id
 The seed also leaves: one racket with exactly 1 unit (**Pro Staff 97 v14**), a few items below reorder level,
 members expiring within 7 days and already expired, a Junior turning 18 this week, a weekly **Friday Social**
 series (Courts 3–4, 19:00–22:00), leads in every status (some overdue), three business clients (one invoice paid,
-one part-paid, one overdue), a completed payroll run, daily cash-drawer sessions (a few with a variance) and Court 1
-free this evening for the demo. The sample club takes cash and card; UPI is off (its sample UPI ID receives no money)
-until the Owner enters and confirms a real one in Settings → Payments & services.
+one part-paid, one overdue), a completed payroll run, three tills (Front Desk Till 1, Shop Till, Bar Till) with daily
+sessions — a 14:00 handover at the desk, drops to the safe, bank deposits on Tuesdays and Fridays, a few variances
+(the latest still waiting for approval) — and Court 1 free this evening for the demo. The sample club takes cash and
+card; UPI is off (its sample UPI ID receives no money) until the Owner enters and confirms a real one in Settings →
+Payments & services. A real club chooses its methods there too (the live club currently takes cash only).
 
 ## Real or absent
 
@@ -111,32 +166,62 @@ The app only offers what the club can really do (Settings → Payments & service
 | Email | `SMTP_HOST` + `SMTP_FROM` set and a test email sent from Settings |
 | Delivery | switched on with at least one PIN code |
 | GST | a GSTIN with a valid check digit **and** tax rates confirmed by the Owner; otherwise no GST is charged |
-| Push notifications | HTTPS `APP_URL` + `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` (`npx web-push generate-vapid-keys`); each person turns it on per device |
-| WhatsApp (automatic) | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET` (+ `WHATSAPP_VERIFY_TOKEN` for the webhook), approved template names in Settings and a successful test message. Meta charges per message. Otherwise WhatsApp messages wait under **Messages to send** for the desk to send from the club phone |
+| Push notifications | HTTPS `APP_URL` + `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` (`npm run vapid:generate`) + `VAPID_SUBJECT`; each person turns it on per device (see Web Push above) |
+| WhatsApp (automatic) | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_BUSINESS_ACCOUNT_ID`, `WHATSAPP_APP_SECRET`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN`, `WHATSAPP_GRAPH_API_VERSION`; then Settings → WhatsApp: token check, templates mapped and APPROVED (`docs/whatsapp-templates.md`), a successful test message; people must opt in. Meta charges per message. Otherwise WhatsApp messages wait under **Messages to Send** for the desk to send from the club phone |
 
-Counter payments and refunds need the staff member's **cash drawer** to be open (`/app/drawer`, which shows what was
-collected by method and the cash that should be in it); the accountant reconciles each day at `/app/finance/cash`.
+### The cash drawer day
+
+Every counter that takes cash has a till; the Owner sets tills, default floats, note/coin denominations, blind close
+and the variance tolerance in Settings → Cash drawers.
+
+1. **Open** — on My Cash Drawer (`/app/drawer`) the staff member picks the till and counts the float by denomination.
+   Counter payments and refunds need an open drawer (`DRAWER_NOT_OPEN`); one person per till, one till per person.
+2. **Payments** — the cash dialog asks for the amount tendered and shows the change; the drawer grows by the amount
+   applied to the bill, at once (header badge and My Cash Drawer). Change must already be in the till
+   (`INSUFFICIENT_CHANGE` → Pay in).
+3. **Refunds** — an approved cash refund waits at the desk as "Ready to collect" with a refund code and QR. The desk
+   scans or searches it, compares the member photo, ticks "Identity checked", pays it from the drawer
+   (`INSUFFICIENT_CASH_IN_DRAWER` when the till can't cover it) and prints the receipt.
+4. **Drops** — Cash drop moves excess cash to the safe with a sealed-bag reference; Pay in (from the safe) and Pay out
+   (petty cash, recorded as a paid expense) need a reason.
+5. **Close** — a blind count by denomination, then expected, counted and the variance are shown. Within the tolerance
+   (₹50) the session closes; above it the staff member gives a reason and it waits in the Manager/Owner "Needs your
+   approval" panel. The float left for the next shift stays in the till; the rest goes to the safe. A handover is a
+   close and an open of the same till.
+6. **Reconciliation** (`/app/finance/cash`) — ledger cash vs drawer movements, refunds, variances, drops vs the safe,
+   and bank deposits; every line reconciles or shows the difference in red with a link. The Owner sees every till,
+   the safe and the bank deposits on Cash Drawers (`/app/finance/drawers`).
+
+### Refunds and messages
+
 Every refund is a **refund request** (`/app/refunds`): refunds a rule requires (in-time cancellation, club
-cancellation, over-payment, return window) are approved automatically; others need a Manager (up to the limit in
-Settings) or the Owner, and never the person who asked; money goes back the way it came — through the gateway, or at
-the desk with the UPI reference, card reversal reference or cash from an open drawer.
+cancellation, over-payment, return window) are approved automatically; others — including members' requests from the
+portal — need a Manager (up to the limit in Settings) or the Owner, and never the person who asked. Money goes back the
+way it came: online through the gateway; otherwise it waits at the desk — cash as "Ready to collect" (above), UPI or
+card paid out with its reference. Uncollected refunds never expire: members are reminded after 3 and 7 days, then every 14 days
+(at most 4 reminders), and the Owner sees them as **Refunds payable** under "What we owe". Members follow each refund
+in Portal → Refunds and see every payment in Portal → Payments.
 
-Members get every message (welcome with their login link, renewals, expiry and dues reminders, refunds, club
-cancellations) in the app and on each channel that works and they haven't turned off; the **Notification log**
+Members get every message (welcome with their login link, renewals, expiry and dues reminders, bookings, session
+reminders, refunds, club cancellations) in the app and on each channel that works and they haven't turned off — push,
+email, and WhatsApp (automatic for those who opted in, otherwise a task in Messages to Send). The **Notification log**
 (`/app/messages`) records every attempt per channel — a channel that isn't available is recorded as not available,
-never as sent.
+never as sent; the Owner's Message Log (`/app/settings/messages` → WhatsApp) shows each WhatsApp message's status
+timeline (sent → delivered → read, or the error).
 
 ## Where things are
 
 | Area | URL |
 |---|---|
 | Public website | `/`, `/plans`, `/availability`, `/shop`, `/trial`, `/enquire`, `/quote/[token]` |
-| Member portal | `/portal` (card QR, book, social, bookings, orders, tab, invoices, membership) |
-| Staff app | `/app` (role-scoped dashboard) — front desk `/app/desk` (renewals & dues `/app/desk/expiring`), courts `/app/courts` (Close courts), shop `/app/shop` (products `/app/shop/products`), bar `/app/bar`, KDS `/app/bar/kds`, CRM `/app/crm`, refunds `/app/refunds`, messages `/app/messages`, price book `/app/pricing`, finance `/app/finance/*` (all cash drawers `/app/finance/drawers`), staff `/app/staff/*` (directory, attendance, roster, leave), reports `/app/reports`, settings `/app/settings` |
+| Signed links (no login) | `/r/<token>` — choose a new time or a refund after a club cancellation (sent on WhatsApp to the booker); `/rq/<token>` — a refund's collection QR |
+| Member portal | `/portal` (card QR, book, social, bookings, orders, tab, invoices, membership, refunds, payments) |
+| Staff app | `/app` (dashboard per role) — front desk `/app/desk` (check-in risk `/app/desk/risk`, renewals & dues `/app/desk/expiring`), my cash drawer `/app/drawer`, refunds `/app/refunds`, courts `/app/courts` (Close courts), shop `/app/shop` (products `/app/shop/products`), bar `/app/bar`, KDS `/app/bar/kds`, CRM `/app/crm`, messages `/app/messages`, notifications `/app/notifications`, price book `/app/pricing`, employees `/app/employees`, finance `/app/finance/*` (cash drawers, safe and bank deposits `/app/finance/drawers`, cash reconciliation `/app/finance/cash`), staff `/app/staff/*` (directory, attendance, roster, leave), reports `/app/reports`, settings `/app/settings` |
+| Menus and access | The Owner, Manager and Front desk menus are fixed lists (`src/app/(staff)/app/_nav.ts`); the other roles' menus are unchanged. For the Manager and the Front desk, a staff page that is not on their menu answers 403, except detail pages opened from a listed page (a member, a refund, a receipt…); the Owner can open any page by its address. The Owner's and Manager's dashboards start with **Needs your approval** (refunds within their limit, leave, missing clock-outs, drawer variances). The price book is the Owner's alone |
 | Lists | Every list has the same filter bar: search, date presets, filters with counts, sort, 25/50/100 per page, chips, CSV export (roles that may export) and saved views; the filters live in the address, so a view can be shared |
-| Webhooks | Razorpay `POST /api/payments/razorpay/webhook`; WhatsApp Cloud API `GET/POST /api/webhooks/whatsapp` |
+| Webhooks | Razorpay `POST /api/payments/razorpay/webhook`; WhatsApp Cloud API `GET/POST /api/whatsapp/webhook` (the older `/api/webhooks/whatsapp` still answers) |
 | Razorpay webhook | `POST /api/payments/razorpay/webhook` (set the same secret as `RAZORPAY_WEBHOOK_SECRET`) |
-| Dev tools | `/app/settings/dev` — time travel and "Run all jobs now" (disabled in production) |
+| Dev tools | `/app/settings/dev` — time travel and "Run all jobs now" (disabled in production; on no menu, the Owner opens it by its address) |
 
 ## Tests and checks
 
@@ -144,11 +229,12 @@ never as sent.
 npm run typecheck
 npm run lint
 npm test                    # Vitest: rule tests + concurrency tests on the real champions_test database
-npm run verify:integrity    # the §9 checklist against the dev database
+npm run verify:integrity    # the §9 checklist (13 checks) against the dev database
 npm run demo:race           # with the app running: 20 simultaneous bookings → exactly 1 success, 19 SLOT_TAKEN
 npm run test:e2e            # Playwright (needs `npx playwright install chromium` once): the §12 demo, the
-                            # click-through UI flows twice (cash only; card + UPI), and a fresh install on its own
-                            # port and database. Run on fresh sample data: ALLOW_DEMO_RESET=1 npm run demo:reset
+                            # click-through UI flows twice (cash only; card + UPI), the v4 flows (menus, cash drawer,
+                            # refunds, push, WhatsApp) and a fresh install on its own port and database.
+                            # Run on fresh sample data: ALLOW_DEMO_RESET=1 npm run demo:reset
 npm run audit:dummy         # is anything fake left? source scan + every role × page on desktop and 360 px → AUDIT.md
 ```
 
@@ -161,8 +247,8 @@ across counter and online, and the last social spot.
 - **GST report** (`/app/finance/gst`, only when GST is on): tax by rate and category, CGST/SGST vs IGST; alcohol is
   listed separately as outside GST. Downloads: summary CSV, **GSTR-1** working tables (B2B, B2CS, HSN summary) and a
   **Tally day book** (also on the Ledger page). Report support only — check with your tax advisor before filing.
-- **Files** are stored on the server under `UPLOAD_DIR` (default `uploads/`): product photos (public) and expense bills
-  (finance only), at most 2 MB, type checked from the file itself. Products without a photo show their category icon.
+- **Files** are stored on the server under `UPLOAD_DIR` (default `uploads/`): product photos (public), expense bills
+  (finance only) and bank deposit slips (Owner, Manager, Accountant), at most 2 MB, type checked from the file itself. Products without a photo show their category icon.
 - **Backups** run every night at 02:30 IST into `BACKUP_DIR` (default `backups/`), kept 14 days; the Owner can run one
   and download any from Settings → Backups. Copy them off the server regularly.
 
@@ -180,8 +266,12 @@ across counter and online, and the last social spot.
 - **No hard deletes:** delete-blocking triggers on every transactional table.
 - **Idempotency keys** on booking, social join, checkout, payments, settle and gateway callbacks.
 - **Refunds:** every refund payment belongs to a refund request; integrity check #11 proves their states and money agree.
+- **Cash:** drawer and safe movements are append-only, each with its running balance, written in the same transaction
+  as the payment or refund; integrity checks #12–#13 prove they match the cash payments and refunds and add up.
 - **Prices:** base prices are dated versions and rules are never edited in place (a change ends one version and starts
   the next), so any price can be explained and bills — snapshots — never change afterwards.
 - **Messages:** exactly one delivery record per message and channel (unique index), so a reminder is never sent twice.
+  Messages are queued in the same transaction as the change they report and sent only after it commits (a rollback
+  sends nothing); rows are claimed with `FOR UPDATE SKIP LOCKED`, so two workers never send the same one.
 
 See `PROGRESS.md` (requirement-by-requirement status with files and tests) and `DECISIONS.md` (choices made where the plan was silent).

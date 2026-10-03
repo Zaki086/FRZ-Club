@@ -141,7 +141,7 @@ function DashboardBody({ d, open, query }: { d: Dashboard; open: (metric: string
             <div className="rounded-lg border bg-card p-4 shadow-sm">
               <p className="text-xs font-medium text-muted-foreground">What we owe (payables)</p>
               <p className="tabular text-2xl font-bold"><Money paise={d.payables.total} /></p>
-              <div className="mt-1 grid grid-cols-3 gap-2 text-xs">
+              <div className="mt-1 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
                 <Link href="/app/finance/expenses?status=UNPAID" className="rounded bg-muted p-2 hover:underline">
                   Supplier bills<br /><Money paise={d.payables.expenses} className="font-semibold" />
                 </Link>
@@ -150,6 +150,15 @@ function DashboardBody({ d, open, query }: { d: Dashboard; open: (metric: string
                 </Link>
                 <Link href="/app/finance/gst" className="rounded bg-muted p-2 hover:underline">
                   GST collected (est.)<br /><Money paise={d.payables.gst} className="font-semibold" />
+                </Link>
+                {/* v4 RF-10: approved refunds waiting at the desk are money we owe until collected. */}
+                <Link href="/app/refunds?status=APPROVED&sort=oldest" className="rounded bg-muted p-2 hover:underline" data-testid="payables-refunds">
+                  Refunds payable<br /><Money paise={d.payables.refunds ?? 0} className="font-semibold" />
+                  {d.payables.refundCount ? (
+                    <span className="block text-muted-foreground">
+                      {d.payables.refundCount} waiting{d.payables.refundOldestDays != null ? ` · oldest ${d.payables.refundOldestDays} d` : ""}
+                    </span>
+                  ) : null}
                 </Link>
               </div>
             </div>

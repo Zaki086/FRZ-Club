@@ -287,14 +287,13 @@ function Simulator({ book }: { book: Book }) {
 }
 
 function Guardrails({ book, onDone }: { book: Book; onDone: () => void }) {
-  const [m, setM] = useState(String(book.guardrails.maxManagerDiscountPct));
   const [s, setS] = useState(String(book.guardrails.maxStaffDiscountPct));
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
-  if (!book.canGuardrails) return <p className="text-sm text-muted-foreground">Managers may approve promotions up to {book.guardrails.maxManagerDiscountPct}%; shop staff up to {book.guardrails.maxStaffDiscountPct}%. Only the Owner changes these limits.</p>;
+  // v4 RN-3: only the Owner prices, so the one limit left is the shop staff's (above it a discount waits for the Owner).
+  if (!book.canGuardrails) return <p className="text-sm text-muted-foreground">Shop staff may give discounts up to {book.guardrails.maxStaffDiscountPct}%; above that they wait for the Owner. Only the Owner changes this limit.</p>;
   return (
-    <form className="flex flex-wrap items-end gap-2" onSubmit={async (e) => { e.preventDefault(); setError(null); try { await api("/api/pricing/guardrails", { method: "PUT", body: { maxManagerDiscountPct: Number(m), maxStaffDiscountPct: Number(s) } }); onDone(); } catch (err) { setError(toErr(err)); } }}>
-      <Field label="Manager can give up to (%)"><Input className="w-24" inputMode="numeric" value={m} onChange={(e) => setM(e.target.value)} /></Field>
-      <Field label="Shop staff up to (%)"><Input className="w-24" inputMode="numeric" value={s} onChange={(e) => setS(e.target.value)} /></Field>
+    <form className="flex flex-wrap items-end gap-2" onSubmit={async (e) => { e.preventDefault(); setError(null); try { await api("/api/pricing/guardrails", { method: "PUT", body: { maxStaffDiscountPct: Number(s) } }); onDone(); } catch (err) { setError(toErr(err)); } }}>
+      <Field label="Shop staff up to (%)" hint="Above this a shop discount waits for your approval"><Input className="w-24" inputMode="numeric" value={s} onChange={(e) => setS(e.target.value)} /></Field>
       <Button type="submit" variant="outline">Save limits</Button>
       <RejectionBanner error={error} />
     </form>

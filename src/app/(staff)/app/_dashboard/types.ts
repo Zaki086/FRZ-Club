@@ -19,7 +19,7 @@ export type Dashboard = {
     memberships?: Kpi;
   };
   receivables?: { total: number; count: number };
-  payables?: { total: number; expenses: number; payroll: number; gst: number; expenseCount?: number; payrollRuns?: number };
+  payables?: { total: number; expenses: number; payroll: number; gst: number; expenseCount?: number; payrollRuns?: number; refunds?: number; refundCount?: number; refundOldestDays?: number | null };
   ops?: {
     bookings?: Kpi;
     cancellations?: Kpi;
