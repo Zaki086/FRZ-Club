@@ -56,7 +56,8 @@ export async function clockOut(actor: Actor, raw: z.input<typeof clockOutSchema>
     const open = await tx.attendance.findFirst({ where: { employeeId, clockOut: null }, orderBy: { clockIn: "desc" } });
     if (!open) throw new DomainError("VALIDATION_FAILED", "You are not clocked in.");
     const expected = await expectedCash(tx, open.id, open.openingFloat);
-    const handledCash = expected !== open.openingFloat || open.openingFloat > 0;
+    // Cash is counted on the cash drawer (completion pass 8.4); a shift only counts it when it was opened with a float.
+    const handledCash = open.openingFloat > 0;
     if (handledCash && input.cashCounted === undefined) {
       throw new DomainError("VALIDATION_FAILED", `Count the cash drawer before clocking out (expected ${formatINR(expected)}).`, { expected });
     }

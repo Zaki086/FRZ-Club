@@ -4,6 +4,7 @@ import { clock } from "@/lib/clock";
 import { normalisePhone } from "@/lib/codes";
 import { prisma, type Tx } from "../db";
 import { DomainError } from "../errors";
+import type { Role } from "@prisma/client";
 import type { UserActor } from "../rbac/actor";
 import { verifyPassword } from "./password";
 
@@ -14,18 +15,60 @@ export function tokenHash(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-export async function login(identifier: string, password: string) {
+/** Completion pass §6: where each role lands after logging in. */
+export const ROLE_HOME: Record<Role, string> = {
+  OWNER: "/app",
+  MANAGER: "/app",
+  FRONT_DESK: "/app/desk",
+  SHOP_STAFF: "/app/shop",
+  BAR_STAFF: "/app/bar",
+  KITCHEN: "/app/bar/kds",
+  ACCOUNTANT: "/app/finance/cash",
+  MEMBER: "/portal",
+};
+
+export const MAX_FAILED_LOGINS = 5;
+export const LOCK_MINUTES = 15;
+
+export function findUserByIdentifier(identifier: string) {
   const id = identifier.trim();
-  const user = id.includes("@")
-    ? await prisma.user.findUnique({ where: { email: id.toLowerCase() } })
-    : await prisma.user.findUnique({ where: { phone: normalisePhone(id) } });
+  return id.includes("@") ? prisma.user.findUnique({ where: { email: id.toLowerCase() } }) : prisma.user.findUnique({ where: { phone: normalisePhone(id) } });
+}
+
+/**
+ * Log in (completion pass §6): MAX_FAILED_LOGINS wrong passwords lock the account for LOCK_MINUTES (RATE_LIMITED);
+ * a success clears the counter and records the last login. Real time, not the business clock.
+ */
+export async function login(identifier: string, password: string) {
+  const user = await findUserByIdentifier(identifier);
+  const now = new Date();
+  if (user?.lockedUntil && user.lockedUntil.getTime() > now.getTime()) {
+    const mins = Math.ceil((user.lockedUntil.getTime() - now.getTime()) / 60_000);
+    throw new DomainError("RATE_LIMITED", `Too many wrong passwords. This account is locked for ${mins} more minute${mins === 1 ? "" : "s"}, or ask the club for a reset link.`, { retryAfterSeconds: mins * 60 });
+  }
   if (!user || !user.active || !user.passwordHash || !(await verifyPassword(password, user.passwordHash))) {
+    if (user && user.active) {
+      const failed = user.failedLoginCount + 1;
+      await prisma.user.update({
+        where: { id: user.id },
+        data: failed >= MAX_FAILED_LOGINS ? { failedLoginCount: 0, lockedUntil: new Date(now.getTime() + LOCK_MINUTES * 60_000) } : { failedLoginCount: failed },
+      });
+    }
     throw new DomainError("UNAUTHENTICATED", "Wrong phone/email or password.");
   }
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 86_400_000);
   await prisma.session.create({ data: { userId: user.id, tokenHash: tokenHash(token), expiresAt } });
-  return { token, expiresAt, user: { id: user.id, name: user.name, role: user.role } };
+  await prisma.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: now } });
+  return { token, expiresAt, user: { id: user.id, name: user.name, role: user.role }, home: ROLE_HOME[user.role] };
+}
+
+/** Expire every session of a user except `keepToken` (password change, "log out everywhere"). */
+export async function revokeSessions(userId: string, keepToken?: string) {
+  await prisma.session.updateMany({
+    where: { userId, expiresAt: { gt: new Date() }, ...(keepToken ? { NOT: { tokenHash: tokenHash(keepToken) } } : {}) },
+    data: { expiresAt: new Date(0) },
+  });
 }
 
 export async function logout(token: string | undefined): Promise<void> {
@@ -53,11 +96,13 @@ export async function actorFromToken(token: string | undefined): Promise<UserAct
   };
 }
 
-/** One-time set-password link for members created at the desk (MB-1). */
-export async function createPasswordSetToken(userId: string, tx?: Tx): Promise<string> {
+/** One-time set-password link (MB-1), or a password-reset link (completion pass §6: 1 hour, RESET). */
+export async function createPasswordSetToken(userId: string, tx?: Tx, opts: { purpose?: "SET" | "RESET"; createdBy?: string | null } = {}): Promise<string> {
   const token = randomBytes(24).toString("base64url");
+  const purpose = opts.purpose ?? "SET";
+  const ttl = purpose === "RESET" ? 60 * 60_000 : 7 * 86_400_000;
   await (tx ?? prisma).passwordSetToken.create({
-    data: { userId, tokenHash: tokenHash(token), expiresAt: new Date(clock.now().getTime() + 7 * 86_400_000) },
+    data: { userId, tokenHash: tokenHash(token), purpose, createdBy: opts.createdBy ?? null, expiresAt: new Date((purpose === "RESET" ? Date.now() : clock.now().getTime()) + ttl) },
   });
   return token;
 }
@@ -72,7 +117,11 @@ export async function redeemPasswordSetToken(token: string, password: string): P
   const { hashPassword } = await import("./password");
   const hash = await hashPassword(password);
   await prisma.$transaction([
-    prisma.user.update({ where: { id: row.userId }, data: { passwordHash: hash } }),
+    prisma.user.update({ where: { id: row.userId }, data: { passwordHash: hash, passwordChangedAt: new Date(), failedLoginCount: 0, lockedUntil: null } }),
     prisma.passwordSetToken.update({ where: { id: row.id }, data: { usedAt: new Date() } }),
+    // Every other link for this user stops working too.
+    prisma.passwordSetToken.updateMany({ where: { userId: row.userId, usedAt: null, NOT: { id: row.id } }, data: { usedAt: new Date() } }),
   ]);
+  // A reset logs the account out everywhere (someone else may have had the old password).
+  if (row.purpose === "RESET") await revokeSessions(row.userId);
 }

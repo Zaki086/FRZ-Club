@@ -67,3 +67,13 @@ export async function runDailyJobs() {
 export async function runAllJobs() {
   return { frequent: await runFrequentJobs(), daily: await runDailyJobs(), at: clock.now().toISOString() };
 }
+
+/** Advisory-lock key held by `seed:demo` while it rebuilds the history with its own clock. */
+export const SEED_LOCK_KEY = 7310;
+
+/** True while a seed run holds the lock: the worker must not run real-clock jobs on half-built sample data. */
+export async function seedInProgress(): Promise<boolean> {
+  const rows = await prisma.$queryRaw<{ held: boolean }[]>`
+    SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 0 AND objid = ${SEED_LOCK_KEY} AND objsubid = 1 AND granted) AS held`;
+  return rows[0]?.held ?? false;
+}

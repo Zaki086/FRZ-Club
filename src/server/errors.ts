@@ -30,6 +30,10 @@ export const REJECTION_CODES = [
   "FORBIDDEN",
   "VALIDATION_FAILED",
   "IDEMPOTENCY_CONFLICT",
+  // Completion pass (DECISIONS D-26…): a feature that is not configured, too many attempts, no open drawer.
+  "CAPABILITY_DISABLED",
+  "RATE_LIMITED",
+  "DRAWER_NOT_OPEN",
   // Transport-level codes (not business rules) — see DECISIONS.md D-03.
   "NOT_FOUND",
   "UNAUTHENTICATED",
@@ -59,6 +63,8 @@ export function httpStatusFor(code: ErrorCode): number {
       return 404;
     case "UNAUTHENTICATED":
       return 401;
+    case "RATE_LIMITED":
+      return 429;
     default:
       return 409;
   }

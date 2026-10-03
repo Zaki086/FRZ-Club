@@ -14,6 +14,7 @@ import { audit } from "./audit";
 import { createBookingTx } from "./booking";
 import { findOrCreateGuest } from "./guests";
 import { notify, queueEmail } from "./notifications";
+import { assertCapability } from "./capabilities";
 import { quoteManual, quoteMembership } from "./pricing";
 import { getSettings } from "./settings";
 
@@ -48,7 +49,13 @@ export const leadSchema = z.object({
   message: z.string().trim().max(2000).default(""),
 });
 
-export async function createLeadTx(tx: Tx, actor: Actor, raw: z.input<typeof leadSchema>, extra: { guestId?: string; bookingId?: string } = {}) {
+/** Public forms (completion pass §7): an explicit consent tick (stored on the lead) and an empty honeypot field. */
+export const publicFormSchema = z.object({
+  consent: z.literal(true, { message: "Please agree to be contacted about your enquiry." }),
+  website: z.string().max(0, "Please leave the last field empty.").optional(),
+});
+
+export async function createLeadTx(tx: Tx, actor: Actor, raw: z.input<typeof leadSchema>, extra: { guestId?: string; bookingId?: string; consentAt?: Date | null } = {}) {
   const input = leadSchema.parse(raw);
   if (!input.phone && !input.email) throw new DomainError("VALIDATION_FAILED", "Please give a phone number or an email so we can get back to you.");
   const s = await getSettings(tx);
@@ -60,6 +67,7 @@ export async function createLeadTx(tx: Tx, actor: Actor, raw: z.input<typeof lea
       code, name: input.name, phone: input.phone ?? null, email: input.email ?? null, source: input.source as LeadSource,
       interest: input.interest, message: input.message, assignedTo: assignee?.id ?? null,
       nextFollowUpAt: new Date(now.getTime() + s.lead_follow_up_hours * HOUR), guestId: extra.guestId ?? null, bookingId: extra.bookingId ?? null,
+      consentAt: extra.consentAt ?? null,
     },
   });
   await tx.leadActivity.create({
@@ -80,9 +88,10 @@ export async function createLeadTx(tx: Tx, actor: Actor, raw: z.input<typeof lea
 }
 
 /** R-36: website enquiries are captured and can't vanish. */
-export async function createEnquiry(raw: z.input<typeof leadSchema>) {
+export async function createEnquiry(raw: z.input<typeof leadSchema> & z.input<typeof publicFormSchema>) {
+  publicFormSchema.parse(raw);
   return withTx(async (tx) => {
-    const lead = await createLeadTx(tx, PUBLIC, { ...raw, source: "WEBSITE_ENQUIRY" });
+    const lead = await createLeadTx(tx, PUBLIC, { ...raw, source: "WEBSITE_ENQUIRY" }, { consentAt: clock.now() });
     return { leadCode: lead.code };
   });
 }
@@ -180,6 +189,10 @@ export async function createQuote(actor: Actor, leadId: string, raw: z.input<typ
         lines.push({ kind: "CUSTOM", description: l.description, amount: q.total, explanation: "Custom line" });
       }
     }
+    if (input.send === "EMAIL") {
+      await assertCapability("email");
+      if (!lead.email) throw new DomainError("VALIDATION_FAILED", "This lead has no email address; share the link instead.");
+    }
     const total = lines.reduce((a, l) => a + l.amount, 0);
     const token = randomBytes(16).toString("base64url");
     const validUntil = new Date(clock.now().getTime() + (input.validDays ?? s.quote_valid_days) * DAY);
@@ -187,9 +200,8 @@ export async function createQuote(actor: Actor, leadId: string, raw: z.input<typ
     const link = `${process.env.APP_URL ?? ""}/quote/${token}`;
     await tx.lead.update({ where: { id: leadId }, data: { status: "QUOTED", nextFollowUpAt: new Date(clock.now().getTime() + s.lead_follow_up_hours * HOUR), overdueNotifiedAt: null } });
     await tx.leadActivity.create({ data: { leadId, type: "QUOTE_SENT", note: `Quote for ${formatINR(total)} (valid until ${fmtDate(istDate(validUntil))}) ${input.send === "EMAIL" && lead.email ? `emailed to ${lead.email}` : "shared as a link"}: ${link}`, byUserId: actorId(actor), at: clock.now() } });
-    if (input.send === "EMAIL") {
-      if (!lead.email) throw new DomainError("VALIDATION_FAILED", "This lead has no email address; share the link instead.");
-      await queueEmail(tx, { to: lead.email, subject: "Your quote from The Champions Club", body: `Hi ${lead.name},\n\n${lines.map((l) => `• ${l.description}: ${formatINR(l.amount)}`).join("\n")}\nTotal: ${formatINR(total)}\nValid until ${fmtDate(istDate(validUntil))}.\n\nView and respond: ${link}`, dedupeKey: `quote:${quote.id}` });
+    if (input.send === "EMAIL" && lead.email) {
+      await queueEmail(tx, { to: lead.email, subject: `Your quote from ${s.club.name}`, body: `Hi ${lead.name},\n\n${lines.map((l) => `• ${l.description}: ${formatINR(l.amount)}`).join("\n")}\nTotal: ${formatINR(total)}\nValid until ${fmtDate(istDate(validUntil))}.\n\nView and respond: ${link}`, dedupeKey: `quote:${quote.id}` });
     }
     await audit(tx, actor, "quote.create", "quote", quote.id, { after: { leadId, total, validUntil } });
     return { quoteId: quote.id, token, link: `/quote/${token}`, total, validUntil: validUntil.toISOString() };
@@ -249,7 +261,7 @@ export async function flagOverdueLeads(outer?: Tx) {
 
 // ───────────── trial booking (CR-8) ─────────────
 
-export const trialSchema = z.object({
+export const trialSchema = publicFormSchema.extend({
   name: z.string().trim().min(2).max(100),
   phone: z.string().transform(normalisePhone).refine(isIndianMobile, "must be a 10-digit Indian mobile number"),
   email: z.string().trim().toLowerCase().email().optional().or(z.literal("").transform(() => undefined)),
@@ -274,7 +286,7 @@ export async function createTrialBooking(raw: z.input<typeof trialSchema>) {
     const lead = await createLeadTx(tx, PUBLIC, {
       name: input.name, phone: input.phone, email: input.email, source: "TRIAL_BOOKING", interest: "Trial session",
       message: `Trial booked: ${booking.court} ${fmtDateTime(booking.startAt)} (${booking.bookingCode})`,
-    }, { guestId: guest.id, bookingId: booking.bookingId });
+    }, { guestId: guest.id, bookingId: booking.bookingId, consentAt: clock.now() });
     if (input.email) {
       await queueEmail(tx, { to: input.email, subject: `Trial confirmed: ${booking.court} ${fmtDateTime(booking.startAt)}`, body: `Hi ${input.name}, your trial ${booking.bookingCode} is booked. ${booking.total ? `The trial fee of ${formatINR(booking.total)} is paid at the desk.` : "The trial is free."} See you soon!`, dedupeKey: `trial:${booking.bookingId}` });
     }

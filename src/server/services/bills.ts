@@ -72,6 +72,8 @@ export async function voidBillLines(tx: Tx, lineIds: string[], at: Date): Promis
 
 /**
  * Re-derive total/tax/discount from non-void lines and paid/refunded from SUCCEEDED payments, then the status.
+ * A PENDING refund (owed, to be paid out at the desk) already counts as refunded on the bill; the ledger moves
+ * only when it is paid out.
  * One statement, so the bills_money CHECK sees a consistent row.
  */
 export async function refreshBill(tx: Tx, billId: string): Promise<Bill> {
@@ -82,9 +84,9 @@ export async function refreshBill(tx: Tx, billId: string): Promise<Bill> {
              coalesce(sum(discount_amount), 0)::int AS disc
       FROM bill_lines WHERE bill_id = ${billId} AND voided_at IS NULL
     ), p AS (
-      SELECT coalesce(sum(amount) FILTER (WHERE type = 'PAYMENT'), 0)::int AS paid,
-             coalesce(sum(amount) FILTER (WHERE type = 'REFUND'), 0)::int AS refunded
-      FROM payments WHERE bill_id = ${billId} AND status = 'SUCCEEDED'
+      SELECT coalesce(sum(amount) FILTER (WHERE type = 'PAYMENT' AND status = 'SUCCEEDED'), 0)::int AS paid,
+             coalesce(sum(amount) FILTER (WHERE type = 'REFUND' AND status IN ('SUCCEEDED', 'PENDING')), 0)::int AS refunded
+      FROM payments WHERE bill_id = ${billId}
     )
     UPDATE bills b SET
       total = l.total, tax_total = l.tax, discount_total = l.disc,

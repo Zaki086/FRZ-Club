@@ -19,6 +19,7 @@ import { notify, queueEmail } from "./notifications";
 import { recordPaymentTx, refundTx } from "./payments";
 import { effectiveMembership, quoteMembership } from "./pricing";
 import { getSettings } from "./settings";
+import { guardianUserIds } from "./family";
 
 const today = () => istDate(clock.now());
 
@@ -41,6 +42,11 @@ export const createMemberSchema = z.object({
   emergencyContactPhone: z.string().trim().max(20).optional().or(z.literal("").transform(() => undefined)),
   password: z.string().min(8, "password must be at least 8 characters").max(100).optional().or(z.literal("").transform(() => undefined)),
   leadId: z.string().optional(),
+  // Completion pass P1: a guardian for members under 18 (required) — linked if the guardian is a member too.
+  guardianName: z.string().trim().max(100).optional().or(z.literal("").transform(() => undefined)),
+  guardianPhone: z.string().optional().or(z.literal("").transform(() => undefined)).transform((p) => (p ? normalisePhone(p) : undefined)).refine((p) => !p || isIndianMobile(p), "guardian's mobile must be a 10-digit Indian mobile number"),
+  // DPDP: the member agreed to the club storing their details (ticked at the desk).
+  consent: z.boolean().optional(),
   plan: z
     .object({
       code: z.enum(["GOLD", "SILVER", "JUNIOR"]),
@@ -50,6 +56,8 @@ export const createMemberSchema = z.object({
           method: z.enum(["CASH", "CARD", "UPI"]),
           reference: z.string().max(100).optional(),
           tendered: z.number().int().positive().optional(),
+          cardLast4: z.string().max(4).optional(),
+          approvalCode: z.string().max(20).optional(),
         })
         .optional(),
     })
@@ -61,6 +69,11 @@ export async function createMemberTx(tx: Tx, actor: Actor, input: z.infer<typeof
   const t = today();
   if (input.dob >= t) throw new DomainError("VALIDATION_FAILED", "Date of birth must be in the past.");
   if (ageOn(input.dob, t) > 110) throw new DomainError("VALIDATION_FAILED", "Please check the date of birth.");
+  if (ageOn(input.dob, t) < 18 && !(input.guardianName && input.guardianPhone)) {
+    throw new DomainError("VALIDATION_FAILED", "A guardian's name and mobile number are required for members under 18.");
+  }
+  if (input.guardianPhone && input.guardianPhone === input.phone) throw new DomainError("VALIDATION_FAILED", "The guardian's mobile must be different from the member's.");
+  const guardian = input.guardianPhone ? await tx.member.findUnique({ where: { phone: input.guardianPhone }, select: { id: true } }) : null;
   const passwordHash = input.password ? await hashPassword(input.password) : null;
   let user;
   try {
@@ -87,6 +100,10 @@ export async function createMemberTx(tx: Tx, actor: Actor, input: z.infer<typeof
       emergencyContactName: input.emergencyContactName ?? null,
       emergencyContactPhone: input.emergencyContactPhone ?? null,
       leadId: input.leadId ?? null,
+      guardianName: input.guardianName ?? null,
+      guardianPhone: input.guardianPhone ?? null,
+      guardianMemberId: guardian?.id ?? null,
+      consentAt: input.consent ? clock.now() : null,
       createdBy: actorId(actor),
     },
   });
@@ -99,7 +116,7 @@ export async function createMemberTx(tx: Tx, actor: Actor, input: z.infer<typeof
     if (member.email) {
       await queueEmail(tx, {
         to: member.email,
-        subject: "Welcome to The Champions Club — set your password",
+        subject: `Welcome to ${(await getSettings(tx)).club.name} — set your password`,
         body: `Hi ${member.name}, set your member portal password here: ${process.env.APP_URL ?? ""}/set-password/${setPasswordToken}`,
         dedupeKey: `welcome:${member.id}`,
       });
@@ -122,13 +139,7 @@ export async function createMember(actor: Actor, raw: CreateMemberInput, idempot
         membership = r.membership;
         bill = r.bill;
         if (input.plan.payment && bill.total > 0) {
-          await recordPaymentTx(tx, actor, {
-            billId: bill.id,
-            method: input.plan.payment.method,
-            amount: bill.total,
-            reference: input.plan.payment.reference ?? null,
-            tendered: input.plan.payment.tendered ?? null,
-          });
+          await recordPaymentTx(tx, actor, { ...input.plan.payment, billId: bill.id, amount: bill.total });
           membership = await tx.membership.findUniqueOrThrow({ where: { id: membership.id } });
           bill = await tx.bill.findUniqueOrThrow({ where: { id: bill.id } });
         }
@@ -455,6 +466,7 @@ export const cancelMembershipSchema = z.object({
   reason: z.string().trim().min(3, "a reason is required").max(300),
   refundAmount: z.number().int().min(0).optional(),
   refundMethod: z.enum(["CASH", "CARD", "UPI"]).optional(),
+  refundReference: z.string().trim().max(100).optional(),
 });
 
 /** MB-13: OWNER/MANAGER only, with a reason and an optional manual refund; audited. */
@@ -467,15 +479,16 @@ export async function cancelMembership(actor: Actor, raw: z.infer<typeof cancelM
     if (ms.status === "CANCELLED" || ms.status === "CHANGED") {
       throw new DomainError("CANCEL_NOT_ALLOWED", `This membership is already ${ms.status.toLowerCase()}.`);
     }
+    let refundPending = 0;
     if (input.refundAmount && ms.billId) {
-      await refundTx(tx, actor, ms.billId, input.refundAmount, { method: input.refundMethod, reason: `Membership cancelled: ${input.reason}` });
+      refundPending = (await refundTx(tx, actor, ms.billId, input.refundAmount, { method: input.refundMethod, reference: input.refundReference, approvalCode: input.refundReference, reason: `Membership cancelled: ${input.reason}` })).pending;
     }
     if (ms.billId && ms.status === "PENDING_PAYMENT") await closeBill(tx, ms.billId, `Membership cancelled: ${input.reason}`, clock.now());
     const updated = await tx.membership.update({ where: { id: ms.id }, data: { status: "CANCELLED", cancelReason: input.reason } });
     await audit(tx, actor, "membership.cancel", "membership", ms.id, {
-      before: { status: ms.status }, after: { status: "CANCELLED", refund: input.refundAmount ?? 0 }, reason: input.reason,
+      before: { status: ms.status }, after: { status: "CANCELLED", refund: input.refundAmount ?? 0, refundPending }, reason: input.reason,
     });
-    return updated;
+    return { ...updated, refundPending };
   });
 }
 
@@ -551,7 +564,8 @@ export async function runMembershipJob(outer?: Tx) {
           : `${m.member.name} (${m.member.memberCode}) · ${m.plan.name} ends ${fmtDate(end)}. Renew to keep member rates.`;
       if (m.member.userId) {
         await notify(tx, {
-          userIds: [m.member.userId], type: "MEMBERSHIP_EXPIRY", title, body, link: "/portal/membership",
+          // Juniors' guardians get the same reminder (completion pass P1).
+          userIds: [m.member.userId, ...(await guardianUserIds([m.member.id]))], type: "MEMBERSHIP_EXPIRY", title, body, link: "/portal/membership",
           dedupeKey: `membership-reminder:${m.id}:${type}`, email: true,
         });
       }
