@@ -17,13 +17,17 @@ function Icon({ name }: { name: string }) {
 export function Sidebar({ groups }: { groups: Group[] }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
-  const active = (href: string) =>
-    href === "/app" ? path === "/app" : path === href || (path.startsWith(href + "/") && !groups.some((g) => g.items.some((i) => i.href !== href && i.href.startsWith(href + "/") && path.startsWith(i.href))));
+  // Links may carry a filter (`/app/messages?channel=…`): match on the path only.
+  const bare = (href: string) => href.split("?")[0];
+  const active = (link: string) => {
+    const href = bare(link);
+    return href === "/app" ? path === "/app" : path === href || (path.startsWith(href + "/") && !groups.some((g) => g.items.some((i) => bare(i.href) !== href && bare(i.href).startsWith(href + "/") && path.startsWith(bare(i.href)))));
+  };
   const nav = (
     <nav className="flex flex-col gap-4 p-3">
       {groups.map((g) => (
         <div key={g.label}>
-          <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{g.label}</p>
+          <p className="eyebrow px-2 pb-1 text-[10px] text-sidebar-foreground/60">{g.label}</p>
           <div className="flex flex-col gap-0.5">
             {g.items.map((i) => (
               <Link
@@ -31,8 +35,8 @@ export function Sidebar({ groups }: { groups: Group[] }) {
                 href={i.href}
                 onClick={() => setOpen(false)}
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-white/10",
-                  active(i.href) && "bg-white/15 font-semibold text-white",
+                  "flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium text-sidebar-foreground hover:bg-sidebar-accent",
+                  active(i.href) && "bg-sidebar-primary font-bold text-sidebar-primary-foreground hover:bg-sidebar-primary",
                 )}
               >
                 <Icon name={i.icon} /> {i.label}
@@ -46,24 +50,24 @@ export function Sidebar({ groups }: { groups: Group[] }) {
   return (
     <>
       <button
-        className="fixed bottom-4 left-4 z-40 rounded-full bg-primary p-3 text-white shadow-lg lg:hidden no-print"
+        className="fixed bottom-4 left-4 z-40 rounded-full bg-accent p-3 text-accent-foreground shadow-lift lg:hidden no-print"
         onClick={() => setOpen(true)}
         aria-label="Open menu"
       >
         <Menu className="h-5 w-5" />
       </button>
-      <aside className="no-print hidden w-60 shrink-0 overflow-y-auto bg-slate-900 lg:block">{nav}</aside>
+      <aside className="no-print hidden w-64 shrink-0 overflow-y-auto border-r border-sidebar-border bg-sidebar lg:block">{nav}</aside>
       {open ? (
         <div className="fixed inset-0 z-50 flex lg:hidden">
-          <div className="w-72 overflow-y-auto bg-slate-900">
+          <div className="w-72 overflow-y-auto bg-sidebar">
             <div className="flex justify-end p-2">
-              <button onClick={() => setOpen(false)} className="p-2 text-white" aria-label="Close menu">
+              <button onClick={() => setOpen(false)} className="p-2 text-sidebar-foreground" aria-label="Close menu">
                 <X className="h-5 w-5" />
               </button>
             </div>
             {nav}
           </div>
-          <div className="flex-1 bg-black/40" onClick={() => setOpen(false)} />
+          <div className="flex-1 bg-ink/50" onClick={() => setOpen(false)} />
         </div>
       ) : null}
     </>

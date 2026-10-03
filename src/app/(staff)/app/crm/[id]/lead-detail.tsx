@@ -84,7 +84,7 @@ function QuoteBuilder({ leadId, hasEmail, onDone }: { leadId: string; hasEmail: 
   if (result) {
     const abs = `${window.location.origin}${result.link}`;
     return (
-      <div className="flex flex-col gap-2 rounded-md border border-green-300 bg-green-50 p-3 text-sm">
+      <div className="flex flex-col gap-2 rounded-md border border-success/40 bg-success/10 p-3 text-sm">
         <p className="font-semibold">Quote created for {formatINR(result.total)} · valid until {fmtDateTime(result.validUntil)}</p>
         <div className="flex gap-2">
           <Input readOnly value={abs} onFocus={(e) => e.currentTarget.select()} />
@@ -254,22 +254,31 @@ export function LeadDetailView({ leadId, canConvert }: { leadId: string; canConv
                 <Card>
                   <CardHeader><CardTitle>Assigned to</CardTitle></CardHeader>
                   <CardContent className="flex flex-col gap-2">
-                    <Select
-                      value={l.assignedTo ?? ""}
-                      onChange={async (e) => {
-                        setAssignError(null);
-                        try {
-                          await api(`/api/crm/leads/${leadId}/assign`, { body: { userId: e.target.value } });
-                          reload();
-                        } catch (err) {
-                          setAssignError(toErr(err));
-                        }
-                      }}
-                      aria-label="Assignee"
-                    >
-                      {!l.assignedTo ? <option value="">Unassigned</option> : null}
-                      {l.assignable.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.role.replace("_", " ").toLowerCase()})</option>)}
-                    </Select>
+                    <p className="font-semibold">{l.assignee ?? "Unassigned"}</p>
+                    {l.assignmentReason ? <p className="text-xs text-muted-foreground" data-testid="assignment-reason">{l.assignmentReason}</p> : null}
+                    {l.canReassign ? (
+                      <form
+                        className="flex flex-col gap-2"
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          const f = new FormData(e.currentTarget);
+                          setAssignError(null);
+                          try {
+                            await api(`/api/crm/leads/${leadId}/assign`, { body: { userId: String(f.get("userId")), reason: String(f.get("reason") ?? "") } });
+                            reload();
+                          } catch (err) {
+                            setAssignError(toErr(err));
+                          }
+                        }}
+                      >
+                        <Select name="userId" defaultValue={l.assignedTo ?? ""} aria-label="Reassign to">
+                          {!l.assignedTo ? <option value="">Choose…</option> : null}
+                          {l.assignable.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.role.replace("_", " ").toLowerCase()})</option>)}
+                        </Select>
+                        <Input name="reason" placeholder="Reason for reassigning" aria-label="Reason for reassigning" required minLength={3} />
+                        <Button type="submit" size="sm" variant="outline">Reassign</Button>
+                      </form>
+                    ) : null}
                     <RejectionBanner error={assignError} />
                   </CardContent>
                 </Card>

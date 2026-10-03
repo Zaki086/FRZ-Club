@@ -1,15 +1,16 @@
 "use client";
 import Link from "next/link";
 import { useState } from "react";
-import { AlertTriangle, Plus } from "lucide-react";
-import { api, ApiError, useApi } from "@/components/api";
-import { DataState, RejectionBanner } from "@/components/states";
+import { Plus } from "lucide-react";
+import { api, ApiError } from "@/components/api";
+import { RejectionBanner } from "@/components/states";
+import { FilteredList } from "@/components/list/filtered-list";
+import { RelTime } from "@/components/rel-time";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { cn } from "@/components/ui/cn";
-import { fmtDateTime } from "@/lib/time";
 import { STATUSES, type LeadRow } from "./types";
 
 const COL_TITLE: Record<string, string> = { NEW: "New", CONTACTED: "Contacted", QUOTED: "Quoted", WON: "Won", LOST: "Lost" };
@@ -67,65 +68,89 @@ function NewLeadDialog({ onCreated }: { onCreated: () => void }) {
   );
 }
 
-export function LeadsBoard() {
-  const [mine, setMine] = useState(false);
-  const [q, setQ] = useState("");
-  const url = `/api/crm/leads?${mine ? "mine=1&" : ""}${q.trim() ? `q=${encodeURIComponent(q.trim())}` : ""}`;
-  const state = useApi<LeadRow[]>(url, { pollMs: 30_000 });
+type ListLead = {
+  id: string; code: string; name: string; phone: string | null; status: LeadRow["status"]; source: string; interest: string;
+  assignee: string | null; next_follow_up_at: string; overdue: boolean; lost_reason: string | null;
+};
+
+/** "Follow up — overdue 2 days" / "Follow up tomorrow". */
+function FollowUp({ l }: { l: ListLead }) {
+  if (l.status === "WON" || l.status === "LOST") return l.status === "LOST" && l.lost_reason ? <span className="text-xs text-muted-foreground">{l.lost_reason}</span> : null;
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Input className="max-w-xs" placeholder="Search name, phone or LD-000123" value={q} onChange={(e) => setQ(e.target.value)} />
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} className="h-4 w-4" /> Only mine
-        </label>
-        <div className="ml-auto"><NewLeadDialog onCreated={() => void state.reload()} /></div>
-      </div>
-      <DataState state={state}>
-        {(rows) => {
-          const overdue = rows.filter((r) => r.overdue).length;
-          return (
-            <div className="flex flex-col gap-3">
-              <div className={cn("flex items-center gap-2 rounded-md border p-2 text-sm", overdue ? "border-red-300 bg-red-50 text-red-900" : "bg-card")}>
-                <AlertTriangle className={cn("h-4 w-4", overdue ? "text-destructive" : "text-muted-foreground")} />
-                <strong>{overdue}</strong> overdue follow-up{overdue === 1 ? "" : "s"} · {rows.length} lead{rows.length === 1 ? "" : "s"} shown
-              </div>
-              <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
-                {STATUSES.map((s) => {
-                  const col = rows.filter((r) => r.status === s);
-                  return (
-                    <div key={s} className="flex flex-col gap-2 rounded-lg bg-muted/60 p-2">
-                      <p className="flex items-center justify-between px-1 text-sm font-semibold">{COL_TITLE[s]} <Badge>{col.length}</Badge></p>
-                      {col.length === 0 ? <p className="px-1 py-4 text-center text-xs text-muted-foreground">No leads</p> : null}
-                      {col.map((l) => (
-                        <Link
-                          key={l.id}
-                          href={`/app/crm/${l.id}`}
-                          className={cn("flex flex-col gap-1 rounded-md border bg-card p-2 text-sm shadow-sm hover:shadow-md", l.overdue && "border-red-400 bg-red-50")}
-                          data-testid="lead-card"
-                        >
-                          <span className="flex items-center justify-between gap-2">
-                            <span className="font-semibold">{l.name}</span>
-                            {l.overdue ? <Badge tone="red">Overdue</Badge> : null}
-                          </span>
-                          <span className="font-mono text-[11px] text-muted-foreground">{l.code} · {l.source.replace(/_/g, " ").toLowerCase()}</span>
-                          {l.interest ? <span className="text-xs">{l.interest}</span> : null}
-                          <span className="text-xs text-muted-foreground">{l.assignee ? `→ ${l.assignee}` : "Unassigned"}</span>
-                          {s !== "WON" && s !== "LOST" ? (
-                            <span className={cn("text-xs", l.overdue ? "font-semibold text-destructive" : "text-muted-foreground")}>Follow up {fmtDateTime(l.nextFollowUpAt)}</span>
-                          ) : s === "LOST" && l.lostReason ? (
-                            <span className="text-xs text-muted-foreground">{l.lostReason}</span>
-                          ) : null}
-                        </Link>
-                      ))}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        }}
-      </DataState>
+    <span className={cn("text-xs font-semibold", l.overdue ? "text-destructive" : "text-muted-foreground")}>
+      Follow up{l.overdue ? " — overdue " : " "}
+      <RelTime when={l.next_follow_up_at} />
+    </span>
+  );
+}
+
+function Board({ rows }: { rows: ListLead[] }) {
+  return (
+    <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
+      {STATUSES.map((s) => {
+        const col = rows.filter((r) => r.status === s);
+        return (
+          <div key={s} className="flex flex-col gap-2 rounded-2xl bg-secondary/70 p-2">
+            <p className="flex items-center justify-between px-1 text-sm font-bold">{COL_TITLE[s]} <span className="rounded-full bg-card px-2 text-xs tabular">{col.length}</span></p>
+            {col.length === 0 ? <p className="px-1 py-4 text-center text-xs text-muted-foreground">No leads</p> : null}
+            {col.map((l) => (
+              <Link
+                key={l.id}
+                href={`/app/crm/${l.id}`}
+                className={cn("flex flex-col gap-1 rounded-xl border bg-card p-2.5 text-sm shadow-soft hover:border-primary", l.overdue && "border-destructive/50")}
+                data-testid="lead-card"
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">{l.name}</span>
+                  {l.overdue ? <Badge tone="red">Overdue</Badge> : null}
+                </span>
+                <span className="font-mono text-[11px] text-muted-foreground">{l.code} · {l.source.replace(/_/g, " ").toLowerCase()}</span>
+                {l.interest ? <span className="text-xs">{l.interest}</span> : null}
+                <span className="text-xs text-muted-foreground">{l.assignee ? `→ ${l.assignee}` : "Unassigned"}</span>
+                <FollowUp l={l} />
+              </Link>
+            ))}
+          </div>
+        );
+      })}
     </div>
+  );
+}
+
+export function LeadsBoard() {
+  const [layout, setLayout] = useState<"board" | "list">("board");
+  return (
+    <FilteredList<ListLead>
+      list="leads"
+      searchPlaceholder="Name, mobile or LD-000123"
+      pollMs={30_000}
+      toolbar={
+        <>
+          <div className="inline-flex rounded-full bg-secondary p-1" role="group" aria-label="Layout">
+            {(["board", "list"] as const).map((v) => (
+              <button key={v} type="button" onClick={() => setLayout(v)} aria-pressed={layout === v} className={cn("rounded-full px-3 py-1 text-sm font-semibold", layout === v ? "bg-primary text-primary-foreground" : "text-secondary-foreground")}>
+                {v === "board" ? "Board" : "List"}
+              </button>
+            ))}
+          </div>
+          <NewLeadDialog onCreated={() => window.location.reload()} />
+        </>
+      }
+      view={layout === "board" ? (rows) => <Board rows={rows} /> : undefined}
+      columns={[
+        { key: "name", header: "Lead", cell: (l) => (
+          <span className="flex flex-col">
+            <Link href={`/app/crm/${l.id}`} className="font-semibold text-primary hover:underline">{l.name}</Link>
+            <span className="font-mono text-xs text-muted-foreground">{l.code}</span>
+          </span>
+        ) },
+        { key: "status", header: "Status", cell: (l) => <Badge tone={l.status === "WON" ? "green" : l.status === "LOST" ? "neutral" : "blue"}>{COL_TITLE[l.status]}</Badge> },
+        { key: "source", header: "Source", cell: (l) => <span className="text-sm">{l.source.replace(/_/g, " ").toLowerCase()}</span> },
+        { key: "interest", header: "Interest", cell: (l) => <span className="text-sm">{l.interest || "—"}</span> },
+        { key: "assignee", header: "Assignee", cell: (l) => <span className="text-sm">{l.assignee ?? "Unassigned"}</span> },
+        { key: "next", header: "Next", cell: (l) => <FollowUp l={l} /> },
+      ]}
+      empty={{ title: "No leads match", hint: "Remove a filter to see more leads." }}
+    />
   );
 }

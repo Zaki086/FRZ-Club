@@ -23,6 +23,9 @@ export type LeadDetail = LeadRow & {
   activities: Array<{ id: string; type: string; note: string; at: string; by: string }>;
   quotes: Array<{ id: string; token: string; total: number; validUntil: string; status: string; expired: boolean; createdAt: string; lines: Array<{ description: string; amount: number }> }>;
   assignable: Array<{ id: string; name: string; role: string }>;
+  /** v3 LA-6/LA-7 */
+  assignmentReason: string | null;
+  canReassign: boolean;
   convertUrl: string;
 };
 

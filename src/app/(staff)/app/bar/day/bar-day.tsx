@@ -3,6 +3,9 @@ import Link from "next/link";
 import { useState } from "react";
 import { ChevronLeft, ChevronRight, Lock } from "lucide-react";
 import { api, useApi } from "@/components/api";
+import { FilteredList, useListReload } from "@/components/list/filtered-list";
+import { RelTime } from "@/components/rel-time";
+import { Badge } from "@/components/ui/badge";
 import { DataState, RejectionBanner } from "@/components/states";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -71,11 +74,92 @@ function MenuAvailability() {
   );
 }
 
+type DayRow = {
+  id: string; status: "OPEN" | "CLOSED"; closed_at: string | null; closed_by_name: string | null; tabs_opened: number; tabs_settled: number;
+  tabs_carried: number; tabs_open: number; blocking: number; collected: number; variance: number | null; drawers: number;
+};
+
+function CloseDayButton({ date, onClosed }: { date: string; onClosed: () => void }) {
+  const reload = useListReload();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Rejection>(null);
+  return (
+    <span className="flex flex-col items-start gap-1" onClick={(e) => e.stopPropagation()}>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            await api("/api/bar/day/close", { body: { date } });
+            reload();
+            onClosed();
+          } catch (e) {
+            setError(toRejection(e));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Lock className="h-3.5 w-3.5" /> Close day
+      </Button>
+      <RejectionBanner error={error} />
+    </span>
+  );
+}
+
+/** v3 §3.2: every bar day with the standard FilterBar; picking a row shows that day's report above. */
+function BarDaysList({ selected, onPick, canClose, onClosed }: { selected: string; onPick: (date: string) => void; canClose: boolean; onClosed: (date: string) => void }) {
+  return (
+    <Card>
+      <CardHeader><CardTitle>All bar days</CardTitle></CardHeader>
+      <CardContent>
+        <FilteredList<DayRow>
+          list="bar-days"
+          searchPlaceholder="Date (YYYY-MM-DD) or who closed it"
+          pollMs={60_000}
+          onRowClick={(r) => onPick(r.id)}
+          columns={[
+            { key: "day", header: "Bar day", cell: (r) => (
+              <span className="flex flex-col">
+                <span className={cn("font-semibold", r.id === selected && "text-primary")}>{fmtDate(r.id)}</span>
+                <RelTime when={r.id} className="text-xs text-muted-foreground" />
+              </span>
+            ) },
+            { key: "collected", header: "Collected", className: "text-right", cell: (r) => <Money paise={r.collected} /> },
+            { key: "tabs", header: "Tabs", cell: (r) => (
+              <span className="text-sm">{r.tabs_opened} opened · {r.tabs_settled} settled{r.tabs_carried ? ` · ${r.tabs_carried} carried` : ""}{r.tabs_open ? ` · ${r.tabs_open} open` : ""}</span>
+            ) },
+            { key: "variance", header: "Bar drawer variance", className: "text-right", cell: (r) => (
+              r.variance === null ? <span className="text-muted-foreground">—</span> : r.variance === 0 ? <Badge tone="green">None</Badge> : <Badge tone="red">{r.variance > 0 ? "Over" : "Short"} <Money paise={Math.abs(r.variance)} /></Badge>
+            ) },
+            { key: "status", header: "Status", cell: (r) => (
+              r.status === "CLOSED"
+                ? <span className="flex flex-col items-start gap-0.5"><Badge tone="green">Closed</Badge>{r.closed_by_name ? <span className="text-xs text-muted-foreground">by {r.closed_by_name}</span> : null}</span>
+                : <Badge tone="amber">Not closed</Badge>
+            ) },
+            { key: "next", header: "Next", cell: (r) => {
+              if (r.status === "CLOSED") return <RelTime when={r.closed_at} className="text-xs text-muted-foreground" />;
+              if (r.blocking > 0) return <span className="text-sm font-semibold text-primary">Settle or carry {r.blocking} open tab{r.blocking === 1 ? "" : "s"} ↑</span>;
+              return canClose ? <CloseDayButton date={r.id} onClosed={() => onClosed(r.id)} /> : <span className="text-xs text-muted-foreground">Ready to close</span>;
+            } },
+          ]}
+          empty={{ title: "No bar days match these filters", hint: "Remove a filter or widen the dates." }}
+        />
+      </CardContent>
+    </Card>
+  );
+}
+
 export function BarDay({ today, perms }: { today: string; perms: { close: boolean; operate: boolean } }) {
   const [date, setDate] = useState(today);
   const state = useApi<Report>(`/api/bar/day?date=${date}`);
   const [error, setError] = useState<Rejection>(null);
   const [busy, setBusy] = useState(false);
+  // Closing the day above refreshes the list below (and the other way round).
+  const [listKey, setListKey] = useState(0);
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -102,6 +186,7 @@ export function BarDay({ today, perms }: { today: string; perms: { close: boolea
                     try {
                       await api("/api/bar/day/close", { body: { date } });
                       await state.reload();
+                      setListKey((k) => k + 1);
                     } catch (e) {
                       setError(toRejection(e));
                     } finally {
@@ -163,7 +248,7 @@ export function BarDay({ today, perms }: { today: string; perms: { close: boolea
                                 requireReason
                                 variant="outline"
                                 confirmLabel="Carry over"
-                                onConfirm={async (reason) => { await api(`/api/bar/tabs/${t.id}/carry`, { body: { reason } }); await state.reload(); }}
+                                onConfirm={async (reason) => { await api(`/api/bar/tabs/${t.id}/carry`, { body: { reason } }); await state.reload(); setListKey((k) => k + 1); }}
                               />
                             ) : null}
                           </span>
@@ -185,6 +270,18 @@ export function BarDay({ today, perms }: { today: string; perms: { close: boolea
           </>
         )}
       </DataState>
+      <BarDaysList
+        key={listKey}
+        selected={date}
+        canClose={perms.close}
+        onPick={(d) => {
+          setDate(d);
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }}
+        onClosed={(d) => {
+          if (d === date) void state.reload();
+        }}
+      />
       {perms.operate ? <MenuAvailability /> : null}
     </div>
   );

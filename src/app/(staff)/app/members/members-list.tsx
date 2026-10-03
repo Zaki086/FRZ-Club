@@ -1,80 +1,64 @@
 "use client";
+// v3 §3, §6.2: members with the standard FilterBar, a summary strip and the next action on each row.
 import Link from "next/link";
-import { useState } from "react";
 import { UserPlus } from "lucide-react";
-import { useApi } from "@/components/api";
-import { DataState } from "@/components/states";
-import { Input, Select } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
-import { MemberStatusBadge, type MemberStatus } from "@/components/member-status";
+import { Badge } from "@/components/ui/badge";
+import { TierBadge } from "@/components/badges";
+import { Money } from "@/components/money";
+import { RelTime } from "@/components/rel-time";
+import { FilteredList } from "@/components/list/filtered-list";
 
-type Row = { id: string; memberCode: string; name: string; phone: string; status: MemberStatus };
+type Row = {
+  id: string; code: string; name: string; phone: string; email: string | null; tier: string; status: string; ends_on: string | null;
+  dues: number; open_tab: boolean; junior: boolean; has_guardian: boolean; last_visit: string | null; sports: string[];
+};
+
+const STATUS: Record<string, { label: string; tone: "green" | "amber" | "red" | "neutral" | "blue" }> = {
+  ACTIVE: { label: "Active", tone: "green" }, EXPIRING: { label: "Expiring", tone: "amber" }, EXPIRED: { label: "Expired", tone: "red" },
+  PENDING_PAYMENT: { label: "Pending payment", tone: "amber" }, SCHEDULED: { label: "Scheduled", tone: "blue" }, NONE: { label: "No plan", tone: "neutral" },
+};
+
+/** The one thing to do next for this member, if any. */
+function NextAction({ r }: { r: Row }) {
+  const href = `/app/members/${r.id}`;
+  if (r.dues > 0) return <Link href={href} className="text-sm font-semibold text-primary underline">Collect <Money paise={r.dues} /></Link>;
+  if (r.status === "PENDING_PAYMENT") return <Link href={href} className="text-sm font-semibold text-primary underline">Take payment</Link>;
+  if (r.status === "EXPIRING" || r.status === "EXPIRED") return <Link href={href} className="text-sm font-semibold text-primary underline">Renew</Link>;
+  return null;
+}
 
 export function MembersList({ canCreate }: { canCreate: boolean }) {
-  const [q, setQ] = useState("");
-  const [tier, setTier] = useState("");
-  const [status, setStatus] = useState("");
-  const url = q.trim().length >= 2 ? `/api/members?q=${encodeURIComponent(q.trim())}` : `/api/members?tier=${tier}&status=${status}`;
-  const state = useApi<Row[]>(url);
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap gap-2">
-        <Input className="max-w-sm" placeholder="Search name, phone or CC-000123" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
-        <Select className="w-36" value={tier} onChange={(e) => setTier(e.target.value)} aria-label="Tier">
-          <option value="">All tiers</option>
-          <option value="GOLD">Gold</option>
-          <option value="SILVER">Silver</option>
-          <option value="JUNIOR">Junior</option>
-          <option value="WALK_IN">No active plan</option>
-        </Select>
-        <Select className="w-36" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-          <option value="">Any status</option>
-          <option value="ACTIVE">Active</option>
-          <option value="EXPIRED">Expired</option>
-          <option value="NONE">Never had a plan</option>
-        </Select>
-        {canCreate ? (
-          <Button asChild className="ml-auto">
-            <Link href="/app/members/new">
-              <UserPlus className="h-4 w-4" /> New member
-            </Link>
-          </Button>
-        ) : null}
-      </div>
-      <Card>
-        <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: "No members found", hint: "Try another name, phone or code." }}>
-          {(rows) => (
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Code</TH>
-                  <TH>Name</TH>
-                  <TH>Phone</TH>
-                  <TH>Membership</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {rows.map((m) => (
-                  <TR key={m.id}>
-                    <TD className="font-mono text-xs">{m.memberCode}</TD>
-                    <TD>
-                      <Link className="font-medium text-primary hover:underline" href={`/app/members/${m.id}`}>
-                        {m.name}
-                      </Link>
-                    </TD>
-                    <TD>{m.phone}</TD>
-                    <TD>
-                      <MemberStatusBadge status={m.status} />
-                    </TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          )}
-        </DataState>
-      </Card>
-    </div>
+    <FilteredList<Row>
+      list="members"
+      searchPlaceholder="Name, mobile or CC-000123"
+      toolbar={canCreate ? <Button asChild><Link href="/app/members/new"><UserPlus className="h-4 w-4" /> New member</Link></Button> : null}
+      columns={[
+        { key: "name", header: "Member", cell: (r) => (
+          <span className="flex flex-col">
+            <Link className="font-semibold text-primary hover:underline" href={`/app/members/${r.id}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link>
+            <span className="font-mono text-xs text-muted-foreground">{r.code}</span>
+          </span>
+        ) },
+        { key: "plan", header: "Membership", cell: (r) => (
+          <span className="flex flex-wrap items-center gap-1">
+            {r.tier !== "WALK_IN" ? <TierBadge tier={r.tier} /> : null}
+            <Badge tone={STATUS[r.status]?.tone ?? "neutral"}>{STATUS[r.status]?.label ?? r.status}</Badge>
+          </span>
+        ) },
+        { key: "ends", header: "Ends", cell: (r) => <RelTime when={r.ends_on ? String(r.ends_on).slice(0, 10) : null} className="text-sm" /> },
+        { key: "dues", header: "Dues", className: "text-right", cell: (r) => (r.dues > 0 ? <Money paise={r.dues} className="font-semibold text-warning-text" /> : <span className="text-muted-foreground">—</span>) },
+        { key: "visit", header: "Last visit", cell: (r) => <RelTime when={r.last_visit} className="text-sm" /> },
+        { key: "next", header: "Next", cell: (r) => <NextAction r={r} /> },
+      ]}
+      rowExtra={(r) => (
+        <div className="grid gap-1 text-sm sm:grid-cols-3">
+          <span>{r.phone}{r.email ? ` · ${r.email}` : ""}</span>
+          <span>{r.sports.length ? `Plays ${r.sports.map((s) => s.toLowerCase()).join(", ")}` : "No court bookings yet"}{r.open_tab ? " · open bar tab" : ""}</span>
+          <span>{r.junior ? (r.has_guardian ? "Junior · guardian on file" : "Junior · no guardian on file") : ""} <Link className="font-semibold text-primary underline" href={`/app/members/${r.id}`}>Open profile</Link></span>
+        </div>
+      )}
+    />
   );
 }

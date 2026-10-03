@@ -1,18 +1,20 @@
 "use client";
+// v3 §3.2: expense bills with the standard FilterBar — status (incl. derived overdue), category, vendor, bill attached —
+// and a summary strip. The old `?status=OVERDUE` / `?status=UNPAID` links are the status facet. Pay, cancel and attach
+// stay on the row.
 import { useState } from "react";
 import { Plus } from "lucide-react";
-import { api, ApiError, useApi } from "@/components/api";
-import { DataState, RejectionBanner } from "@/components/states";
-import { Card, CardContent } from "@/components/ui/card";
+import { api, ApiError } from "@/components/api";
+import { FilteredList, useListReload } from "@/components/list/filtered-list";
+import { RejectionBanner } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
-import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { StatusBadge } from "@/components/badges";
 import { Money } from "@/components/money";
 import { ConfirmButton } from "@/components/confirm";
 import { parseRupees } from "@/lib/money";
-import { fmtDate } from "@/lib/time";
+import { RelTime } from "@/components/rel-time";
 import { label } from "../_components/fmt";
 import { uploadFile } from "@/components/upload";
 
@@ -113,70 +115,64 @@ function PayExpense({ e, onDone }: { e: Expense; onDone: () => void }) {
   );
 }
 
-export function ExpensesList({ canManage, initialStatus }: { canManage: boolean; initialStatus: string }) {
-  const [status, setStatus] = useState(initialStatus);
-  const [category, setCategory] = useState("");
-  const state = useApi<Expense[]>(`/api/expenses?status=${status}&category=${category}`);
-  const reload = () => void state.reload();
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Select className="w-44" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-          <option value="">All statuses</option><option value="UNPAID">Unpaid</option><option value="OVERDUE">Overdue</option><option value="PAID">Paid</option><option value="CANCELLED">Cancelled</option>
-        </Select>
-        <Select className="w-48" value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Category">
-          <option value="">All categories</option>{CATEGORIES.map((c) => <option key={c} value={c}>{label(c)}</option>)}
-        </Select>
-        {canManage ? <div className="ml-auto"><NewExpense onDone={reload} /></div> : <span className="ml-auto text-sm text-muted-foreground">View only</span>}
+function NewExpenseButton() {
+  const reload = useListReload();
+  return <NewExpense onDone={reload} />;
+}
+
+function RowActions({ e }: { e: Expense }) {
+  const reload = useListReload();
+  if (e.status === "UNPAID") {
+    return (
+      <div className="flex gap-1">
+        <PayExpense e={e} onDone={reload} />
+        <ConfirmButton trigger="Cancel" title="Cancel expense bill" description="Unpaid bills are cancelled, never deleted." requireReason confirmLabel="Cancel bill"
+          onConfirm={async (reason) => { await api(`/api/expenses/${e.id}/cancel`, { body: { reason } }); reload(); }} />
       </div>
-      <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: "No expense bills", hint: "Supplier bills from goods receipts appear here too." }}>
-        {(rows) => {
-          const unpaid = rows.filter((r) => r.status === "UNPAID");
-          return (
-            <>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Card><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Unpaid in this list</p><p className="text-xl font-bold"><Money paise={unpaid.reduce((a, r) => a + r.amount, 0)} /></p><p className="text-xs text-muted-foreground">{unpaid.length} bills</p></CardContent></Card>
-                <Card><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Overdue</p><p className="text-xl font-bold text-destructive"><Money paise={rows.filter((r) => r.overdue).reduce((a, r) => a + r.amount, 0)} /></p><p className="text-xs text-muted-foreground">{rows.filter((r) => r.overdue).length} bills</p></CardContent></Card>
-              </div>
-              <Card>
-                <Table>
-                  <THead><TR><TH>Vendor</TH><TH>Category</TH><TH>Bill date</TH><TH>Due</TH><TH className="text-right">Amount</TH><TH className="text-right">Input GST</TH><TH>Status</TH>{canManage ? <TH /> : null}</TR></THead>
-                  <TBody>
-                    {rows.map((e) => (
-                      <TR key={e.id}>
-                        <TD>
-                          <p className="font-medium">{e.vendor}</p><p className="text-xs text-muted-foreground">{e.description}</p>
-                          <span className="flex gap-2">
-                            {e.attachmentUrl ? <a className="text-xs text-primary underline" href={e.attachmentUrl} target="_blank" rel="noreferrer">View bill</a> : null}
-                            {canManage && e.status !== "CANCELLED" ? <AttachBill e={e} onDone={reload} /> : null}
-                          </span>
-                        </TD>
-                        <TD className="text-sm">{label(e.category)}</TD>
-                        <TD className="text-sm">{fmtDate(e.billDate)}</TD>
-                        <TD className="text-sm">{fmtDate(e.dueDate)}</TD>
-                        <TD className="text-right"><Money paise={e.amount} /></TD>
-                        <TD className="text-right"><Money paise={e.inputGst} /></TD>
-                        <TD className="flex gap-1"><StatusBadge status={e.status} />{e.overdue ? <StatusBadge status="OVERDUE" /> : null}</TD>
-                        {canManage ? (
-                          <TD>
-                            {e.status === "UNPAID" ? (
-                              <div className="flex gap-1">
-                                <PayExpense e={e} onDone={reload} />
-                                <ConfirmButton trigger="Cancel" title="Cancel expense bill" description="Unpaid bills are cancelled, never deleted." requireReason confirmLabel="Cancel bill"
-                                  onConfirm={async (reason) => { await api(`/api/expenses/${e.id}/cancel`, { body: { reason } }); reload(); }} />
-                              </div>
-                            ) : e.paidAt ? <span className="text-xs text-muted-foreground">{e.method}</span> : null}
-                          </TD>
-                        ) : null}
-                      </TR>
-                    ))}
-                  </TBody>
-                </Table>
-              </Card>
-            </>
-          );
-        }}
-      </DataState>
-    </div>
+    );
+  }
+  return e.paidAt ? <span className="text-xs text-muted-foreground">{e.method ? label(e.method) : null} · <RelTime when={e.paidAt} /></span> : null;
+}
+
+function BillCell({ e, canManage }: { e: Expense; canManage: boolean }) {
+  const reload = useListReload();
+  return (
+    <>
+      <p className="font-medium">{e.vendor}</p><p className="text-xs text-muted-foreground">{e.description}</p>
+      <span className="flex gap-2">
+        {e.attachmentUrl ? <a className="text-xs text-primary underline" href={e.attachmentUrl} target="_blank" rel="noreferrer">View bill</a> : null}
+        {canManage && e.status !== "CANCELLED" ? <AttachBill e={e} onDone={reload} /> : null}
+      </span>
+    </>
+  );
+}
+
+type Row = {
+  id: string; vendor: string; category: string; description: string; amount: number; input_gst: number; bill_day: string; due_day: string;
+  status: string; overdue: boolean; method: string | null; paid_at: string | null; attachment_url: string | null;
+};
+const toExpense = (r: Row): Expense => ({
+  id: r.id, vendor: r.vendor, category: r.category, description: r.description, amount: r.amount, inputGst: r.input_gst, billDate: r.bill_day,
+  dueDate: r.due_day, status: r.status, overdue: r.overdue, method: r.method, paidAt: r.paid_at, attachmentUrl: r.attachment_url,
+});
+
+export function ExpensesList({ canManage }: { canManage: boolean }) {
+  return (
+    <FilteredList<Row>
+      list="expenses"
+      searchPlaceholder="Vendor or description"
+      toolbar={canManage ? <NewExpenseButton /> : <span className="text-sm text-muted-foreground">View only</span>}
+      columns={[
+        { key: "vendor", header: "Vendor", cell: (r) => <BillCell e={toExpense(r)} canManage={canManage} /> },
+        { key: "category", header: "Category", cell: (r) => <span className="text-sm">{label(r.category)}</span> },
+        { key: "bill", header: "Bill date", cell: (r) => <RelTime className="text-sm" when={r.bill_day} /> },
+        { key: "due", header: "Due", cell: (r) => <RelTime className={r.overdue ? "text-sm font-semibold text-destructive" : "text-sm"} when={r.due_day} /> },
+        { key: "amount", header: "Amount", className: "text-right", cell: (r) => <Money paise={r.amount} /> },
+        { key: "gst", header: "Input GST", className: "text-right", cell: (r) => <Money paise={r.input_gst} /> },
+        { key: "status", header: "Status", cell: (r) => <span className="flex gap-1"><StatusBadge status={r.status} />{r.overdue ? <StatusBadge status="OVERDUE" /> : null}</span> },
+        ...(canManage ? [{ key: "actions", header: "", cell: (r: Row) => <RowActions e={toExpense(r)} /> }] : []),
+      ]}
+      empty={{ title: "No expense bills match these filters", hint: "Supplier bills from goods receipts appear here too." }}
+    />
   );
 }

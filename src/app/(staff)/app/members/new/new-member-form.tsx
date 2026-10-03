@@ -8,6 +8,7 @@ import { Field, Input, Select } from "@/components/ui/input";
 import { PhotoInput } from "@/components/photo-input";
 import { RejectionBanner } from "@/components/states";
 import { MemberCard } from "@/components/member-card";
+import { CredentialsPanel } from "@/components/credentials-panel";
 import { PaymentPanel } from "@/components/payment-panel";
 import { Money } from "@/components/money";
 import { cn } from "@/components/ui/cn";
@@ -28,7 +29,7 @@ type Result = { memberId: string; memberCode: string; membershipStatus: string |
 
 export function NewMemberForm({ prefill }: { prefill: { name: string; phone: string; email: string; leadId: string } }) {
   const plans = useApi<Plan[]>("/api/plans");
-  const [f, setF] = useState({ name: prefill.name, phone: prefill.phone, email: prefill.email, dob: "", emergencyContactName: "", emergencyContactPhone: "", password: "", guardianName: "", guardianPhone: "" });
+  const [f, setF] = useState({ name: prefill.name, phone: prefill.phone, email: prefill.email, dob: "", emergencyContactName: "", emergencyContactPhone: "", guardianName: "", guardianPhone: "" });
   const [consent, setConsent] = useState(false);
   const [photo, setPhoto] = useState<string | null>(null);
   const [plan, setPlan] = useState<string>("SILVER");
@@ -53,12 +54,8 @@ export function NewMemberForm({ prefill }: { prefill: { name: string; phone: str
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <MemberCard memberId={result.memberId} />
-            {result.setPasswordToken ? (
-              <div className="rounded-md border bg-muted/50 p-3 text-sm">
-                Portal password link (one-time, 7 days):{" "}
-                <code className="break-all">{`${typeof window !== "undefined" ? window.location.origin : ""}/set-password/${result.setPasswordToken}`}</code>
-              </div>
-            ) : null}
+            {/* WK-5: the login is created when the membership is paid; the panel shows how the welcome went out. */}
+            <CredentialsPanel memberId={result.memberId} initialToken={result.setPasswordToken} />
             {result.billId && result.billStatus !== "PAID" ? (
               <div>
                 <p className="mb-2 font-semibold">Membership payment</p>
@@ -140,15 +137,12 @@ export function NewMemberForm({ prefill }: { prefill: { name: string; phone: str
             </Field>
           </div>
           {underEighteen(f.dob) ? (
-            <div className="grid grid-cols-2 gap-3 rounded-md border border-blue-200 bg-blue-50 p-2">
-              <p className="col-span-2 text-xs text-blue-900">Under 18: a parent or guardian is required. If they are a member, they will see this member in their portal.</p>
+            <div className="grid grid-cols-2 gap-3 rounded-md border border-junior/30 bg-junior/10 p-2">
+              <p className="col-span-2 text-xs text-junior">Under 18: a parent or guardian is required. If they are a member, they will see this member in their portal.</p>
               <Field label="Guardian's name *"><Input name="guardianName" value={f.guardianName} onChange={set("guardianName")} required /></Field>
               <Field label="Guardian's mobile *"><Input name="guardianPhone" inputMode="tel" value={f.guardianPhone} onChange={set("guardianPhone")} required /></Field>
             </div>
           ) : null}
-          <Field label="Portal password" hint="Optional. Leave empty to generate a one-time set-password link.">
-            <Input name="password" type="password" value={f.password} onChange={set("password")} autoComplete="new-password" />
-          </Field>
         </CardContent>
       </Card>
       <Card>

@@ -4,14 +4,13 @@ import { can } from "@/server/rbac/permissions";
 import { PageHeader } from "@/components/page";
 import { ExpensesList } from "./expenses-list";
 
-export default async function ExpensesPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
+export default async function ExpensesPage() {
   const actor = await requireUser();
   if (!can(actor, "expenses.view")) forbidden();
-  const sp = await searchParams;
   return (
     <div>
       <PageHeader title="Expenses & payables" subtitle="Supplier bills and running costs. Paying one writes an EXPENSE entry to the ledger." />
-      <ExpensesList canManage={can(actor, "expenses.manage")} initialStatus={sp.status ?? ""} />
+      <ExpensesList canManage={can(actor, "expenses.manage")} />
     </div>
   );
 }

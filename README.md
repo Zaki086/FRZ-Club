@@ -19,8 +19,10 @@ npm run seed:demo               # OPTIONAL sample club: 60 days of history throu
 npm run dev                     # http://localhost:3200   — and in a second terminal:  npm run worker
 ```
 
-`npm run worker` runs the scheduled jobs (every 5 minutes: no-shows/completions, order holds, overdue leads,
-stale gateway payments, email outbox; daily 00:05 IST: membership expiry + reminders, overdue invoices, low-stock digest).
+`npm run worker` runs the scheduled jobs (every 5 minutes: no-shows/completions, order holds, overdue and escalated
+leads, stale gateway payments, email outbox, notification deliveries (push / email / WhatsApp API), missing clock-outs,
+scheduled price changes; daily 00:05 IST: membership expiry + reminders, dues reminders, overdue invoices, low-stock
+digest, expired leave requests, club-cancelled bookings with no choice → refund).
 
 ### A real club (first run)
 
@@ -49,9 +51,20 @@ pm2 start ecosystem.config.cjs   # champions-web (port 3200, all interfaces) + c
 pm2 save                         # restored automatically after a reboot (pm2 startup)
 ```
 
-Set `APP_URL` in `.env` to the address people use (e.g. `http://<server-ip>:3200`); it is used in emailed links.
-Postgres runs with `restart: unless-stopped`. Over plain HTTP the session cookie is not marked `Secure` (browsers
-would drop it); behind HTTPS it is. Dev tools (time travel) are disabled in production by design.
+Set `APP_URL` in `.env` to the address people use; it is used in links sent to members. Postgres runs with
+`restart: unless-stopped`. Over plain HTTP the session cookie is not marked `Secure` (browsers would drop it); behind
+HTTPS it is. Dev tools (time travel) are disabled in production by design.
+
+### HTTPS
+
+The camera QR scan, Web Push and secure cookies need HTTPS. Two ways (details in `PROGRESS.md`, v3 phase 1):
+- **A reverse proxy** you control (Caddy/nginx) with a real domain, forwarding to `127.0.0.1:3200` — the recommended
+  set-up; the exact Caddy block is in `PROGRESS.md`.
+- **A Cloudflare quick tunnel** (what this server uses, because ports 80/443 belong to another project): the PM2 app
+  `champions-tunnel` (`scripts/tunnel.mjs`) keeps `APP_URL` in step with the tunnel's address (in `.tunnel-url`) and
+  restarts only the web and worker processes when it changes. The address changes when the tunnel restarts.
+
+When `APP_URL` is HTTPS, plain-HTTP visits to that host are redirected (308) and HSTS is sent.
 
 ## Sample logins (only after `npm run seed:demo`)
 
@@ -98,10 +111,20 @@ The app only offers what the club can really do (Settings → Payments & service
 | Email | `SMTP_HOST` + `SMTP_FROM` set and a test email sent from Settings |
 | Delivery | switched on with at least one PIN code |
 | GST | a GSTIN with a valid check digit **and** tax rates confirmed by the Owner; otherwise no GST is charged |
+| Push notifications | HTTPS `APP_URL` + `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` (`npx web-push generate-vapid-keys`); each person turns it on per device |
+| WhatsApp (automatic) | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET` (+ `WHATSAPP_VERIFY_TOKEN` for the webhook), approved template names in Settings and a successful test message. Meta charges per message. Otherwise WhatsApp messages wait under **Messages to send** for the desk to send from the club phone |
 
-Counter payments and refunds need the staff member's **cash drawer** to be open (`/app/drawer`); the accountant
-reconciles each day at `/app/finance/cash`. A refund that can't go back the way it came is queued at `/app/refunds`
-for the desk to pay out.
+Counter payments and refunds need the staff member's **cash drawer** to be open (`/app/drawer`, which shows what was
+collected by method and the cash that should be in it); the accountant reconciles each day at `/app/finance/cash`.
+Every refund is a **refund request** (`/app/refunds`): refunds a rule requires (in-time cancellation, club
+cancellation, over-payment, return window) are approved automatically; others need a Manager (up to the limit in
+Settings) or the Owner, and never the person who asked; money goes back the way it came — through the gateway, or at
+the desk with the UPI reference, card reversal reference or cash from an open drawer.
+
+Members get every message (welcome with their login link, renewals, expiry and dues reminders, refunds, club
+cancellations) in the app and on each channel that works and they haven't turned off; the **Notification log**
+(`/app/messages`) records every attempt per channel — a channel that isn't available is recorded as not available,
+never as sent.
 
 ## Where things are
 
@@ -109,7 +132,9 @@ for the desk to pay out.
 |---|---|
 | Public website | `/`, `/plans`, `/availability`, `/shop`, `/trial`, `/enquire`, `/quote/[token]` |
 | Member portal | `/portal` (card QR, book, social, bookings, orders, tab, invoices, membership) |
-| Staff app | `/app` (role-scoped dashboard) — front desk `/app/desk`, courts `/app/courts`, shop `/app/shop`, bar `/app/bar`, KDS `/app/bar/kds`, CRM `/app/crm`, finance `/app/finance/*`, staff `/app/staff/*`, reports `/app/reports`, settings `/app/settings` |
+| Staff app | `/app` (role-scoped dashboard) — front desk `/app/desk` (renewals & dues `/app/desk/expiring`), courts `/app/courts` (Close courts), shop `/app/shop` (products `/app/shop/products`), bar `/app/bar`, KDS `/app/bar/kds`, CRM `/app/crm`, refunds `/app/refunds`, messages `/app/messages`, price book `/app/pricing`, finance `/app/finance/*` (all cash drawers `/app/finance/drawers`), staff `/app/staff/*` (directory, attendance, roster, leave), reports `/app/reports`, settings `/app/settings` |
+| Lists | Every list has the same filter bar: search, date presets, filters with counts, sort, 25/50/100 per page, chips, CSV export (roles that may export) and saved views; the filters live in the address, so a view can be shared |
+| Webhooks | Razorpay `POST /api/payments/razorpay/webhook`; WhatsApp Cloud API `GET/POST /api/webhooks/whatsapp` |
 | Razorpay webhook | `POST /api/payments/razorpay/webhook` (set the same secret as `RAZORPAY_WEBHOOK_SECRET`) |
 | Dev tools | `/app/settings/dev` — time travel and "Run all jobs now" (disabled in production) |
 
@@ -154,5 +179,9 @@ across counter and online, and the last social spot.
   refunds are negative entries under the original source.
 - **No hard deletes:** delete-blocking triggers on every transactional table.
 - **Idempotency keys** on booking, social join, checkout, payments, settle and gateway callbacks.
+- **Refunds:** every refund payment belongs to a refund request; integrity check #11 proves their states and money agree.
+- **Prices:** base prices are dated versions and rules are never edited in place (a change ends one version and starts
+  the next), so any price can be explained and bills — snapshots — never change afterwards.
+- **Messages:** exactly one delivery record per message and channel (unique index), so a reminder is never sent twice.
 
 See `PROGRESS.md` (requirement-by-requirement status with files and tests) and `DECISIONS.md` (choices made where the plan was silent).

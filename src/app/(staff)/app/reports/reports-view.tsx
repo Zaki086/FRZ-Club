@@ -111,7 +111,7 @@ function ShareLinks({ period }: { period: PeriodState }) {
         </div>
         <RejectionBanner error={error} />
         {created ? (
-          <div className="flex flex-wrap items-center gap-2 rounded-md border border-green-300 bg-green-50 p-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-success/40 bg-success/10 p-2 text-sm">
             <code className="break-all">{absolute(created)}</code>
             <Button size="sm" variant="outline" onClick={() => copy(created)}>
               <Copy className="h-4 w-4" /> {copied === created ? "Copied" : "Copy"}

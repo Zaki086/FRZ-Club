@@ -1,5 +1,7 @@
 "use client";
+// The week board and "Attendance & cash" are unchanged; the List tab is the roster as a v3 §3.2 filtered list.
 import { useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { api, ApiError, useApi } from "@/components/api";
 import { DataState, Empty, RejectionBanner } from "@/components/states";
@@ -12,7 +14,10 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmButton } from "@/components/confirm";
 import { Money } from "@/components/money";
-import { addDays, fmtDateTime, fmtDay } from "@/lib/time";
+import { FilteredList, useListReload } from "@/components/list/filtered-list";
+import { RelTime } from "@/components/rel-time";
+import { hmm } from "@/lib/duration";
+import { addDays, fmtDateTime, fmtDay, fmtRange } from "@/lib/time";
 import { cn } from "@/components/ui/cn";
 
 type Shift = { id: string; employeeId: string | null; previousEmployeeId: string | null; date: string; start: string; end: string; area: string; status: "ASSIGNED" | "OPEN"; name: string | null };
@@ -69,7 +74,7 @@ function AssignDialog({ employees, defaults, onDone }: { employees: Employee[]; 
   );
 }
 
-function FillShift({ shift, employees, onDone }: { shift: Shift; employees: Employee[]; onDone: () => void }) {
+function FillShift({ shift, employees, onDone }: { shift: Pick<Shift, "id">; employees: Employee[]; onDone: () => void }) {
   const [emp, setEmp] = useState("");
   const [error, setError] = useState<Rejection>(null);
   return (
@@ -116,17 +121,87 @@ function Attendance() {
   );
 }
 
-export function RosterBoard({ initialFrom, initialTab }: { initialFrom: string; initialTab: "roster" | "attendance" }) {
+type ShiftRow = {
+  id: string; day: string; start_at: string; end_at: string; area: string; status: "ASSIGNED" | "OPEN"; employee_id: string | null;
+  name: string | null; role: string | null; previous_name: string | null; minutes: number; leave_type: string | null;
+};
+
+function ShiftNext({ r, employees }: { r: ShiftRow; employees: Employee[] }) {
+  const reload = useListReload();
+  if (r.status === "OPEN") return <FillShift shift={r} employees={employees} onDone={reload} />;
+  return (
+    <ConfirmButton
+      trigger="Unassign"
+      size="sm"
+      title="Unassign this shift?"
+      description={`${r.name ?? ""} · ${fmtDay(r.day)} ${fmtRange(r.start_at, r.end_at)}. It stays on the roster as an OPEN shift.`}
+      confirmLabel="Unassign"
+      onConfirm={async () => { await api(`/api/staff/shifts/${r.id}/unassign`, { body: {} }); reload(); }}
+    />
+  );
+}
+
+function ShiftsList({ employees }: { employees: Employee[] }) {
+  return (
+    <FilteredList<ShiftRow>
+      list="shifts"
+      searchPlaceholder="Employee name"
+      columns={[
+        {
+          key: "day", header: "Day", cell: (r) => (
+            <span className="flex flex-col">
+              <span className="whitespace-nowrap font-medium">{fmtDay(r.day)}</span>
+              <RelTime when={r.day} className="text-xs text-muted-foreground" />
+            </span>
+          ),
+        },
+        { key: "time", header: "Time", cell: (r) => <span className="tabular whitespace-nowrap">{fmtRange(r.start_at, r.end_at)}</span> },
+        { key: "hours", header: "Hours", className: "text-right", cell: (r) => <span className="tabular">{hmm(r.minutes)}</span> },
+        { key: "area", header: "Area", cell: (r) => <Badge tone={AREA_TONE[r.area]}>{r.area.replace("_", " ")}</Badge> },
+        {
+          key: "who", header: "Staff", cell: (r) =>
+            r.status === "OPEN" ? (
+              <span className="flex flex-col items-start gap-0.5">
+                <Badge tone="amber">Open</Badge>
+                {r.previous_name ? <span className="text-xs text-muted-foreground">was {r.previous_name}{r.leave_type ? ` (${r.leave_type.toLowerCase()} leave)` : ""}</span> : null}
+              </span>
+            ) : (
+              <span className="flex flex-col">
+                <span className="font-medium">{r.name}</span>
+                <span className="text-xs text-muted-foreground">{r.role?.replace(/_/g, " ").toLowerCase()}</span>
+              </span>
+            ),
+        },
+        { key: "next", header: "", cell: (r) => <span onClick={(e) => e.stopPropagation()}><ShiftNext r={r} employees={employees} /></span> },
+      ]}
+      empty={{ title: "No shifts for these filters", hint: "Widen the dates or remove a filter. Assign shifts from the Roster tab." }}
+    />
+  );
+}
+
+type Tab = "roster" | "attendance" | "list";
+
+export function RosterBoard({ initialFrom, initialTab }: { initialFrom: string; initialTab: Tab }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const search = useSearchParams();
+  // The List tab keeps its filters in the address bar; the other tabs keep only `?tab=attendance` (linked from
+  // notifications). Switching tabs swaps one for the other so the list never sees a parameter it doesn't know.
   const [from, setFrom] = useState(initialFrom);
   const state = useApi<Roster>(`/api/staff/roster?from=${from}&days=7`);
+  const changeTab = (t: string) => {
+    router.replace(t === "attendance" ? `${pathname}?tab=attendance` : pathname, { scroll: false });
+    if (t === "roster") void state.reload(); // shifts filled or unassigned from the list show on the board
+  };
   const emps = useApi<Employee[]>("/api/staff/employees");
   const reload = () => void state.reload();
   const employees = emps.data ?? [];
   return (
-    <Tabs defaultValue={initialTab}>
+    <Tabs defaultValue={initialTab} onValueChange={changeTab}>
       <TabsList>
         <TabsTrigger value="roster">Roster</TabsTrigger>
         <TabsTrigger value="attendance">Attendance & cash</TabsTrigger>
+        <TabsTrigger value="list">List</TabsTrigger>
       </TabsList>
       <TabsContent value="roster" className="mt-3 flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -210,6 +285,9 @@ export function RosterBoard({ initialFrom, initialTab }: { initialFrom: string; 
       </TabsContent>
       <TabsContent value="attendance" className="mt-3">
         <Card><CardContent className="pt-4"><Attendance /></CardContent></Card>
+      </TabsContent>
+      <TabsContent value="list" className="mt-3">
+        {search.has("tab") ? null : <ShiftsList employees={employees} />}
       </TabsContent>
     </Tabs>
   );

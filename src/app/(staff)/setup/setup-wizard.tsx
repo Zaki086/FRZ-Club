@@ -86,7 +86,7 @@ function Gst({ hasGstin, verified, rates, onSaved }: { hasGstin: boolean; verifi
       </div>
       <RejectionBanner error={error} />
       {verified ? (
-        <p className="text-green-700">Rates confirmed.</p>
+        <p className="text-success-text">Rates confirmed.</p>
       ) : (
         <Button className="self-start" disabled={busy} onClick={() => run(() => api("/api/settings/tax_rates", { body: {} }))}>
           These GST rates are right — confirm
@@ -189,7 +189,7 @@ export function SetupWizard() {
     const st = done(k);
     return (
       <CardTitle className="flex items-center gap-2">
-        {st?.done ? <CheckCircle2 className="h-5 w-5 text-green-600" /> : <Circle className="h-5 w-5 text-muted-foreground" />}
+        {st?.done ? <CheckCircle2 className="h-5 w-5 text-success-text" /> : <Circle className="h-5 w-5 text-muted-foreground" />}
         {title}
         {st ? <span className="text-xs font-normal text-muted-foreground">{st.detail}</span> : null}
       </CardTitle>

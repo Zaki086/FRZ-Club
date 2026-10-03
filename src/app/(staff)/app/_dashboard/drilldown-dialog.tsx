@@ -72,7 +72,7 @@ export function DrillDownDialog({
                       <span>
                         Server total: <strong className="tabular" data-testid="drill-total">{fmt(d.total)}</strong>
                       </span>
-                      <span className={`inline-flex items-center gap-1 ${ok ? "text-green-700" : "text-destructive"}`}>
+                      <span className={`inline-flex items-center gap-1 ${ok ? "text-success-text" : "text-destructive"}`}>
                         {ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
                         Sum of rows: <span className="tabular">{fmt(sum)}</span> {ok ? "— matches" : "— MISMATCH"}
                       </span>
