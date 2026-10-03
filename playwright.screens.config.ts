@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// `npm run audit:dummy` crawls the running app (APP_URL) with the sample logins.
+// `npm run audit:dummy` takes screenshots of the running app (APP_URL) with the sample logins.
 try {
   process.loadEnvFile(".env");
 } catch {
@@ -10,7 +10,7 @@ const BASE = process.env.APP_URL ?? "http://localhost:3200";
 
 export default defineConfig({
   testDir: "tests/audit",
-  testMatch: /crawl\.spec\.ts/,
+  testMatch: /screenshots\.spec\.ts/,
   timeout: 30 * 60_000,
   workers: 1,
   reporter: [["list"]],

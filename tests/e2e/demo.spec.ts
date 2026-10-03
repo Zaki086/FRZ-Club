@@ -108,7 +108,6 @@ test("1. Front desk signs up Kiran on Silver with UPI → member card QR and a t
   await page.locator('input[name="name"]').fill("Kiran Desai");
   await page.locator('input[name="phone"]').fill(kiranPhone);
   await page.locator('input[name="dob"]').fill("1996-04-12");
-  await page.locator('input[name="password"]').fill(MEMBER_PW);
   await page.getByRole("button", { name: /Silver/ }).click();
   await page.locator('select[name="method"]').selectOption("UPI");
   await page.locator('input[name="reference"]').fill(utr());
@@ -116,6 +115,8 @@ test("1. Front desk signs up Kiran on Silver with UPI → member card QR and a t
   await page.getByTestId("signup-submit").click();
   await expect(page.getByText(/is registered as CC-\d{6}/)).toBeVisible();
   await expect(page.getByTestId("member-card")).toBeVisible();
+  // v3 WK-1/WK-5: no password at the desk; paying the membership created the login link.
+  await expect(page.getByTestId("credentials-panel")).toContainText(kiranPhone);
   const found = await call<Array<{ id: string; status: { tier: string } }>>(desk.ctx.request, "GET", `/api/members?q=${kiranPhone}`);
   S.kiran = found.data[0].id;
   expect(found.data[0].status.tier).toBe("SILVER");
@@ -169,7 +170,14 @@ test("4. Kiran's second session is fine; a third → DAILY_LIMIT_REACHED naming 
 });
 
 test("5. npm run demo:race → 20 simultaneous requests, exactly 1 success and 19 SLOT_TAKEN", async () => {
-  const out = execFileSync("npx", ["tsx", "scripts/demo-race.ts"], { encoding: "utf8", env: { ...process.env, APP_URL: test.info().project.use.baseURL as string } });
+  let out: string;
+  try {
+    out = execFileSync("npx", ["tsx", "scripts/demo-race.ts"], { encoding: "utf8", env: { ...process.env, APP_URL: test.info().project.use.baseURL as string } });
+  } catch (e) {
+    // Show what the race printed (a failed run exits non-zero); the assertion below stays the same.
+    const err = e as { stdout?: string; stderr?: string };
+    out = `${err.stdout ?? ""}\n${err.stderr ?? ""}`;
+  }
   expect(out).toContain("Result: 1 success, 19 SLOT_TAKEN");
 });
 

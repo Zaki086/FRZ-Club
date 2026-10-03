@@ -10,7 +10,6 @@ import {
   completeRefund,
   failStalePendingPayments,
   handleRazorpayWebhook,
-  issueRefund,
   listPendingRefunds,
   recordCounterPayment,
   startOnlinePayment,
@@ -25,6 +24,8 @@ import { makeMember } from "../helpers/members";
 import { clock } from "@/lib/clock";
 import { makeWorld, type World, utr, CARD_PROOF, TEST_UPI_VPA } from "../helpers/world";
 import { expectIntegrity } from "../helpers/integrity";
+import { approvedRefund } from "../helpers/refunds";
+import { requestRefund } from "@/server/services/refunds";
 
 let w: World;
 
@@ -143,10 +144,10 @@ describe("Completion §2.7 — refunds only through enabled methods", () => {
   it("a UPI refund without a UTR becomes PENDING; the desk pays it out later with proof", async () => {
     const bill = await makeBill(40000);
     await recordCounterPayment(w.actors.FRONT_DESK, { billId: bill.id, method: "UPI", amount: 40000, reference: utr() });
-    const r = await issueRefund(w.actors.MANAGER, { billId: bill.id, amount: 15000, reason: "goodwill" });
+    const r = await approvedRefund(w, bill.id, 15000);
     expect([r.refunded, r.pending]).toEqual([0, 15000]);
     expect(await prisma.ledgerEntry.count({ where: { billId: bill.id, amount: { lt: 0 } } })).toBe(0);
-    await expect(issueRefund(w.actors.MANAGER, { billId: bill.id, amount: 30000, method: "CASH", reason: "too much" })).rejects.toMatchObject({ code: "REFUND_EXCEEDS_PAID" });
+    await expect(requestRefund(w.actors.MANAGER, { billId: bill.id, amount: 30000, reason: "OTHER", note: "too much" })).rejects.toMatchObject({ code: "REFUND_EXCEEDS_PAID" });
     const pending = await listPendingRefunds(w.actors.FRONT_DESK);
     expect(pending.map((p) => p.amount)).toEqual([15000]);
     await expect(completeRefund(w.actors.FRONT_DESK, pending[0].id, { method: "UPI" })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
@@ -162,10 +163,10 @@ describe("Completion §2.7 — refunds only through enabled methods", () => {
     const gp = testGateway.newGatewayPaymentId();
     await verifyOnlinePayment(s.paymentId, { gatewayPaymentId: gp, outcome: "SUCCESS", signature: testGateway.sign(s.paymentId, gp, "SUCCESS") });
     setCapabilityOverridesForTests({ "payments.online": false, email: true });
-    const r = await issueRefund(w.actors.MANAGER, { billId: bill.id, amount: 25000, reason: "cancelled" });
+    const r = await approvedRefund(w, bill.id, 25000);
     expect(r.pending).toBe(25000);
     setCapabilityOverridesForTests({ email: true });
-    const r2 = await issueRefund(w.actors.MANAGER, { billId: bill.id, amount: 1, reason: "rounding" }).catch((e) => e);
+    const r2 = await requestRefund(w.actors.MANAGER, { billId: bill.id, amount: 1, reason: "OTHER", note: "rounding" }).catch((e: unknown) => e);
     expect(r2).toMatchObject({ code: "REFUND_EXCEEDS_PAID" });
     await expectIntegrity();
   });

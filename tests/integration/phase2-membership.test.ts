@@ -14,6 +14,7 @@ import {
 } from "@/server/services/membership";
 import { lookupByCard, member360, searchMembers, memberCard } from "@/server/services/members";
 import { recordCounterPayment } from "@/server/services/payments";
+import { approveRefund, payOutRefund } from "@/server/services/refunds";
 import { quoteCourt } from "@/server/services/pricing";
 import { makeWorld, T0, type World, CARD_PROOF, utr } from "../helpers/world";
 import { makeMember } from "../helpers/members";
@@ -174,7 +175,8 @@ describe("Phase 2 — expiry and reminders (MB-4, MB-10, MB-11)", () => {
     expect(kinds.map((k) => k.reminderType).sort()).toEqual(["D1", "D7", "EXPIRED"]);
     const memberNotes = await prisma.notification.count({ where: { userId: r.member.userId! } });
     expect(memberNotes).toBeGreaterThanOrEqual(3);
-    expect(await prisma.emailOutbox.count({ where: { to: "ria@example.com" } })).toBeGreaterThanOrEqual(3);
+    // v3 NT-1 (D-70): member reminders go out through the channel log, exactly once per reminder and channel.
+    expect(await prisma.notificationDelivery.count({ where: { memberId: r.memberId, event: "MEMBERSHIP_EXPIRY", channel: "EMAIL", toAddress: "ria@example.com" } })).toBe(3);
     const st = await effectiveStatus(r.memberId);
     expect(st.status).toBe("EXPIRED");
     expect(st.badge).toBe("red");
@@ -193,9 +195,12 @@ describe("Phase 2 — cancellation, card, Member 360 (MB-13, MB-14, R-05, R-06)"
   it("MB-13: only OWNER/MANAGER cancel, with a reason; optional refund is a negative ledger entry", async () => {
     const r = await makeMember(w, { name: "Cancel Cara", plan: "SILVER" });
     await expect(cancelMembership(w.actors.FRONT_DESK, { membershipId: r.membershipId!, reason: "moving" })).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await cancelMembership(w.actors.MANAGER, { membershipId: r.membershipId!, reason: "moving city", refundAmount: 100000, refundMethod: "UPI", refundReference: utr() });
+    const c = await cancelMembership(w.actors.MANAGER, { membershipId: r.membershipId!, reason: "moving city", refundAmount: 100000 });
     const ms = await prisma.membership.findUniqueOrThrow({ where: { id: r.membershipId! } });
     expect(ms.status).toBe("CANCELLED");
+    // v3 RF-3: the refund is a request — someone else approves it, then the desk pays it out (D-68).
+    await approveRefund(w.actors.OWNER, c.refundRequest!.id);
+    await payOutRefund(w.actors.FRONT_DESK, c.refundRequest!.id, { method: "UPI", reference: utr() });
     const sum = await prisma.ledgerEntry.aggregate({ where: { billId: r.billId! }, _sum: { amount: true } });
     expect(sum._sum.amount).toBe(100000);
     expect((await effectiveStatus(r.memberId)).tier).toBe("WALK_IN");
