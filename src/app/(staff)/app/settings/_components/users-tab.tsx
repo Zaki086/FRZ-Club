@@ -10,8 +10,10 @@ import { Badge } from "@/components/ui/badge";
 import { ConfirmButton } from "@/components/confirm";
 import { Money } from "@/components/money";
 import { parseRupees } from "@/lib/money";
+import { ResetLinkButton } from "@/components/reset-link-button";
+import { fmtDateTime } from "@/lib/time";
 
-type User = { id: string; name: string; phone: string; email: string | null; role: string; active: boolean; employee: { monthlySalary: number; joinDate: string } | null };
+type User = { id: string; name: string; phone: string; email: string | null; role: string; active: boolean; lastLoginAt: string | null; lockedUntil: string | null; employee: { monthlySalary: number; joinDate: string } | null };
 const ROLES = ["OWNER", "MANAGER", "FRONT_DESK", "SHOP_STAFF", "BAR_STAFF", "ACCOUNTANT"];
 
 export function UsersTab({ selfUserId }: { selfUserId: string }) {
@@ -28,7 +30,7 @@ export function UsersTab({ selfUserId }: { selfUserId: string }) {
           <DataState state={users} isEmpty={(d) => d.length === 0} empty={{ title: "No staff users" }}>
             {(rows) => (
               <Table>
-                <THead><TR><TH>Name</TH><TH>Role</TH><TH>Phone / email</TH><TH>Salary</TH><TH>Status</TH><TH /></TR></THead>
+                <THead><TR><TH>Name</TH><TH>Role</TH><TH>Phone / email</TH><TH>Salary</TH><TH>Status</TH><TH>Last login</TH><TH /></TR></THead>
                 <TBody>
                   {rows.map((u) => (
                     <TR key={u.id}>
@@ -36,11 +38,14 @@ export function UsersTab({ selfUserId }: { selfUserId: string }) {
                       <TD><Badge tone="dark">{u.role.replace("_", " ")}</Badge></TD>
                       <TD className="text-xs">{u.phone}<br />{u.email ?? ""}</TD>
                       <TD>{u.employee ? <Money paise={u.employee.monthlySalary} /> : "—"}</TD>
-                      <TD>{u.active ? <Badge tone="green">Active</Badge> : <Badge tone="red">Inactive</Badge>}</TD>
+                      <TD>{u.active ? <Badge tone="green">Active</Badge> : <Badge tone="red">Inactive</Badge>}{u.lockedUntil && new Date(u.lockedUntil).getTime() > Date.now() ? <Badge tone="amber">Locked</Badge> : null}</TD>
+                      <TD className="text-xs">{u.lastLoginAt ? fmtDateTime(u.lastLoginAt) : "never"}</TD>
                       <TD className="text-right">
                         {u.id === selfUserId ? (
                           <span className="text-xs text-muted-foreground">you</span>
                         ) : u.active ? (
+                          <span className="inline-flex flex-wrap justify-end gap-1">
+                          <ResetLinkButton url={`/api/users/${u.id}/reset-link`} label="Reset link" />
                           <ConfirmButton
                             trigger="Deactivate"
                             title={`Deactivate ${u.name}?`}
@@ -51,6 +56,7 @@ export function UsersTab({ selfUserId }: { selfUserId: string }) {
                               await users.reload();
                             }}
                           />
+                          </span>
                         ) : (
                           <Button size="sm" variant="outline" onClick={async () => { await api(`/api/users/${u.id}`, { method: "PATCH", body: { active: true } }); await users.reload(); }}>
                             Activate

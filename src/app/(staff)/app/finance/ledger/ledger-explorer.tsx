@@ -16,7 +16,7 @@ type Entry = { id: string; occurredAt: string; source: string; direction: string
 type Data = { period: { label: string; from: string; to: string }; rows: Entry[]; total: number };
 
 const SOURCES = ["COURTS", "SOCIAL", "SHOP", "BAR", "MEMBERSHIP", "INVOICE", "EXPENSE", "PAYROLL"];
-const METHODS = ["CASH", "CARD", "UPI", "ONLINE"];
+const METHODS = ["CASH", "CARD", "UPI", "BANK_TRANSFER", "ONLINE"];
 
 export function LedgerExplorer() {
   const [p, setP] = useState<PeriodState>({ period: "TODAY", from: "", to: "" });
@@ -36,6 +36,9 @@ export function LedgerExplorer() {
         </Select>
         <Button asChild variant="outline" size="sm" className="ml-auto">
           <a href={`/api/reports/csv?report=ledger&${q}`}><Download className="h-4 w-4" /> CSV</a>
+        </Button>
+        <Button asChild variant="outline" size="sm">
+          <a href={`/api/reports/csv?report=tally&${q}`}><Download className="h-4 w-4" /> Tally day book</a>
         </Button>
       </div>
       <DataState state={state} isEmpty={(d) => d.rows.length === 0} empty={{ title: "No ledger entries", hint: "Try a longer period or remove a filter." }}>

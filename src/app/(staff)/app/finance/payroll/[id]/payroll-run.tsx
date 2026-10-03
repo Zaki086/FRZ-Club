@@ -23,7 +23,7 @@ export function PayrollRunView({ runId, isOwner }: { runId: string; isOwner: boo
   const state = useApi<Run>(`/api/payroll/${runId}`);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [method, setMethod] = useState("ONLINE");
+  const [method, setMethod] = useState("BANK_TRANSFER");
   return (
     <div className="flex flex-col gap-3">
       <Link href="/app/finance/payroll" className="inline-flex items-center gap-1 text-sm text-primary"><ArrowLeft className="h-4 w-4" /> Payroll</Link>
@@ -67,7 +67,7 @@ export function PayrollRunView({ runId, isOwner }: { runId: string; isOwner: boo
                 >
                   <p className="text-sm">Total net pay: <Money paise={r.totals.net} className="font-semibold" /></p>
                   <Field label="Method">
-                    <Select value={method} onChange={(e) => setMethod(e.target.value)}><option>ONLINE</option><option>UPI</option><option>CASH</option><option>CARD</option></Select>
+                    <Select value={method} onChange={(e) => setMethod(e.target.value)}><option value="BANK_TRANSFER">Bank transfer</option><option value="UPI">UPI</option><option value="CASH">Cash</option></Select>
                   </Field>
                 </ConfirmButton>
               ) : null}

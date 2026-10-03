@@ -15,6 +15,8 @@ import { Money } from "@/components/money";
 import { formatINR, parseRupees } from "@/lib/money";
 import { fmtDateTime } from "@/lib/time";
 import type { LeadDetail } from "../types";
+import { WhatsAppButton } from "@/components/whatsapp-button";
+import { useCapabilities } from "@/components/capabilities";
 
 type Plan = { code: string; name: string; price1m: number; price3m: number; price12m: number };
 type QLine = { kind: "PLAN"; planCode: string; months: 1 | 3 | 12 } | { kind: "CUSTOM"; description: string; amount: string };
@@ -70,6 +72,7 @@ function QuoteBuilder({ leadId, hasEmail, onDone }: { leadId: string; hasEmail: 
   const [lines, setLines] = useState<QLine[]>([{ kind: "PLAN", planCode: "SILVER", months: 1 }]);
   const [validDays, setValidDays] = useState("7");
   const [send, setSend] = useState<"LINK" | "EMAIL">("LINK");
+  const caps = useCapabilities();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   const [result, setResult] = useState<{ link: string; total: number; validUntil: string } | null>(null);
@@ -134,7 +137,7 @@ function QuoteBuilder({ leadId, hasEmail, onDone }: { leadId: string; hasEmail: 
         <Field label="Send">
           <Select value={send} onChange={(e) => setSend(e.target.value as "LINK" | "EMAIL")}>
             <option value="LINK">Copyable link</option>
-            <option value="EMAIL" disabled={!hasEmail}>Email to the lead{hasEmail ? "" : " (no email)"}</option>
+            {caps?.email ? <option value="EMAIL" disabled={!hasEmail}>Email to the lead{hasEmail ? "" : " (no email)"}</option> : null}
           </Select>
         </Field>
       </div>
@@ -202,6 +205,7 @@ export function LeadDetailView({ leadId, canConvert }: { leadId: string; canConv
                 {l.memberId ? <Link className="text-sm text-primary underline" href={`/app/members/${l.memberId}`}>Open member profile</Link> : null}
               </div>
               <div className="flex flex-wrap gap-2">
+                {l.phone ? <WhatsAppButton target={{ template: "LEAD", leadId: l.id }} /> : null}
                 {open && canConvert ? (
                   <Button onClick={() => router.push(l.convertUrl)} data-testid="convert-lead"><UserPlus className="h-4 w-4" /> Convert to member</Button>
                 ) : null}

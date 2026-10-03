@@ -10,10 +10,9 @@ const FIELDS: Array<{ key: string; label: string; hint?: string }> = [
   { key: "address", label: "Address" },
   { key: "state", label: "State" },
   { key: "state_code", label: "State code", hint: "2 digits — decides CGST/SGST vs IGST (IN-3)" },
-  { key: "gstin", label: "GSTIN" },
+  { key: "gstin", label: "GSTIN", hint: "Leave empty if the club is not GST-registered — then no GST is charged" },
   { key: "phone", label: "Phone" },
   { key: "email", label: "Email" },
-  { key: "upi_vpa", label: "UPI ID for counter QR", hint: "E-14" },
 ];
 
 export function ClubTab({ rows, onSaved }: { rows: SettingRow[]; onSaved: () => void }) {

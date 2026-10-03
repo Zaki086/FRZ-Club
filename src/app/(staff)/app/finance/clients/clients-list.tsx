@@ -50,7 +50,7 @@ function NewClient({ onDone }: { onDone: () => void }) {
         >
           <Field label="Company name *"><Input value={f.name} onChange={set("name")} required /></Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="GSTIN" hint="15 characters, e.g. 27AAPFU0939F1ZV"><Input value={f.gstin} onChange={set("gstin")} className="uppercase" /></Field>
+            <Field label="GSTIN" hint="15 characters: 2-digit state code, PAN, entity number, Z, check digit"><Input value={f.gstin} onChange={set("gstin")} className="uppercase" /></Field>
             <Field label="State code" hint={f.gstin ? "Taken from the GSTIN" : "Used when there is no GSTIN"}>
               <Input value={f.gstin ? f.gstin.slice(0, 2) : f.stateCode} onChange={set("stateCode")} disabled={!!f.gstin} maxLength={2} />
             </Field>

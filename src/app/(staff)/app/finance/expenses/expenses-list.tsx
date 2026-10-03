@@ -14,8 +14,42 @@ import { ConfirmButton } from "@/components/confirm";
 import { parseRupees } from "@/lib/money";
 import { fmtDate } from "@/lib/time";
 import { label } from "../_components/fmt";
+import { uploadFile } from "@/components/upload";
 
-type Expense = { id: string; vendor: string; category: string; description: string; amount: number; inputGst: number; billDate: string; dueDate: string; status: string; overdue: boolean; method: string | null; paidAt: string | null };
+type Expense = { id: string; vendor: string; category: string; description: string; amount: number; inputGst: number; billDate: string; dueDate: string; status: string; overdue: boolean; method: string | null; paidAt: string | null; attachmentUrl: string | null };
+
+/** Completion pass §7 (accountant): attach the scanned bill (photo or PDF, ≤ 2 MB). */
+function AttachBill({ e, onDone }: { e: Expense; onDone: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <label className="inline-flex cursor-pointer flex-col text-xs text-primary">
+      <span className="underline">{busy ? "Uploading…" : e.attachmentUrl ? "Replace bill" : "Attach bill"}</span>
+      <input
+        type="file"
+        accept="image/png,image/jpeg,image/webp,application/pdf"
+        className="hidden"
+        onChange={async (ev) => {
+          const file = ev.target.files?.[0];
+          ev.target.value = "";
+          if (!file) return;
+          setBusy(true);
+          setError(null);
+          try {
+            const url = await uploadFile("expense", file);
+            await api(`/api/expenses/${e.id}/attachment`, { method: "PUT", body: { url } });
+            onDone();
+          } catch (err) {
+            setError(err instanceof ApiError ? err.message : String(err));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
+      {error ? <span className="text-red-700">{error}</span> : null}
+    </label>
+  );
+}
 const CATEGORIES = ["STOCK_PURCHASE", "UTILITIES", "RENT", "MAINTENANCE", "MARKETING", "OTHER"];
 
 function NewExpense({ onDone }: { onDone: () => void }) {
@@ -65,14 +99,14 @@ function NewExpense({ onDone }: { onDone: () => void }) {
 }
 
 function PayExpense({ e, onDone }: { e: Expense; onDone: () => void }) {
-  const [method, setMethod] = useState("ONLINE");
+  const [method, setMethod] = useState("BANK_TRANSFER");
   const [reference, setReference] = useState("");
   return (
     <ConfirmButton trigger="Pay" variant="default" title={`Pay ${e.vendor}`} description="Records the payment and writes an EXPENSE entry to the ledger." confirmLabel="Mark paid"
       onConfirm={async () => { await api(`/api/expenses/${e.id}/pay`, { body: { method, reference: reference || undefined } }); onDone(); }}>
       <p className="text-sm">Amount: <Money paise={e.amount} className="font-semibold" /></p>
       <div className="grid grid-cols-2 gap-2">
-        <Field label="Method"><Select value={method} onChange={(x) => setMethod(x.target.value)}><option>ONLINE</option><option>UPI</option><option>CARD</option><option>CASH</option></Select></Field>
+        <Field label="Method"><Select value={method} onChange={(x) => setMethod(x.target.value)}><option value="BANK_TRANSFER">Bank transfer</option><option value="UPI">UPI</option><option value="CARD">Card</option><option value="CASH">Cash</option></Select></Field>
         <Field label="Reference"><Input value={reference} onChange={(x) => setReference(x.target.value)} /></Field>
       </div>
     </ConfirmButton>
@@ -110,7 +144,13 @@ export function ExpensesList({ canManage, initialStatus }: { canManage: boolean;
                   <TBody>
                     {rows.map((e) => (
                       <TR key={e.id}>
-                        <TD><p className="font-medium">{e.vendor}</p><p className="text-xs text-muted-foreground">{e.description}</p></TD>
+                        <TD>
+                          <p className="font-medium">{e.vendor}</p><p className="text-xs text-muted-foreground">{e.description}</p>
+                          <span className="flex gap-2">
+                            {e.attachmentUrl ? <a className="text-xs text-primary underline" href={e.attachmentUrl} target="_blank" rel="noreferrer">View bill</a> : null}
+                            {canManage && e.status !== "CANCELLED" ? <AttachBill e={e} onDone={reload} /> : null}
+                          </span>
+                        </TD>
                         <TD className="text-sm">{label(e.category)}</TD>
                         <TD className="text-sm">{fmtDate(e.billDate)}</TD>
                         <TD className="text-sm">{fmtDate(e.dueDate)}</TD>

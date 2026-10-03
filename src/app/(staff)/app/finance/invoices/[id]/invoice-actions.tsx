@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmButton } from "@/components/confirm";
 import { InvoiceDocument } from "@/components/invoice-document";
 import { PaymentPanel } from "@/components/payment-panel";
+import { WhatsAppButton } from "@/components/whatsapp-button";
 
 type Data = { invoice: { id: string; status: string; kind: string; billId: string; number: string | null }; bill: { due: number } };
 
@@ -33,6 +34,7 @@ export function InvoiceActions({ invoiceId }: { invoiceId: string }) {
           <div className="no-print flex flex-col gap-3">
             <RejectionBanner error={error} />
             <div className="flex flex-wrap gap-2">
+              {d.invoice.status !== "DRAFT" && d.invoice.status !== "CANCELLED" ? <WhatsAppButton target={{ template: "INVOICE", invoiceId }} /> : null}
               {d.invoice.status === "DRAFT" ? (
                 <Button
                   disabled={busy}
@@ -72,7 +74,7 @@ export function InvoiceActions({ invoiceId }: { invoiceId: string }) {
                   <CardTitle>Record payment</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <PaymentPanel key={version} billId={d.invoice.billId} allowOnline={false} onPaid={refresh} />
+                  <PaymentPanel key={version} billId={d.invoice.billId} allowOnline={false} bankTransfer onPaid={refresh} />
                 </CardContent>
               </Card>
             ) : null}

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { requireUser, STAFF_ROLES } from "@/server/auth/current";
+import { ROLE_HOME } from "@/server/auth/sessions";
 import { can, type Capability } from "@/server/rbac/permissions";
 import { clock } from "@/lib/clock";
 import { istDate } from "@/lib/time";
@@ -21,8 +23,12 @@ const LINKS: Array<{ href: string; label: string; cap: Capability }> = [
   { href: "/app/staff/me", label: "My shifts", cap: "staff.self" },
 ];
 
+const DASHBOARDS: Capability[] = ["dashboard.full", "dashboard.ops", "dashboard.finance", "dashboard.desk", "dashboard.shop", "dashboard.bar"];
+
 export default async function DashboardPage() {
   const actor = await requireUser(STAFF_ROLES, "/app");
+  // Roles without a dashboard (the kitchen) go to their own screen instead of a page they can't load.
+  if (!DASHBOARDS.some((c) => can(actor, c))) redirect(ROLE_HOME[actor.role]);
   const quickLinks = LINKS.filter((l) => can(actor, l.cap)).map(({ href, label }) => ({ href, label }));
   return <DashboardView quickLinks={quickLinks} today={istDate(clock.now())} />;
 }

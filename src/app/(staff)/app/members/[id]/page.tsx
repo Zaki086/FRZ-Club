@@ -15,6 +15,7 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
         cancel: can(actor, "membership.cancel"),
         checkin: can(actor, "checkin"),
         book: can(actor, "bookings.any"),
+        passwordLinks: can(actor, "password.links"),
       }}
     />
   );
