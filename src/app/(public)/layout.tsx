@@ -2,6 +2,7 @@ import Link from "next/link";
 import { currentActor } from "@/server/auth/current";
 import { getSettings } from "@/server/services/settings";
 import { PublicNav } from "./public-nav";
+import { formatPhone } from "@/lib/validation/contact";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export default async function PublicLayout({ children }: { children: React.React
           <div className="flex flex-col gap-1">
             <p className="font-display text-2xl font-bold uppercase text-ink-foreground">{clubName}</p>
             {club.address ? <p>{club.address}</p> : null}
-            {club.phone ? <p>{club.phone}</p> : null}
+            {club.phone ? <p>{formatPhone(club.phone)}</p> : null}
             {club.email ? <p>{club.email}</p> : null}
           </div>
           <div className="flex flex-col gap-1.5">

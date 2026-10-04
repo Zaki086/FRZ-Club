@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { api, ApiError } from "@/components/api";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
+import { LoginIdentifierInput } from "@/components/contact-inputs";
 import { Card, CardContent } from "@/components/ui/card";
 import { RejectionBanner } from "@/components/states";
 
@@ -40,9 +41,8 @@ export function LoginForm() {
         >
           {params.get("ended") ? <p role="status" className="rounded-lg bg-warning/15 px-3 py-2 text-sm font-semibold text-warning-text">Your session ended — log in again to continue.</p> : null}
           <Field label="Phone or email">
-            <Input
+            <LoginIdentifierInput
               name="identifier"
-              autoComplete="username"
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               placeholder="98765 43210"

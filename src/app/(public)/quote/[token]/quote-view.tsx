@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Money } from "@/components/money";
 import { fmtDateTime } from "@/lib/time";
+import { formatPhone } from "@/lib/validation/contact";
 
 type Q = { name: string; lines: Array<{ description: string; amount: number; explanation: string }>; total: number; validUntil: string; expired: boolean; status: string; club: { name: string; phone: string; email: string } };
 
@@ -71,7 +72,7 @@ export function QuoteView({ token }: { token: string }) {
                 I&apos;m interested
               </Button>
             )}
-            <p className="text-xs text-muted-foreground">Questions? Call {q.club.phone} or write to {q.club.email}.</p>
+            <p className="text-xs text-muted-foreground">Questions? Call {formatPhone(q.club.phone)} or write to {q.club.email}.</p>
           </CardContent>
         </Card>
       )}

@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/portal/social", label: "Social play" },
   { href: "/portal/bookings", label: "My bookings" },
   { href: "/portal/orders", label: "Shop orders" },
+  { href: "/portal/bar", label: "Bar & Café" }, // v5 §1.2 (ORDER)
   { href: "/portal/tab", label: "Bar tab" },
   { href: "/portal/invoices", label: "Invoices" },
   { href: "/portal/payments", label: "Payments" },

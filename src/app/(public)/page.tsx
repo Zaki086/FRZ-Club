@@ -11,6 +11,7 @@ import { formatINR } from "@/lib/money";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { TierBadge } from "@/components/badges";
+import { formatPhone } from "@/lib/validation/contact";
 
 export const dynamic = "force-dynamic";
 
@@ -108,7 +109,7 @@ export default async function HomePage() {
             <div>
               <h2 className="text-xl font-bold">How to reach us</h2>
               {s.club.address ? <p className="mt-1 flex items-center gap-2 text-sm"><MapPin className="h-4 w-4" /> {s.club.address}</p> : null}
-              {s.club.phone || s.club.email ? <p className="flex items-center gap-2 text-sm"><Phone className="h-4 w-4" /> {[s.club.phone, s.club.email].filter(Boolean).join(" · ")}</p> : null}
+              {s.club.phone || s.club.email ? <p className="flex items-center gap-2 text-sm"><Phone className="h-4 w-4" /> {[formatPhone(s.club.phone), s.club.email].filter(Boolean).join(" · ")}</p> : null}
             </div>
             <div className="flex flex-wrap gap-2">
               <Button asChild><Link href="/enquire">Send an enquiry</Link></Button>
