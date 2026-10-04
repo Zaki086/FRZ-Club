@@ -341,6 +341,10 @@ model Session {
   kind              String    @default("STAFF")
   lastSeenAt        DateTime? @map("last_seen_at") @db.Timestamptz(3)
   absoluteExpiresAt DateTime? @map("absolute_expires_at") @db.Timestamptz(3)
+  // v5 MO-1 (ORDER): the bar table QR scanned on this login (valid for 3 hours from table_scanned_at).
+  tableId           String?   @map("table_id")
+  tableToken        String?   @map("table_token")
+  tableScannedAt    DateTime? @map("table_scanned_at") @db.Timestamptz(3)
   createdAt         DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   user              User      @relation(fields: [userId], references: [id])
@@ -389,6 +393,9 @@ model Member {
   // v4 §5.1 (WHATSAPP): consent to automatic WhatsApp updates, and a "STOP" reply.
   whatsappOptInAt       DateTime? @map("whatsapp_opt_in_at") @db.Timestamptz(3)
   whatsappOptOutAt      DateTime? @map("whatsapp_opt_out_at") @db.Timestamptz(3)
+  // v5 §3.2 (MSGCORE): the one-click unsubscribe link in announcement emails.
+  emailAnnouncementsOptOut   Boolean   @default(false) @map("email_announcements_opt_out")
+  emailAnnouncementsOptOutAt DateTime? @map("email_announcements_opt_out_at") @db.Timestamptz(3)
   createdBy             String?   @map("created_by")
   createdAt             DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -791,7 +798,19 @@ model MenuItem {
   archivedAt  DateTime?    @map("archived_at") @db.Timestamptz(3)
   createdAt   DateTime     @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  // v5 §1.1 (MENU, 0019_v5_menu). `category` above stays the kind used by reports and promotions (FOOD / BEVERAGE /
+  // ALCOHOL, derived from food-or-drink + alcoholic); `menuCategory` is the bar staff's own category.
+  categoryId  String          @map("category_id")
+  menuCategory BarMenuCategory @relation(fields: [categoryId], references: [id])
+  description String?
+  photoUrl    String?         @map("photo_url")
+  thumbUrl    String?         @map("thumb_url")
+  foodType    FoodType?       @map("food_type")
+  allergens   MenuAllergen[]  @default([])
+  prepMinutes Int?            @map("prep_minutes")
+  status      MenuItemStatus  @default(ACTIVE)
 
+  @@index([categoryId, sortOrder], map: "menu_items_category_idx")
   @@map("menu_items")
 }
 
@@ -847,6 +866,8 @@ model TabLine {
   voidedBy        String?       @map("voided_by")
   voidReason      String?       @map("void_reason")
   voidedAt        DateTime?     @map("voided_at") @db.Timestamptz(3)
+  /// v5 MO-10 (ORDER): set = ordered by the member in the app ("via app"); empty = entered by bar staff.
+  memberOrderId   String?       @map("member_order_id")
   createdAt       DateTime      @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
   tab             Tab           @relation(fields: [tabId], references: [id])
@@ -1078,6 +1099,9 @@ model Lead {
   // v4 §5.1 (WHATSAPP): consent to automatic WhatsApp updates, and a "STOP" reply.
   whatsappOptInAt   DateTime?      @map("whatsapp_opt_in_at") @db.Timestamptz(3)
   whatsappOptOutAt  DateTime?      @map("whatsapp_opt_out_at") @db.Timestamptz(3)
+  // v5 §3.2 (MSGCORE): the one-click unsubscribe link in announcement emails.
+  emailAnnouncementsOptOut   Boolean   @default(false) @map("email_announcements_opt_out")
+  emailAnnouncementsOptOutAt DateTime? @map("email_announcements_opt_out_at") @db.Timestamptz(3)
   createdAt         DateTime       @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
   activities        LeadActivity[]
@@ -1630,6 +1654,20 @@ model NotificationDelivery {
   waLanguage    String?   @map("wa_language")
   waParams      Json?     @map("wa_params")
   waButtonParam String?   @map("wa_button_param")
+  // v5 §3.3 MT-6 (MSGCORE): a message sent from a template — template + version, its context and category, the record
+  // it was about, who it went to (recipient_key "member:<id>" | "lead:<id>" | …, masked copy for display), the composer
+  // send or bulk send it belongs to, and the push device. Rows waiting for the messages worker: handled_by 'msgq:queue'.
+  templateId         String? @map("template_id")
+  templateVersion    Int?    @map("template_version")
+  templateContext    String? @map("template_context")
+  templateCategory   String? @map("template_category")
+  recordId           String? @map("record_id")
+  recipientKey       String? @map("recipient_key")
+  leadId             String? @map("lead_id")
+  toMasked           String? @map("to_masked")
+  sendId             String? @map("send_id")
+  bulkId             String? @map("bulk_id")
+  pushSubscriptionId String? @map("push_subscription_id")
   createdAt    DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1796,4 +1834,157 @@ model WhatsappInbound {
 
   @@index([fromPhone, receivedAt], map: "whatsapp_inbound_from_idx")
   @@map("whatsapp_inbound")
+}
+
+// v5 §1.3 (ORDER): an order a member placed from the portal "Bar & Café" onto their OPEN tab (MO-2). PENDING until
+// the bar accepts it (ACCEPTED: its lines go to the kitchen as one ticket, MO-3) or rejects it with a reason
+// (REJECTED: its lines are voided); CANCELLED when the member removed every line first (MO-8).
+model MemberOrder {
+  id              String    @id @default(cuid())
+  tabId           String    @map("tab_id")
+  memberId        String    @map("member_id")
+  placedBy        String    @map("placed_by")
+  tableId         String?   @map("table_id")
+  viaTableScan    Boolean   @default(false) @map("via_table_scan")
+  status          String    @default("PENDING") // PENDING | ACCEPTED | REJECTED | CANCELLED
+  autoAccepted    Boolean   @default(false) @map("auto_accepted")
+  total           Int
+  decidedBy       String?   @map("decided_by")
+  decidedAt       DateTime? @map("decided_at") @db.Timestamptz(3)
+  rejectReason    String?   @map("reject_reason") // ITEM_UNAVAILABLE | MEMBER_NOT_FOUND | OTHER
+  rejectNote      String?   @map("reject_note")
+  kitchenTicketId String?   @map("kitchen_ticket_id")
+  createdAt       DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([tabId], map: "member_orders_tab_idx")
+  @@index([memberId, createdAt], map: "member_orders_member_idx")
+  @@map("member_orders")
+}
+
+// v5 §1.1 (MENU): the bar & café menu categories bar staff build (name, optional description, icon shown for items
+// without a photo, drag-to-reorder display order, active). Never deleted: an inactive category is hidden.
+model BarMenuCategory {
+  id          String     @id @default(cuid())
+  name        String
+  description String?
+  icon        String     @default("UtensilsCrossed")
+  sortOrder   Int        @default(0) @map("sort_order")
+  active      Boolean    @default(true)
+  createdAt   DateTime   @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  items       MenuItem[]
+
+  @@map("menu_categories")
+}
+
+/// v5 §1.1: only ACTIVE (and available) items reach members and the bar item grid; ARCHIVED is never deleted.
+enum MenuItemStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+/// v5 §1.1: the Indian food symbol (green dot VEG, red NON_VEG, brown EGG). Null for drinks.
+enum FoodType {
+  VEG
+  NON_VEG
+  EGG
+}
+
+enum MenuAllergen {
+  GLUTEN
+  DAIRY
+  NUTS
+  EGG
+  SOY
+  SHELLFISH
+}
+
+// ───────────────────────────── v5 §3 ready-made manual messages (MSGCORE, 0021_v5_message_templates) ─────────────────────────────
+
+/// v5 §3.1: a message template (MT-1…MT-3). Current text here; every save also writes a MessageTemplateVersion.
+/// Archived, never deleted. `key` = one of the 18 ready-made templates (null for the Owner's own).
+model MessageTemplate {
+  id           String    @id @default(cuid())
+  key          String?   @unique
+  name         String
+  context      String // MEMBER | BOOKING | REFUND | ORDER | TAB | LEAD | INVOICE | GENERAL
+  category     String // TRANSACTIONAL | ANNOUNCEMENT
+  channels     String[]  @default([]) // WHATSAPP | EMAIL | PUSH
+  whatsappText String    @default("") @map("whatsapp_text")
+  emailSubject String    @default("") @map("email_subject")
+  emailBody    String    @default("") @map("email_body")
+  pushTitle    String    @default("") @map("push_title")
+  pushBody     String    @default("") @map("push_body")
+  /// v4 §5 Meta template for "Send automatically on WhatsApp" (messages/variables.ts AUTO_WHATSAPP).
+  waTemplate   String?   @map("wa_template")
+  active       Boolean   @default(true)
+  archivedAt   DateTime? @map("archived_at") @db.Timestamptz(3)
+  version      Int       @default(1)
+  sortOrder    Int       @default(0) @map("sort_order")
+  createdBy    String?   @map("created_by")
+  updatedBy    String?   @map("updated_by")
+  createdAt    DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @default(dbgenerated("app_now()")) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  versions     MessageTemplateVersion[]
+
+  @@index([context, sortOrder], map: "message_templates_context_idx")
+  @@map("message_templates")
+}
+
+/// v5 MT-3: what a template said at each version (append-only); sends reference template + version.
+model MessageTemplateVersion {
+  id           String          @id @default(cuid())
+  templateId   String          @map("template_id")
+  version      Int
+  name         String
+  context      String
+  category     String
+  channels     String[]
+  whatsappText String          @map("whatsapp_text")
+  emailSubject String          @map("email_subject")
+  emailBody    String          @map("email_body")
+  pushTitle    String          @map("push_title")
+  pushBody     String          @map("push_body")
+  waTemplate   String?         @map("wa_template")
+  createdBy    String?         @map("created_by")
+  createdAt    DateTime        @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  template     MessageTemplate @relation(fields: [templateId], references: [id])
+
+  @@unique([templateId, version], map: "message_template_versions_once")
+  @@map("message_template_versions")
+}
+
+/// v5 §3.4: one bulk send from a list; its messages are notification_deliveries rows with this bulk_id.
+model MessageBulkSend {
+  id              String    @id @default(cuid())
+  templateId      String    @map("template_id")
+  templateVersion Int       @map("template_version")
+  list            String // members | renewals | checkin-risk | leads
+  filter          String?
+  selected        Int       @default(0)
+  channels        String[]
+  autoWhatsapp    Boolean   @default(false) @map("auto_whatsapp")
+  overrides       Json?
+  status          String    @default("QUEUED") // QUEUED | SENDING | DONE
+  total           Int       @default(0)
+  skipped         Json      @default("[]")
+  createdBy       String?   @map("created_by")
+  startedAt       DateTime? @map("started_at") @db.Timestamptz(3)
+  finishedAt      DateTime? @map("finished_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @default(dbgenerated("app_now()")) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([createdAt], map: "message_bulk_sends_created_idx")
+  @@map("message_bulk_sends")
+}
+
+/// v5 §3.4: the bulk worker's rate gate (≤ 1 message per second across processes).
+model MessageRateGate {
+  id         String   @id
+  lastSentAt DateTime @map("last_sent_at") @db.Timestamptz(3)
+  updatedAt  DateTime @default(dbgenerated("app_now()")) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("message_rate_gate")
 }

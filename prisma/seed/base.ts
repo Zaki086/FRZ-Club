@@ -72,6 +72,8 @@ export type Staff = Record<string, UserActor>;
 
 export async function seedBase(joinDate: string): Promise<Staff> {
   await ensureDefaultSettings();
+  // v5 §3.1 (MSGCORE): the 18 ready-made message templates (the live club got them from migration 0021).
+  await (await import("@/server/services/messages/templates")).ensureReadyMadeTemplates();
   await applySampleSettings();
   await ensurePlans();
   const { staff: staffPassword } = seedPasswords();

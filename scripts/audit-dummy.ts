@@ -6,6 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { scanContactInputs } from "../tests/audit/contact-inputs";
 
 type Rule = { id: string; what: string; re: RegExp };
 const RULES: Rule[] = [
@@ -33,6 +34,7 @@ const ALLOW: Array<{ file: RegExp; rule: string; why: string }> = [
   { file: /src\/lib\/codes\.ts$/, rule: "phone-number", why: "doc comment showing the phone formats normalisePhone accepts" },
   { file: /src\/server\/services\/settings\.ts$/, rule: "fixed-identity", why: "comment only: the defaults are empty" },
   { file: /scripts\/audit-dummy\.ts$/, rule: "*", why: "this file lists the patterns" },
+  { file: /src\/lib\/validation\/contact\.ts$/, rule: "phone-number", why: "v5 CV-2/CV-7: the test-only allowlist and doc examples of rejected sequences" },
 ];
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -57,8 +59,17 @@ for (const file of [...walk("src"), "public/sw.js"]) {
   });
 }
 
+// 1b. v5 §2.3 CV-10: every phone / mobile / email <input> in src/ goes through the shared inputs (data-validate);
+// raw <input>/<Input> elements for one are violations. Search boxes are excluded (§2.2.3) and listed as allowed.
+type ContactHit = { file: string; line: number; text: string; search: boolean };
+const contactHits: ContactHit[] = [];
+for (const file of walk("src").filter((f) => f.endsWith(".tsx"))) {
+  for (const h of scanContactInputs(readFileSync(file, "utf8"))) contactHits.push({ file, line: h.line, text: h.text, search: h.verdict === "search" });
+}
+const contactViolations = contactHits.filter((h) => !h.search);
+
 // 2. Crawl (unless --source-only).
-type Crawl = { role: string; path: string; viewport: string; status: number; consoleErrors: string[]; dummyText: string | null; overflowPx: number; menuMismatch?: string | null };
+type Crawl = { role: string; path: string; viewport: string; status: number; consoleErrors: string[]; dummyText: string | null; overflowPx: number; menuMismatch?: string | null; contactInputs?: string[] };
 let crawl: Crawl[] = [];
 let crawlNote = "";
 if (!process.argv.includes("--source-only")) {
@@ -82,8 +93,10 @@ const dummyText = crawl.filter((c) => c.dummyText);
 const overflow = crawl.filter((c) => c.viewport === "360px" && c.overflowPx > 1);
 // v4 §1.4: each staff role's rendered sidebar must be its navigation list (the §1.1 lists for Owner, Manager, Front desk).
 const menuMismatch = crawl.filter((c) => c.menuMismatch);
+// v5 CV-10 on rendered pages: a phone / email input without data-validate.
+const contactUnwired = crawl.filter((c) => c.contactInputs?.length);
 const visits = crawl.filter((c) => c.path !== "(sidebar)");
-const problems = violations.length + badStatus.length + consoleErr.length + dummyText.length + overflow.length + menuMismatch.length;
+const problems = violations.length + badStatus.length + consoleErr.length + dummyText.length + overflow.length + menuMismatch.length + contactViolations.length + contactUnwired.length;
 const esc = (s: string) => s.replace(/\|/g, "\\|");
 
 const md = [
@@ -101,6 +114,12 @@ const md = [
   "",
   ...(violations.length ? ["### Violations", "", "| Pattern | Where | Line |", "|---|---|---|", ...violations.map((h) => `| ${h.rule} | \`${h.file}:${h.line}\` | \`${esc(h.text)}\` |`), ""] : []),
   ...(hits.some((h) => h.allowed) ? ["### Allowed (deliberate)", "", "| Pattern | Where | Why |", "|---|---|---|", ...hits.filter((h) => h.allowed).map((h) => `| ${h.rule} | \`${h.file}:${h.line}\` | ${h.allowed} |`), ""] : []),
+  "### Phone and email inputs (v5 §2.3, CV-10)",
+  "",
+  `${contactViolations.length === 0 ? "Every phone, mobile and email input uses the shared validated inputs (\`data-validate\`)." : `**${contactViolations.length} raw input(s) for a phone or email without \`data-validate\`** — use PhoneInput / EmailInput from src/components/contact-inputs.tsx.`} ${contactHits.filter((h) => h.search).length} search box(es) excluded (they accept partial numbers and names).`,
+  "",
+  ...(contactViolations.length ? ["| Where | Element |", "|---|---|", ...contactViolations.map((h) => `| \`${h.file}:${h.line}\` | \`${esc(h.text)}\` |`), ""] : []),
+  ...(contactHits.some((h) => h.search) ? ["| Search box (excluded) | Element |", "|---|---|", ...contactHits.filter((h) => h.search).map((h) => `| \`${h.file}:${h.line}\` | \`${esc(h.text)}\` |`), ""] : []),
   "## 2. Crawl — every role, every page, desktop and 360 px",
   "",
   crawlNote || `${new Set(visits.map((c) => `${c.role} ${c.path}`)).size} role × page combinations, ${visits.length} page loads, roles: ${[...new Set(visits.map((c) => c.role))].join(", ")}.`,
@@ -112,12 +131,14 @@ const md = [
   `| Dummy text on screen (lorem, undefined, NaN, [object Object], TODO, test mode…) | ${dummyText.length} |`,
   `| Wider than a 360 px phone (horizontal scroll) | ${overflow.length} |`,
   `| Sidebar differs from the role's navigation list (v4 §1.1) | ${menuMismatch.length} |`,
+  `| Phone / email input without the shared validator (v5 CV-10) | ${contactUnwired.length} |`,
   "",
   ...(badStatus.length ? ["### HTTP errors", "", ...badStatus.map((c) => `- ${c.role} · \`${c.path}\` (${c.viewport}) → ${c.status}`), ""] : []),
   ...(consoleErr.length ? ["### Console errors", "", ...consoleErr.map((c) => `- ${c.role} · \`${c.path}\` (${c.viewport}): ${esc(c.consoleErrors[0])}`), ""] : []),
   ...(dummyText.length ? ["### Dummy text", "", ...dummyText.map((c) => `- ${c.role} · \`${c.path}\` (${c.viewport}): “${esc(c.dummyText!)}”`), ""] : []),
   ...(overflow.length ? ["### Too wide on a phone", "", ...overflow.map((c) => `- ${c.role} · \`${c.path}\`: ${c.overflowPx}px wider than the screen`), ""] : []),
   ...(menuMismatch.length ? ["### Sidebar differs from the navigation list", "", ...menuMismatch.map((c) => `- ${c.role}: ${esc(c.menuMismatch!)}`), ""] : []),
+  ...(contactUnwired.length ? ["### Phone / email inputs without data-validate", "", ...contactUnwired.map((c) => `- ${c.role} · \`${c.path}\` (${c.viewport}): ${esc(c.contactInputs!.join(", "))}`), ""] : []),
   "## Pages visited",
   "",
   ...[...new Set(visits.map((c) => c.role))].map((role) => `- **${role}:** ${[...new Set(visits.filter((c) => c.role === role).map((c) => `\`${c.path}\``))].join(", ")}`),
@@ -125,5 +146,5 @@ const md = [
 ].join("\n");
 
 writeFileSync("AUDIT.md", md);
-console.log(`AUDIT.md written: ${violations.length} source violation(s), ${badStatus.length} HTTP error(s), ${consoleErr.length} console-error page(s), ${dummyText.length} dummy-text page(s), ${overflow.length} too-wide page(s), ${menuMismatch.length} sidebar mismatch(es).`);
+console.log(`AUDIT.md written: ${violations.length} source violation(s), ${contactViolations.length + contactUnwired.length} unvalidated phone/email input(s), ${badStatus.length} HTTP error(s), ${consoleErr.length} console-error page(s), ${dummyText.length} dummy-text page(s), ${overflow.length} too-wide page(s), ${menuMismatch.length} sidebar mismatch(es).`);
 process.exit(problems === 0 ? 0 : 1);

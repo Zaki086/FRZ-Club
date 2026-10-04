@@ -35,7 +35,8 @@ const MENUS: Array<{ who: string; login: string; items: string[] }> = [
     who: "shop", login: "shop@championsclub.example",
     items: ["Counter POS", "Online orders", "Restring queue", "Counter sales", "Products & pricing", "Stock & receipts", "Stock movements", "Purchase orders", "Stock take", "Refunds", "My cash drawer", "My shifts & leave", "My account"],
   },
-  { who: "bar", login: "bar@championsclub.example", items: ["Tables & tabs", "Ready to serve", "Kitchen display", "All bar tabs", "Bar day & close", "Refunds", "My cash drawer", "My shifts & leave", "My account"] },
+  // v5 §1.1 changed this (was: no "Menu"): the Bar staff menu gains "Menu" (the menu builder).
+  { who: "bar", login: "bar@championsclub.example", items: ["Tables & tabs", "Ready to serve", "Kitchen display", "All bar tabs", "Bar day & close", "Menu", "Refunds", "My cash drawer", "My shifts & leave", "My account"] },
   { who: "kitchen", login: "kitchen@championsclub.example", items: ["Kitchen display", "My shifts & leave", "My account"] },
   {
     who: "accountant", login: "accounts@championsclub.example",

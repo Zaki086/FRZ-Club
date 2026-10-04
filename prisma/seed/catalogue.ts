@@ -64,6 +64,12 @@ export const MENU: Array<{ name: string; category: "FOOD" | "BEVERAGE" | "ALCOHO
   { name: "Beer tower (3 L)", category: "ALCOHOL", price: R(1800) },
 ];
 
+// v5 §1.1: the food symbol of each food item (green veg, red non-veg, brown egg); drinks have none.
+const MENU_FOOD_TYPES: Record<string, "VEG" | "NON_VEG" | "EGG"> = {
+  "Masala fries": "VEG", "Club sandwich": "NON_VEG", "Paneer tikka": "VEG", "Chicken wrap": "NON_VEG", "Veg burger": "VEG",
+  "Caesar salad": "EGG", "Margherita pizza": "VEG", "Chilli cheese toast": "VEG", "Protein bowl": "EGG",
+};
+
 export async function seedCatalogue(shop: UserActor, manager: UserActor) {
   const variantIds: Record<string, string> = {};
   for (const p of PRODUCTS) {
@@ -82,7 +88,7 @@ export async function seedCatalogue(shop: UserActor, manager: UserActor) {
     }
   }
   if (!(await prisma.menuItem.count())) {
-    for (const [i, m] of MENU.entries()) await createMenuItem(manager, { ...m, sortOrder: i });
+    for (const [i, m] of MENU.entries()) await createMenuItem(manager, { ...m, sortOrder: i, foodType: MENU_FOOD_TYPES[m.name] });
     for (let n = 1; n <= 10; n++) await createTable(manager, { number: n, capacity: n <= 6 ? 4 : 6, area: n <= 4 ? "Indoor" : n <= 8 ? "Terrace" : "Court-side" });
   }
   return variantIds;
