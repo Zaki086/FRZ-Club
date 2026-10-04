@@ -22,3 +22,8 @@ CLAUDE.md
 /.bin/
 /.tunnel-url
 /.certs/
+
+# Only README.md is published; every other Markdown file (decision log, progress, audit and report outputs,
+# design notes) stays local.
+*.md
+!/README.md

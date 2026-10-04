@@ -49,7 +49,8 @@ const SCREEN: Record<string, string> = {
 
 /** Shop, bar, kitchen and accountant menus as they were in v3 (unchanged by v4). */
 const UNCHANGED: Record<"SHOP_STAFF" | "BAR_STAFF" | "KITCHEN" | "ACCOUNTANT", string[]> = {
-  SHOP_STAFF: ["Counter POS", "Online orders", "Restring queue", "Counter sales", "Products & pricing", "Stock & receipts", "Stock movements", "Purchase orders", "Stock take", "Refunds", "My cash drawer", "My shifts & leave", "My account"],
+  // v6 SM-1 changed this (was: no "Café menu"): Shop staff gain "Café menu" (the v5 menu builder) — the only v6 menu change.
+  SHOP_STAFF: ["Counter POS", "Online orders", "Restring queue", "Counter sales", "Products & pricing", "Stock & receipts", "Stock movements", "Purchase orders", "Stock take", "Café menu", "Refunds", "My cash drawer", "My shifts & leave", "My account"],
   // v5 §1.1 changed this (was: no "Menu"): the Bar staff menu gains "Menu" (the menu builder) — the only v5 staff-menu addition.
   BAR_STAFF: ["Tables & tabs", "Ready to serve", "Kitchen display", "All bar tabs", "Bar day & close", "Menu", "Refunds", "My cash drawer", "My shifts & leave", "My account"],
   KITCHEN: ["Kitchen display", "My shifts & leave", "My account"],

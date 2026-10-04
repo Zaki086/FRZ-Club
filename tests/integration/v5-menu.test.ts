@@ -64,7 +64,8 @@ describe("v5 §1.1 — menu CRUD (bar staff build the menu from an empty databas
     const actions = (await prisma.auditLog.findMany({ where: { entity: { in: ["menu_item", "menu_category"] } }, select: { action: true } })).map((a) => a.action);
     for (const a of ["menu_category.create", "menu_category.reorder", "menu_category.update", "menu.create", "menu.update"]) expect(actions).toContain(a);
     // Other staff can't touch the menu.
-    for (const who of [w.actors.FRONT_DESK, w.actors.KITCHEN, w.actors.SHOP_STAFF, w.actors.ACCOUNTANT]) {
+    // v6 SM-1 changed this (was: shop staff too): shop staff now run the café menu (tests/integration/v6-shop.test.ts).
+    for (const who of [w.actors.FRONT_DESK, w.actors.KITCHEN, w.actors.ACCOUNTANT]) {
       await expect(createMenuCategory(who, { name: "Nope" })).rejects.toMatchObject({ code: "FORBIDDEN" });
       await expect(editMenuItem(who, s.fries.id, { name: "Nope" })).rejects.toMatchObject({ code: "FORBIDDEN" });
     }
@@ -153,10 +154,11 @@ describe("v5 MN-1 — menu base prices: Bar staff, Manager and Owner (price book
     expect(rows.map((r) => [r.price, r.createdBy])).toEqual([
       [12000, bs().userId], [13000, bs().userId], [13500, w.actors.MANAGER.userId], [14000, bs().userId],
     ]);
-    for (const who of [w.actors.SHOP_STAFF, w.actors.FRONT_DESK, w.actors.ACCOUNTANT]) {
+    // v6 SM-1 changed this (was: shop staff too): shop staff hold `menu.price` like the bar staff.
+    for (const who of [w.actors.FRONT_DESK, w.actors.ACCOUNTANT]) {
       await expect(setBasePrice(who, { target: `MENU:${s.lime.id}`, price: 1000 })).rejects.toMatchObject({ code: "FORBIDDEN" });
     }
-    await expect(editMenuItem(w.actors.SHOP_STAFF, s.lime.id, { price: 1000 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(editMenuItem(w.actors.FRONT_DESK, s.lime.id, { price: 1000 })).rejects.toMatchObject({ code: "FORBIDDEN" });
     // The price book's range rule holds on every path.
     await expect(setBasePrice(bs(), { target: `MENU:${s.lime.id}`, price: 50 })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
   });

@@ -41,8 +41,9 @@ afterEach(() => {
   setCapabilityOverridesForTests({ email: true });
 });
 
-/** Every channel, as the club is set up here: email + push real, no WhatsApp API → the desk's manual queue. */
-const ALL = ["EMAIL:QUEUED", "IN_APP:SENT", "PUSH:QUEUED", "WHATSAPP_API:SKIPPED", "WHATSAPP_MANUAL:QUEUED"];
+/** Every channel, as the club is set up here: email + push real, no WhatsApp API. v6 SA-4 (default
+ *  ONLY_IF_NO_OTHER_CHANNEL): push and email reach these members, so no manual WhatsApp task (SKIPPED with the reason). */
+const ALL = ["EMAIL:QUEUED", "IN_APP:SENT", "PUSH:QUEUED", "WHATSAPP_API:SKIPPED", "WHATSAPP_MANUAL:SKIPPED"];
 
 let n = 0;
 /** A member with an email address, a mobile number (from makeMember) and one device with push turned on. */
@@ -75,7 +76,7 @@ describe("cancelled or moved by the club", () => {
     expect(await rows(m.memberId, "BOOKING_CANCELLED_BY_CLUB")).toEqual(ALL);
     const g = await prisma.guest.findFirstOrThrow({ where: { phone: "9876540011" } });
     const gd = await prisma.notificationDelivery.findMany({ where: { guestId: g.id, event: "BOOKING_CANCELLED_BY_CLUB" } });
-    expect(gd.map((d) => [d.channel, d.status, d.toAddress]).sort()).toEqual([["EMAIL", "QUEUED", "gopal@example.com"], ["WHATSAPP_MANUAL", "QUEUED", "919876540011"]]);
+    expect(gd.map((d) => [d.channel, d.status, d.toAddress]).sort()).toEqual([["EMAIL", "QUEUED", "gopal@example.com"], ["WHATSAPP_MANUAL", "SKIPPED", "919876540011"]]); // v6 SA-4: the email reaches the guest
     // The worker delivers: the email says what, where, when, how much and where to choose; push deep-links.
     expect(await flushDeliveries()).toMatchObject({ failed: 0 });
     const mail = mails.find((x) => x.to === m.member.email && x.subject.startsWith("Cancelled by the club"))!;
@@ -85,9 +86,9 @@ describe("cancelled or moved by the club", () => {
     expect(mail.text).toMatch(/Maintenance: net repair/);
     expect(mail.text).toMatch(/You paid ₹550\. Choose in My bookings by .*Reschedule .*Refund/);
     expect(mail.text).toContain("http://localhost:3200/portal/bookings");
-    expect(pushes.map((p) => JSON.parse(p))).toContainEqual(expect.objectContaining({ title: expect.stringMatching(/^Cancelled by the club: Court 1/), url: "/portal/bookings" }));
+    expect(pushes.map((p) => JSON.parse(p))).toContainEqual(expect.objectContaining({ title: expect.stringMatching(/^Cancelled by the club: Court 1/), url: `${process.env.APP_URL}/portal/bookings` })); // v6 URL-1
     expect(mails.some((x) => x.to === "gopal@example.com")).toBe(true);
-    expect(await rows(m.memberId, "BOOKING_CANCELLED_BY_CLUB")).toEqual(["EMAIL:SENT", "IN_APP:SENT", "PUSH:SENT", "WHATSAPP_API:SKIPPED", "WHATSAPP_MANUAL:QUEUED"]);
+    expect(await rows(m.memberId, "BOOKING_CANCELLED_BY_CLUB")).toEqual(["EMAIL:SENT", "IN_APP:SENT", "PUSH:SENT", "WHATSAPP_API:SKIPPED", "WHATSAPP_MANUAL:SKIPPED"]); // v6 SA-4
     await expectIntegrity();
   });
 
@@ -249,7 +250,7 @@ describe("preferences and guests", () => {
     await closeCourts(w.actors.MANAGER, { courtIds: [w.courts["Court 3"].id], date: "2026-10-13", startTime: "17:00", endTime: "20:00", reason: "WEATHER", note: "storm warning" });
     const g = await prisma.guest.findFirstOrThrow({ where: { phone: "9876540013" } });
     const d = await prisma.notificationDelivery.findMany({ where: { guestId: g.id, event: "BOOKING_CANCELLED_BY_CLUB" } });
-    expect(d.map((x) => `${x.channel}:${x.status}:${x.toAddress}`).sort()).toEqual(["EMAIL:QUEUED:tara@example.com", "WHATSAPP_MANUAL:QUEUED:919876540013"]);
+    expect(d.map((x) => `${x.channel}:${x.status}:${x.toAddress}`).sort()).toEqual(["EMAIL:QUEUED:tara@example.com", "WHATSAPP_MANUAL:SKIPPED:919876540013"]); // v6 SA-4: the email reaches the guest
     expect(d[0].body).toContain(t.bookingCode);
     await flushDeliveries();
     expect(mails.find((x) => x.to === "tara@example.com")?.text).toMatch(/^Hi Trial,[\s\S]*Weather: storm warning/);

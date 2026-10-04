@@ -649,14 +649,16 @@ describe("v5 §3.4 bulk sends", () => {
     const people = [];
     for (const name of ["Asha Kapoor", "Bina Rao", "Chetan Iyer"]) people.push(await person(name));
     const D = w.actors.FRONT_DESK;
-    const t = await tpl("dues_reminder");
+    // v6 SA-1: a "Dues reminder" to members who owe nothing is no longer opened ("no longer needed") — this test steps
+    // through the queue, so it uses a template that is still relevant for these members.
+    const t = await tpl("membership_expiring");
     const r = await createBulkSend(D, { templateId: t.id, list: "renewals", ids: people.map((p) => p.memberId), channels: ["WHATSAPP"] });
     expect(r.total).toBe(3);
     let p = await bulkProgress(D, r.bulkId);
     expect(p).toMatchObject({ status: "DONE", queued: { total: 0 }, manual: { total: 3, toSend: 3, opened: 0, sent: 0, nextId: expect.any(String) } });
     const queue = await listView(D, "notifications", { channel: "WHATSAPP_MANUAL", status: "QUEUED,LINK_OPENED", type: "TEMPLATE_MESSAGE" });
     expect(queue.total).toBe(3);
-    expect(queue.rows.every((x) => x.template_name === "Dues reminder" && x.bulk_id === r.bulkId)).toBe(true);
+    expect(queue.rows.every((x) => x.template_name === t.name && x.bulk_id === r.bulkId)).toBe(true);
     const seen: string[] = [];
     while (p.manual.nextId) {
       const id = p.manual.nextId;

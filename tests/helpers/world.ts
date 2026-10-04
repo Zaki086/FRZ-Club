@@ -7,7 +7,7 @@ import { prisma } from "@/server/db";
 import { SYSTEM, type UserActor } from "@/server/rbac/actor";
 import { DEFAULT_SETTINGS, ensureDefaultSettings, updateSetting, verifySetting } from "@/server/services/settings";
 import { setCapabilityOverridesForTests } from "@/server/services/capabilities";
-import { openDrawer } from "@/server/services/drawers";
+import { ensureTill, openDrawer, type TillLocation } from "@/server/services/drawers";
 import { gstinCheckChar } from "@/lib/codes";
 import { ensurePlans } from "@/server/services/plans";
 import { createCourt } from "@/server/services/courts";
@@ -31,6 +31,20 @@ const STAFF: Array<{ role: Exclude<Role, "MEMBER">; name: string; phone: string 
   { role: "ACCOUNTANT", name: "Arjun Accounts", phone: "9000000006" },
   { role: "KITCHEN", name: "Kavi Kitchen", phone: "9000000007" },
 ];
+
+/**
+ * The till each staff member opens in a configured world. v6 TL-1 changed this (was: a front desk drawer for every
+ * role, each getting its own numbered "Front Desk Till N"): each role opens a till at its own location (the Owner and
+ * the Manager may open any; they keep front desk tills); the kitchen takes no money and has none.
+ */
+export const WORLD_TILLS: Partial<Record<Exclude<Role, "MEMBER">, { name: string; location: TillLocation }>> = {
+  OWNER: { name: "Front Desk Till 1", location: "FRONT_DESK" },
+  MANAGER: { name: "Front Desk Till 2", location: "FRONT_DESK" },
+  FRONT_DESK: { name: "Front Desk Till 3", location: "FRONT_DESK" },
+  SHOP_STAFF: { name: "Shop Till", location: "SHOP" },
+  BAR_STAFF: { name: "Bar Till", location: "BAR" },
+  ACCOUNTANT: { name: "Office Till", location: "OFFICE" },
+};
 
 /** Default test "now": Monday 12 Oct 2026, 10:00 IST. */
 export const T0 = istToUtc("2026-10-12", "10:00");
@@ -82,7 +96,10 @@ export async function makeWorld(now: Date = T0, opts: WorldOptions = {}): Promis
     await updateSetting(SYSTEM, "payment_methods", { card_enabled: true, upi_vpa: TEST_UPI_VPA, upi_confirmed: true });
     await updateSetting(SYSTEM, "delivery", { enabled: true, pincodes: ["380015", "380009", "380054"], fee: 9900 });
     setCapabilityOverridesForTests({ email: true });
-    for (const a of Object.values(actors)) await openDrawer(a, { area: "DESK", openingFloat: 0 });
+    for (const a of Object.values(actors)) {
+      const t = WORLD_TILLS[a.role as Exclude<Role, "MEMBER">];
+      if (t) await openDrawer(a, { drawerId: (await ensureTill(SYSTEM, { ...t, defaultFloat: 0 })).id, openingFloat: 0 });
+    }
   } else {
     setCapabilityOverridesForTests({});
   }
