@@ -43,7 +43,8 @@ test.beforeAll(async () => {
   await fresh.$executeRawUnsafe("DROP SCHEMA IF EXISTS public CASCADE");
   await fresh.$executeRawUnsafe("CREATE SCHEMA public");
   await fresh.$disconnect();
-  const env = { ...process.env, DATABASE_URL: freshUrl, APP_URL: BASE, NODE_ENV: "production" as const };
+  // v6 URL-2: production refuses a non-https/localhost APP_URL; this local test club opts out explicitly.
+  const env = { ...process.env, DATABASE_URL: freshUrl, APP_URL: BASE, NODE_ENV: "production" as const, ALLOW_INSECURE_APP_URL: "1" };
   execFileSync("npx", ["prisma", "migrate", "deploy"], { env, stdio: "pipe" });
   // 2. The built app on its own port, pointed at the empty database.
   server = spawn("npx", ["next", "start", "-p", String(PORT)], { env, stdio: "ignore", detached: true });

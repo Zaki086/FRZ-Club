@@ -9,7 +9,6 @@ import { cancelPriceChange, changeRule, createRule, decideRule, endRule, setBase
 import { addProductPromotion, addShopDiscount, addVariant, endShopDiscount, listShopDiscounts, productDetail } from "@/server/services/products";
 import { checkout, counterSale, listCatalogue, updateVariant } from "@/server/services/shop";
 import { updatePlan } from "@/server/services/plans";
-import { updateMenuItem } from "@/server/services/bar";
 import { makeWorld, type World } from "../helpers/world";
 import { makeMember } from "../helpers/members";
 import { makeProduct } from "../helpers/shop";
@@ -53,15 +52,16 @@ describe("D-79 shop staff set shop prices (price book, history, audit)", () => {
     await expectIntegrity();
   });
 
-  it("shop staff can't price a court, social play, a plan or a bar menu item, nor touch those rules (FORBIDDEN)", async () => {
-    const lime = (await makeBar(w)).lime;
+  // v6 SM-1 changed this (was: "…or a bar menu item"): shop staff now run the café menu and set menu BASE prices
+  // (`menu.price`, MN-1) — tests/integration/v6-shop.test.ts. Menu promotions stay the Owner's (asserted below).
+  it("shop staff can't price a court, social play or a plan, nor touch those rules (FORBIDDEN)", async () => {
+    await makeBar(w);
     const ss = w.actors.SHOP_STAFF;
-    for (const target of ["COURT_FEE:WALK_IN:TENNIS", "COURT_FEE:GOLD:TENNIS", "SOCIAL_FEE:SILVER", `MENU:${lime.id}`]) {
+    for (const target of ["COURT_FEE:WALK_IN:TENNIS", "COURT_FEE:GOLD:TENNIS", "SOCIAL_FEE:SILVER"]) {
       await expect(setBasePrice(ss, { target, price: 1 })).rejects.toMatchObject({ code: "FORBIDDEN" });
     }
     const plan = await prisma.plan.findFirstOrThrow({ where: { code: "GOLD" } });
     await expect(updatePlan(ss, plan.id, { socialFee: 1 })).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(updateMenuItem(ss, lime.id, { price: 1 })).rejects.toMatchObject({ code: "FORBIDDEN" });
     for (const scope of ["COURTS", "SOCIAL", "MENU"] as const) {
       await expect(createRule(ss, { kind: "PROMOTION", name: "Sneaky", scope, adjustType: "PCT", adjustPct: 5 })).rejects.toMatchObject({ code: "FORBIDDEN" });
     }

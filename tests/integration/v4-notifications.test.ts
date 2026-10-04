@@ -169,7 +169,8 @@ describe("v4 §4.1 — event catalogue", () => {
     await send("REFUND_APPROVAL_NEEDED", "k:staff", ["PUSH", "EMAIL", "WHATSAPP_MANUAL"]);
     expect(await rows({ dedupeKey: "k:staff" })).toEqual(["IN_APP:SENT", "PUSH:QUEUED"]);
     await send("BOOKING_CANCELLED", "k:cancel");
-    expect(await rows({ dedupeKey: "k:cancel" })).toEqual(["EMAIL:QUEUED", "IN_APP:SENT", "PUSH:QUEUED", "WHATSAPP_API:SKIPPED", "WHATSAPP_MANUAL:QUEUED"]);
+    // v6 SA-4 (default ONLY_IF_NO_OTHER_CHANNEL): push and email reach the member → no manual WhatsApp task.
+    expect(await rows({ dedupeKey: "k:cancel" })).toEqual(["EMAIL:QUEUED", "IN_APP:SENT", "PUSH:QUEUED", "WHATSAPP_API:SKIPPED", "WHATSAPP_MANUAL:SKIPPED"]);
     // The same key again: nothing new on any channel.
     expect(await send("BOOKING_CANCELLED", "k:cancel")).toEqual([]);
     expect(await prisma.notificationDelivery.count({ where: { dedupeKey: "k:cancel" } })).toBe(5);
@@ -217,7 +218,7 @@ describe("v4 §4.1 — event catalogue", () => {
     }
     await flushDeliveries();
     expect(pushes.filter((p) => p.endpoint.endsWith("/mgr")).map((p) => p.payload.title).sort()).toEqual(["DRAWER_VARIANCE", "LEAD_ASSIGNED", "REFUND_APPROVAL_NEEDED"]);
-    expect(pushes.find((p) => p.endpoint.endsWith("/desk"))?.payload).toMatchObject({ title: "Leave approved", url: "/app/staff/me" });
+    expect(pushes.find((p) => p.endpoint.endsWith("/desk"))?.payload).toMatchObject({ title: "Leave approved", url: `${process.env.APP_URL}/app/staff/me` }); // v6 URL-1
   });
 });
 
@@ -238,7 +239,7 @@ describe("v4 §4.1 — reminders", () => {
     await flushDeliveries();
     const p = pushes.find((x) => x.payload.title === "Reminder: Court 1, today 13:00–14:00")!;
     expect(p.opts).toEqual({ TTL: PUSH_TTL_SECONDS, urgency: "high" });
-    expect(p.payload).toMatchObject({ url: "/portal/bookings", body: expect.stringContaining(b.bookingCode) });
+    expect(p.payload).toMatchObject({ url: `${process.env.APP_URL}/portal/bookings`, body: expect.stringContaining(b.bookingCode) }); // v6 URL-1
     // Within 10 minutes of the start a reminder no longer helps.
     const soon = await reachable("Soon Sona");
     await book(w, { date: "2026-10-13", time: "08:00", players: [{ memberId: soon.memberId }] });
@@ -258,7 +259,7 @@ describe("v4 §4.1 — reminders", () => {
     expect(await rows({ memberId: m.memberId, event: "SOCIAL_SESSION_REMINDER" })).toEqual(["IN_APP:SENT", "PUSH:QUEUED"]);
     expect((await delivery({ memberId: m.memberId, event: "SOCIAL_SESSION_REMINDER", channel: "IN_APP" })).dedupeKey).toBe(`social-reminder:${id}:${m.memberId}:${m.member.userId}`);
     await flushDeliveries();
-    expect(pushes[pushes.length - 1]).toMatchObject({ payload: { title: "Reminder: Monday social, today 14:00–16:00", url: "/portal/social" }, opts: { urgency: "high" } });
+    expect(pushes[pushes.length - 1]).toMatchObject({ payload: { title: "Reminder: Monday social, today 14:00–16:00", url: `${process.env.APP_URL}/portal/social` }, opts: { urgency: "high" } }); // v6 URL-1
   });
 
   it("NT-13: club-cancellation choice reminders on day 3 and day 6 (daytime), on every channel with the /r link; none once chosen", async () => {
@@ -308,16 +309,16 @@ describe("v4 §4.2 — Web Push", () => {
     const long = "x".repeat(300);
     const p = pushPayload({ event: "DUES_REMINDER", title: `₹400 due ${long}`, body: `Line one\nline two ${long}`, link: "/portal/invoices", dedupeKey: "dues:b1:1" });
     expect(Object.keys(p.payload).sort()).toEqual(["body", "tag", "title", "url"]);
-    expect([p.payload.title.length <= 80, p.payload.body.length <= 180, p.payload.body.includes("\n"), p.payload.url]).toEqual([true, true, false, "/portal/invoices"]);
+    expect([p.payload.title.length <= 80, p.payload.body.length <= 180, p.payload.body.includes("\n"), p.payload.url]).toEqual([true, true, false, `${process.env.APP_URL}/portal/invoices`]); // v6 URL-1: absolute on APP_URL
     expect(p.payload.tag).toMatch(/^dues-reminder-[0-9a-f]{10}$/);
     expect(p.options).toEqual({ TTL: 24 * 3600, urgency: "normal" });
-    expect(pushPayload({ event: "BOOKING_CANCELLED_BY_CLUB", title: "t", body: "b", link: null, dedupeKey: "c" })).toMatchObject({ payload: { url: "/" }, options: { urgency: "high" } });
+    expect(pushPayload({ event: "BOOKING_CANCELLED_BY_CLUB", title: "t", body: "b", link: null, dedupeKey: "c" })).toMatchObject({ payload: { url: `${process.env.APP_URL}/` }, options: { urgency: "high" } }); // v6 URL-1
     expect(pushPayload({ event: "SESSION_REMINDER", title: "t", body: "b", link: "/portal/bookings", dedupeKey: "s" }).options.urgency).toBe("high");
     // What the device receives is exactly that JSON.
     const m = await reachable("Payload Pari");
     await withTx((tx) => notifyMember(tx, { event: "BOOKING_CONFIRMED", userId: m.member.userId!, memberId: m.memberId, title: "Booked: Court 3 18:00–19:00", body: "BK-1 · players: Pari", link: "/portal/bookings", dedupeKey: "nt6" }));
     await flushDeliveries();
-    expect(pushes.at(-1)).toEqual({ endpoint: `https://push.example.net/sub/${n}`, payload: { title: "Booked: Court 3 18:00–19:00", body: "BK-1 · players: Pari", url: "/portal/bookings", tag: expect.stringMatching(/^booking-confirmed-/) }, opts: { TTL: PUSH_TTL_SECONDS, urgency: "normal" } });
+    expect(pushes.at(-1)).toEqual({ endpoint: `https://push.example.net/sub/${n}`, payload: { title: "Booked: Court 3 18:00–19:00", body: "BK-1 · players: Pari", url: `${process.env.APP_URL}/portal/bookings`, tag: expect.stringMatching(/^booking-confirmed-/) }, opts: { TTL: PUSH_TTL_SECONDS, urgency: "normal" } });
   });
 
   it("NT-7: quiet hours 22:00–07:00 IST hold non-urgent pushes until 07:00; urgent ones (same-day club cancellation, reminders) go at once", async () => {
@@ -453,7 +454,8 @@ describe("v4 §5.4 — the WhatsApp sending queue", () => {
     expect(calls.some((x) => x.to === `91${c.member.phone}`)).toBe(false);
     const cApi = await delivery({ memberId: c.memberId, event: "BOOKING_CANCELLED_BY_CLUB", channel: "WHATSAPP_API" });
     expect([cApi.status, cApi.error]).toEqual(["SKIPPED", "Not opted in to WhatsApp updates"]);
-    expect((await delivery({ memberId: c.memberId, event: "BOOKING_CANCELLED_BY_CLUB", channel: "WHATSAPP_MANUAL" })).status).toBe("QUEUED");
+    // v6 SA-4: push and email reach her, so no manual task either (the default ONLY_IF_NO_OTHER_CHANNEL).
+    expect((await delivery({ memberId: c.memberId, event: "BOOKING_CANCELLED_BY_CLUB", channel: "WHATSAPP_MANUAL" })).status).toBe("SKIPPED");
     // Nothing is left for the sweep; the message log has the sends.
     expect(await sweepWhatsApp()).toEqual({ sent: 0, failed: 0, retrying: 0, paused: false });
     expect(await prisma.messageLog.count({ where: { channel: "WHATSAPP", status: "SENT" } })).toBe(2);
@@ -479,6 +481,9 @@ describe("v4 §5.4 — the WhatsApp sending queue", () => {
   it("WA-52: Meta answers 500 → retried after 30 s, then sent; always failing → 30 s, 2 min, 10 min, 30 min, 2 h, then FAILED + the manual task", async () => {
     const m = await reachable("Retry Rohan");
     await whatsappOn([m.memberId]);
+    // v6 SA-4: the v4 fallback task for a member also reached by push/email needs `manual_whatsapp_fallback` ALWAYS
+    // (the default ONLY_IF_NO_OTHER_CHANNEL makes none — covered in v6-send-all SA-4).
+    await withTx((tx) => writeSettingTx(tx, SYSTEM, "manual_whatsapp_fallback", "ALWAYS"));
     meta({ status: 500, body: { error: { message: "Internal error" } } }, "ok");
     await withTx((tx) => notifyMember(tx, duesMessage(m.member.userId!, m.memberId, "wa52:a")));
     await settleAfterCommit();
@@ -514,6 +519,7 @@ describe("v4 §5.4 — the WhatsApp sending queue", () => {
   it("WA-53: a permanent error (not on WhatsApp) fails at once — no retry — and the same text appears in Messages to send", async () => {
     const m = await reachable("Permanent Pooja");
     await whatsappOn([m.memberId]);
+    await withTx((tx) => writeSettingTx(tx, SYSTEM, "manual_whatsapp_fallback", "ALWAYS")); // v6 SA-4: see WA-52
     meta({ status: 400, body: { error: { code: 131026, title: "Message undeliverable" } } });
     await withTx((tx) => notifyMember(tx, duesMessage(m.member.userId!, m.memberId, "wa53")));
     await settleAfterCommit();
@@ -579,8 +585,10 @@ describe("v4 §5.4 — the WhatsApp sending queue", () => {
       const d = await prisma.notificationDelivery.findMany({ where: { dedupeKey: key, channel: { in: ["WHATSAPP_API", "WHATSAPP_MANUAL"] } }, orderBy: { channel: "asc" } });
       return d.map((x) => [x.channel, x.status, x.error]);
     };
-    expect(await why("wa55:a")).toEqual([["WHATSAPP_API", "SKIPPED", "Template dues_reminder is not approved by Meta yet"], ["WHATSAPP_MANUAL", "QUEUED", null]]);
-    expect(await why("wa55:b")).toEqual([["WHATSAPP_API", "SKIPPED", "WhatsApp API not available: disabled (test override)"], ["WHATSAPP_MANUAL", "QUEUED", null]]);
+    // v6 SA-4 (default ONLY_IF_NO_OTHER_CHANNEL): push and email reach Farhan, so the manual task is SKIPPED with the reason.
+    const reached = "Reached by push or email (manual WhatsApp only when nothing else reaches them)";
+    expect(await why("wa55:a")).toEqual([["WHATSAPP_API", "SKIPPED", "Template dues_reminder is not approved by Meta yet"], ["WHATSAPP_MANUAL", "SKIPPED", reached]]);
+    expect(await why("wa55:b")).toEqual([["WHATSAPP_API", "SKIPPED", "WhatsApp API not available: disabled (test override)"], ["WHATSAPP_MANUAL", "SKIPPED", reached]]);
     expect(calls).toHaveLength(0);
   });
 

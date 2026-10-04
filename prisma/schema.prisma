@@ -909,6 +909,8 @@ model Bill {
   guestId          String?    @map("guest_id")
   businessClientId String?    @map("business_client_id")
   customerName     String     @map("customer_name")
+  /// v6 WI-4: MEMBER | BUSINESS | GUEST | WALK_IN (anonymous walk-in, no person) — a generated column (0024), never written.
+  customerKind     String     @default(dbgenerated()) @map("customer_kind")
   tier             String
   total            Int        @default(0)
   taxTotal         Int        @default(0) @map("tax_total")
@@ -1473,6 +1475,7 @@ model MessageLog {
   entity    String?
   entityId  String?  @map("entity_id")
   actorId   String?  @map("actor_id")
+  jobId     String?  @map("job_id") // v6 SA-11: the "Send all" job that sent it
   at        DateTime @db.Timestamptz(3)
   createdAt DateTime @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -1668,6 +1671,13 @@ model NotificationDelivery {
   sendId             String? @map("send_id")
   bulkId             String? @map("bulk_id")
   pushSubscriptionId String? @map("push_subscription_id")
+  // v6 URL-3 / §2 (SENDALL): what the message is made of (rendered at open/send time with the APP_URL of that moment),
+  // the records it is about (SA-1 relevance, SA-2 de-duplication), and — for rows a "Send all" job wrote — the job and
+  // the manual task they were sent for.
+  renderSpec         Json?   @map("render_spec")
+  contextIds         Json?   @map("context_ids")
+  bulkJobId          String? @map("bulk_job_id")
+  taskId             String? @map("task_id")
   createdAt    DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1987,4 +1997,45 @@ model MessageRateGate {
   updatedAt  DateTime @default(dbgenerated("app_now()")) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("message_rate_gate")
+}
+
+/// v6 §2 SA-5…SA-11 (SENDALL): one confirmed "Send all" on the manual WhatsApp queue. One QUEUED/RUNNING job per
+/// `filterKey` (SA-8). SA-0: WhatsApp goes out only through the official Cloud API — never WhatsApp Web automation.
+model BulkSendJob {
+  id               String    @id
+  filterKey        String    @map("filter_key")
+  filter           String    @default("")
+  useOtherChannels Boolean   @default(true) @map("use_other_channels")
+  whatsappApi      Boolean   @default(false) @map("whatsapp_api")
+  announcements    Boolean   @default(false)
+  status           String    @default("QUEUED") // QUEUED | RUNNING | DONE
+  total            Int       @default(0)
+  preflight        Json      @default("{}")
+  createdBy        String?   @map("created_by")
+  startedAt        DateTime? @map("started_at") @db.Timestamptz(3)
+  finishedAt       DateTime? @map("finished_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @default(dbgenerated("app_now()")) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([createdAt], map: "bulk_send_jobs_created_idx")
+  @@map("bulk_send_jobs")
+}
+
+/// v6 SA-7: one manual task of a "Send all" job — the channels chosen at confirm and its progress.
+model BulkSendJobItem {
+  id        String    @id
+  jobId     String    @map("job_id")
+  taskId    String    @map("task_id")
+  channels  String[]
+  status    String    @default("PENDING") // PENDING | SENDING | WAITING | SENT | FAILED | SKIPPED
+  error     String?
+  claimedBy String?   @map("claimed_by")
+  claimedAt DateTime? @map("claimed_at") @db.Timestamptz(3)
+  sentAt    DateTime? @map("sent_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(dbgenerated("app_now()")) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @default(dbgenerated("app_now()")) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([jobId, taskId], map: "bulk_send_job_items_once")
+  @@index([jobId, status], map: "bulk_send_job_items_job_status_idx")
+  @@map("bulk_send_job_items")
 }

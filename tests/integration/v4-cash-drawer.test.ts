@@ -6,7 +6,7 @@ import { getSettings } from "@/server/services/settings";
 import { priceLine } from "@/server/services/pricing";
 import { completeRefund, recordCounterPayment, refundTx } from "@/server/services/payments";
 import {
-  approveDrawerVariance, cashDrop, cashSummary, closeDrawer, createTill, dailyCashReconciliation, drawerBalanceTx, explainDrawerVariance, getDrawerSession,
+  approveDrawerVariance, cashDrop, cashSummary, closeDrawer, createTill, dailyCashReconciliation, drawerBalanceTx, ensureTill, explainDrawerVariance, getDrawerSession,
   listDrawerVarianceApprovals, listTills, myDrawer, myDrawerBalance, openDrawer, payIn, payOut, recordBankDeposit, recordDeposit, rejectDrawerVariance,
   safeBalanceTx, safeSummary, updateTill,
 } from "@/server/services/drawers";
@@ -41,8 +41,10 @@ async function openTill(actor: UserActor, tillId: string, float: number) {
   return openDrawer(actor, { drawerId: tillId, counts: breakdownCounts(float) });
 }
 
+// v6 TL-4 changed this (was: createTill): the world already has the club's tills ("Bar Till", "Shop Till", …), so a
+// test asks for a till by name (idempotent) instead of adding a second one.
 async function till(name: string, location: "FRONT_DESK" | "SHOP" | "BAR" = "FRONT_DESK", defaultFloat = 200000) {
-  return createTill(w.actors.OWNER, { name, location, defaultFloat });
+  return ensureTill(w.actors.OWNER, { name, location, defaultFloat });
 }
 
 const balanceOf = async (actor: UserActor) => (await myDrawerBalance(actor)).open?.balancePaise ?? null;
@@ -233,8 +235,13 @@ describe("v4 §2.5 — closing (CD-5 … CD-8)", () => {
     expect(rec.lines.filter((l) => l.key.startsWith("handover"))).toEqual([]);
     // A different count at the next open is a handover difference (red in the reconciliation + a notification).
     await closeDrawer(w.actors.MANAGER, { counts: breakdownCounts(150000), floatCarried: 150000 });
+    // v6 TL-1 changed this (was: the shop staff member took over this front desk till): shop staff can't open a front
+    // desk till any more, so the Owner (any till) takes it over.
+    await expect(openDrawer(w.actors.SHOP_STAFF, { drawerId: t.id, counts: breakdownCounts(140000) })).rejects.toMatchObject({ code: "VALIDATION_FAILED" }); // has the Shop Till open
     await closeDrawer(w.actors.SHOP_STAFF, { cashCounted: 0 });
-    const next = await openDrawer(w.actors.SHOP_STAFF, { drawerId: t.id, counts: breakdownCounts(140000) });
+    await expect(openDrawer(w.actors.SHOP_STAFF, { drawerId: t.id, counts: breakdownCounts(140000) })).rejects.toMatchObject({ code: "DRAWER_AREA_MISMATCH" });
+    await closeDrawer(w.actors.OWNER, { cashCounted: 0 });
+    const next = await openDrawer(w.actors.OWNER, { drawerId: t.id, counts: breakdownCounts(140000) });
     rec = await dailyCashReconciliation(w.actors.ACCOUNTANT);
     expect(rec.lines.find((l) => l.key === `handover:${next.id}`)).toMatchObject({ expected: 150000, actual: 140000, difference: -10000, ok: false });
     expect(await prisma.notification.count({ where: { title: { startsWith: "Float differs" } } })).toBeGreaterThan(0);
@@ -257,10 +264,12 @@ describe("v4 §2.5 — closing (CD-5 … CD-8)", () => {
     await expect(createTill(w.actors.OWNER, { name: "bar till", location: "BAR" })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
   });
 
-  it("legacy openDrawer({ area, openingFloat }) keeps working: a free till at that location, or the next one there", async () => {
-    // The world opened a DESK drawer for every staff member: each got its own front desk till.
+  // v6 TL-4 changed this (was: "…or the next one there" — every busy location got the next numbered till, which is
+  // how a shop login ended up with "Front Desk Till 4"): a free till at that location; never a new numbered till.
+  it("legacy openDrawer({ area, openingFloat }) keeps working: a free till at that location — never a new numbered till", async () => {
+    // The world opened Front Desk Till 1–3 for the Owner, the Manager and the front desk (each role at its own area).
     const desk = await prisma.cashDrawer.findMany({ where: { location: "FRONT_DESK" }, orderBy: { name: "asc" } });
-    expect(desk.map((t) => t.name)).toEqual(Array.from({ length: 7 }, (_, i) => `Front Desk Till ${i + 1}`));
+    expect(desk.map((t) => t.name)).toEqual(["Front Desk Till 1", "Front Desk Till 2", "Front Desk Till 3"]);
     await closeDrawer(w.actors.FRONT_DESK, { cashCounted: 0 });
     const again = await openDrawer(w.actors.FRONT_DESK, { area: "DESK", openingFloat: 50000 });
     expect(desk.map((t) => t.id)).toContain(again.drawerId);
@@ -268,6 +277,18 @@ describe("v4 §2.5 — closing (CD-5 … CD-8)", () => {
     await closeDrawer(w.actors.SHOP_STAFF, { cashCounted: 0 });
     const shop = await openDrawer(w.actors.SHOP_STAFF, { area: "SHOP", openingFloat: 0 });
     expect((await prisma.cashDrawer.findUniqueOrThrow({ where: { id: shop.drawerId! } })).name).toBe("Shop Till");
+    // Every front desk till is busy: the Manager's legacy open is refused instead of adding "Front Desk Till 4".
+    await closeDrawer(w.actors.MANAGER, { cashCounted: 0 });
+    await closeDrawer(w.actors.BAR_STAFF, { cashCounted: 0 });
+    await openDrawer(w.actors.BAR_STAFF, { area: "BAR", openingFloat: 0 });
+    await openDrawer(w.actors.MANAGER, { area: "DESK", openingFloat: 0 }); // Front Desk Till 2 is free again
+    await closeDrawer(w.actors.MANAGER, { cashCounted: 0 });
+    const { createStaff } = await import("@/server/services/users");
+    const { SYSTEM } = await import("@/server/rbac/actor");
+    const { user, employee } = await createStaff(SYSTEM, { name: "Extra Desk", phone: "9000000011", email: "desk2@test.club", role: "FRONT_DESK", password: "password123", monthlySalary: 2_000_000, joinDate: "2025-01-01" });
+    await openDrawer({ kind: "USER", userId: user.id, role: "FRONT_DESK", name: "Extra Desk", memberId: null, employeeId: employee.id }, { area: "DESK", openingFloat: 0 }); // takes Till 2
+    await expect(openDrawer(w.actors.MANAGER, { area: "DESK", openingFloat: 0 })).rejects.toMatchObject({ code: "DRAWER_IN_USE" });
+    expect(await prisma.cashDrawer.count({ where: { location: "FRONT_DESK" } })).toBe(3);
   });
 });
 
@@ -304,7 +325,8 @@ describe("v4 §2.6 — reconciliation and §2.7 integrity #12–#13", () => {
     const p = await recordCounterPayment(w.actors.FRONT_DESK, { billId: bill.id, method: "CASH", amount: 40000 });
     await closeDrawer(w.actors.FRONT_DESK, { cashCounted: 139000, floatCarried: 100000, bagRef: "B" });
     let checks = await runIntegrityChecks();
-    expect(checks.map((c) => c.id)).toEqual(Array.from({ length: 13 }, (_, i) => i + 1));
+    // v6 WI-4 changed this (was: 13 checks): #14 accepts anonymous walk-in bills (customer kind WALK_IN).
+    expect(checks.map((c) => c.id)).toEqual(Array.from({ length: 14 }, (_, i) => i + 1));
     expect(checks.filter((c) => !c.ok)).toEqual([]);
     // #12: a cash payment linked to a session without its CASH_SALE movement.
     const g = await prisma.guest.create({ data: { name: "Ghost" } });

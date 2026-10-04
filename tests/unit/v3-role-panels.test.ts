@@ -79,7 +79,9 @@ describe("role panels — staff menus", () => {
   it("shop: counter, orders, sales, products, stock and purchasing — no desk, courts, bar or finance", () => {
     const s = hrefs("SHOP_STAFF");
     for (const p of ["/app/shop", ...SHOP_BACK_OFFICE, "/app/refunds", "/app/drawer"]) expect(s).toContain(p);
-    for (const p of [...DESK, ...COURTS, ...BAR, ...FINANCE, "/app/crm", "/app"]) expect(s).not.toContain(p);
+    // v6 SM-1: the one bar screen on the shop menu is the café menu builder ("Café menu").
+    expect(s).toContain("/app/bar/menu");
+    for (const p of [...DESK, ...COURTS, ...BAR.filter((x) => x !== "/app/bar/menu"), ...FINANCE, "/app/crm", "/app"]) expect(s).not.toContain(p);
   });
 
   it("bar: tables, tabs, ready queue, kitchen display and the bar day — nothing else but its own pages", () => {

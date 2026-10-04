@@ -46,19 +46,22 @@ describe("v3 §6.3 — channels (NT-4)", () => {
     const first = await message(m.member.userId!);
     expect(first.map((x) => x.channel)).toEqual(["IN_APP", "PUSH", "EMAIL", "WHATSAPP_API", "WHATSAPP_MANUAL"]);
     expect(await message(m.member.userId!)).toEqual([]); // same key: nothing new
-    expect(await byChannel("test:1")).toEqual({ IN_APP: "SENT", PUSH: "SKIPPED", EMAIL: "QUEUED", WHATSAPP_API: "SKIPPED", WHATSAPP_MANUAL: "QUEUED" });
+    // v6 SA-4 (default ONLY_IF_NO_OTHER_CHANNEL): the email reaches her, so no manual WhatsApp task.
+    expect(await byChannel("test:1")).toEqual({ IN_APP: "SENT", PUSH: "SKIPPED", EMAIL: "QUEUED", WHATSAPP_API: "SKIPPED", WHATSAPP_MANUAL: "SKIPPED" });
     const push = (await rows("test:1")).find((d) => d.channel === "PUSH")!;
     expect(push.error).toMatch(/Push not available/);
     expect(await prisma.notification.count({ where: { userId: m.member.userId!, type: "DUES_REMINDER" } })).toBe(1);
     // The worker sends email; manual WhatsApp is never sent by the system.
     // (The membership confirmation from sign-up is queued too: two emails.)
     expect(await flushDeliveries()).toEqual({ sent: 2, failed: 0 });
-    expect(await byChannel("test:1")).toMatchObject({ EMAIL: "SENT", WHATSAPP_MANUAL: "QUEUED" });
+    expect(await byChannel("test:1")).toMatchObject({ EMAIL: "SENT", WHATSAPP_MANUAL: "SKIPPED" });
     expect(sent.map((s) => [s.to, s.subject])).toContainEqual(["chandni@example.com", "₹400 due"]);
     // Email switched off: the next message records it as not available.
     setCapabilityOverridesForTests({ email: false });
     await message(m.member.userId!, "test:2");
     expect((await byChannel("test:2")).EMAIL).toBe("SKIPPED");
+    // v6 SA-4: nothing else reaches her now → the manual WhatsApp task for the desk.
+    expect((await byChannel("test:2")).WHATSAPP_MANUAL).toBe("QUEUED");
   });
 
   it("member preferences are respected (in-app always stays on)", async () => {
@@ -82,7 +85,7 @@ describe("v3 §6.3 — channels (NT-4)", () => {
     await message(m.member.userId!, "p:1");
     await flushDeliveries();
     expect((await byChannel("p:1")).PUSH).toBe("SENT");
-    expect(JSON.parse(payloads[0])).toMatchObject({ title: "₹400 due", url: "/portal" });
+    expect(JSON.parse(payloads[0])).toMatchObject({ title: "₹400 due", url: `${process.env.APP_URL}/portal` }); // v6 URL-1: push url is absolute on APP_URL
     setChannelTransportsForTests({ push: async () => Promise.reject(Object.assign(new Error("Gone"), { statusCode: 410 })) });
     await message(m.member.userId!, "p:2");
     await flushDeliveries();
@@ -171,7 +174,8 @@ describe("v3 §6.4 — walk-in credentials", () => {
     const st = await credentialsStatus(w.actors.FRONT_DESK, r.memberId);
     expect(st).toMatchObject({ username: "9876512345", canLogIn: false, noOwnLogin: false });
     expect(st.linkActiveUntil).not.toBeNull();
-    expect(Object.fromEntries(st.deliveries.map((d) => [d.channel, d.status]))).toEqual({ IN_APP: "SENT", PUSH: "SKIPPED", EMAIL: "QUEUED", WHATSAPP_API: "SKIPPED", WHATSAPP_MANUAL: "QUEUED" });
+    // v6 SA-4: the welcome email reaches him, so no manual WhatsApp task.
+    expect(Object.fromEntries(st.deliveries.map((d) => [d.channel, d.status]))).toEqual({ IN_APP: "SENT", PUSH: "SKIPPED", EMAIL: "QUEUED", WHATSAPP_API: "SKIPPED", WHATSAPP_MANUAL: "SKIPPED" });
   });
 
   it("guardian-managed Juniors under 13 get no login", async () => {
@@ -212,8 +216,9 @@ describe("v3 §6.5 — expiry and dues", () => {
     expect(d.map((x) => x.channel).sort()).toEqual(["EMAIL", "IN_APP", "PUSH", "WHATSAPP_API", "WHATSAPP_MANUAL"]);
     const r = await listView(w.actors.FRONT_DESK, "renewals", {});
     const row = r.rows.find((x) => x.id === m.memberId)!;
-    expect([row.status, row.last_event, row.manual_id !== null]).toEqual(["EXPIRING", "MEMBERSHIP_EXPIRY", true]);
-    expect(String(row.how)).toContain("WHATSAPP_MANUAL:QUEUED");
+    // v6 SA-4: email reaches her, so there is no WhatsApp task to send by hand.
+    expect([row.status, row.last_event, row.manual_id !== null]).toEqual(["EXPIRING", "MEMBERSHIP_EXPIRY", false]);
+    expect(String(row.how)).toContain("WHATSAPP_MANUAL:SKIPPED");
   });
 
   it("NT-2: dues reminder after 3 days unpaid, then weekly, at most 3; none once paid", async () => {

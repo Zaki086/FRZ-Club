@@ -9,6 +9,7 @@ import { SYSTEM } from "@/server/rbac/actor";
 import { ensureDefaultSettings } from "@/server/services/settings";
 import { ensurePlans } from "@/server/services/plans";
 import { createStaff } from "@/server/services/users";
+import { absoluteUrl, publicOrigin } from "@/lib/url";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -51,7 +52,7 @@ async function main() {
   await ensureDefaultSettings();
   await ensurePlans();
   await createStaff(SYSTEM, { name, phone, email, role: "OWNER", password, monthlySalary: 0, joinDate: istDate(new Date()) });
-  console.log(`Owner ${name} created. Log in at ${process.env.APP_URL ?? "http://localhost:3200"}/login with ${email ?? phone} — the setup wizard opens first.`);
+  console.log(`Owner ${name} created. Log in at ${publicOrigin() ? absoluteUrl("/login") : "http://localhost:3200/login"} with ${email ?? phone} — the setup wizard opens first.`);
 }
 
 main()

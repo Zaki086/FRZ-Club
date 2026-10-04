@@ -214,6 +214,8 @@ test("5. the shop sells at the till after opening its drawer", async ({ browser 
   const page = shop.page;
   await page.goto("/app/shop");
   await page.getByRole("button", { name: /avail\./ }).first().click();
+  // v6 WI-1 changed this (was: no customer chosen = a walk-in): a sale without a member is a walk-in by the switch.
+  await page.getByTestId("walk-in-switch").check();
   const methods = page.locator("div.col-span-3.flex.gap-1 button");
   const labels = (await methods.allTextContents()).map((t) => t.trim());
   if (mode === "cash") {
@@ -512,7 +514,9 @@ test("15. the shop adds a product with photos; it appears in the public shop wit
   const page = shop.page;
   const name = `E2E Grip ${mode} ${Date.now() % 100000}`;
   await page.goto("/app/shop/products");
-  await page.getByRole("button", { name: "New product" }).click();
+  // v6 SM-2 changed this (was: "New product", then search the list and open the row): the primary "Add product"
+  // button, and the new product's page opens by itself for its photos and discount.
+  await page.getByRole("button", { name: "Add product" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Name").fill(name);
   await dialog.getByLabel("Brand").fill("Club");
@@ -520,8 +524,7 @@ test("15. the shop adds a product with photos; it appears in the public shop wit
   await dialog.getByPlaceholder("Price ₹").fill("350");
   await dialog.getByRole("button", { name: "Create product" }).click();
   await expect(dialog).toBeHidden();
-  await page.getByLabel("Search").fill(name);
-  await page.getByRole("link", { name }).click();
+  await page.waitForURL(/\/app\/shop\/products\/[^/]+$/);
   await page.getByLabel("Add photos").setInputFiles([
     { name: "front.png", mimeType: "image/png", buffer: await png(40) },
     { name: "back.png", mimeType: "image/png", buffer: await png(200) },
