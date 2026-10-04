@@ -398,7 +398,7 @@ function Composer({ context, recordId, onClose, onSent }: { context: TemplateCon
     <DataState state={lib}>
       {(d) =>
         d.templates.length === 0 ? (
-          <Empty title="No message templates for this" hint="The Owner adds templates in Settings → Message Templates." />
+          <Empty title="No message templates for this" />
         ) : (
           <div className="flex flex-col gap-4" data-testid="message-composer">
             {recipient ? <RecipientLine r={recipient} /> : null}
@@ -492,7 +492,7 @@ export function SendMessageButton({ context, recordId, label = "Send message", s
           <Button size={size} variant={variant} data-testid="send-message"><MessageSquareText className="h-4 w-4" /> {label}</Button>
         </DialogTrigger>
         {open ? (
-          <DialogContent wide title="Send message" description="Pick a ready-made message, check it and send it.">
+          <DialogContent wide title="Send message">
             <Composer context={context} recordId={recordId} onClose={() => close(false)} onSent={() => setDirty(true)} />
           </DialogContent>
         ) : null}

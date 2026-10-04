@@ -16,7 +16,6 @@ export default async function SocialPlayersPage() {
     <div>
       <PageHeader
         title="Social players"
-        subtitle="Everyone who joined social play — joined, left or cancelled by the club — with the fee, payment and check-in."
         actions={<Button asChild variant="outline"><Link href="/app/courts/social">Sessions</Link></Button>}
       />
       <ParticipantsList perms={{ checkin: can(actor, "checkin"), pay: can(actor, "bookings.any") }} />

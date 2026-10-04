@@ -67,7 +67,6 @@ function ChangePlayers({ booking, onDone }: { booking: BookingView; onDone: () =
   return (
     <div className="flex flex-col gap-2 rounded-md border p-3">
       <p className="text-sm font-semibold">Change players</p>
-      <p className="text-xs text-muted-foreground">New players are checked for the daily limit and time conflicts and priced by their tier. Removing a player 2 h+ before start refunds their fee.</p>
       <PlayerPicker players={players} onChange={setPlayers} max={8} lockedKeys={locked} />
       <Field label="Refund if money goes back">
         <RefundFields value={refund} onChange={setRefund} />

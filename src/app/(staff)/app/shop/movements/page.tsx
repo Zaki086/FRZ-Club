@@ -12,7 +12,7 @@ export default async function StockMovementsPage() {
   if (!can(actor, "shop.view")) forbidden();
   return (
     <div>
-      <PageHeader title="Stock movements" subtitle="Every change to the shelf: goods received, sold, reserved for online orders, handed over, adjusted and returned." />
+      <PageHeader title="Stock movements" />
       <MovementsList />
     </div>
   );

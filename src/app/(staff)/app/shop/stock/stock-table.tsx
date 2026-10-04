@@ -71,7 +71,7 @@ function ReceiveDialog({ row, onDone }: { row: Row; onDone: () => void }) {
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setError(null); }}>
       <DialogTrigger asChild><Button size="sm" variant="outline"><PackagePlus className="h-4 w-4" /> Receive</Button></DialogTrigger>
-      <DialogContent title={`Receive goods: ${row.product} (${row.label})`} description="Adds to on-hand stock as a RECEIPT movement (SH-9). Optionally records the supplier bill as a payable.">
+      <DialogContent title={`Receive goods: ${row.product} (${row.label})`}>
         <div className="flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-2">
             <Field label="Quantity"><Input inputMode="numeric" value={f.qty} onChange={(e) => setF({ ...f, qty: e.target.value })} autoFocus /></Field>
@@ -115,7 +115,7 @@ function AdjustDialog({ row, onDone }: { row: Row; onDone: () => void }) {
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setError(null); }}>
       <DialogTrigger asChild><Button size="sm" variant="outline"><SlidersHorizontal className="h-4 w-4" /> Adjust</Button></DialogTrigger>
-      <DialogContent title={`Adjust stock: ${row.product} (${row.label})`} description={`On hand ${row.onHand}, reserved ${row.reserved}. Use + to add, − to remove (damage, loss, recount).`}>
+      <DialogContent title={`Adjust stock: ${row.product} (${row.label})`} description={`On hand ${row.onHand}, reserved ${row.reserved}.`}>
         <div className="flex flex-col gap-3">
           <Field label="Change (e.g. -1 or 2)"><Input inputMode="numeric" value={delta} onChange={(e) => setDelta(e.target.value)} autoFocus /></Field>
           <Field label="Reason"><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
@@ -143,11 +143,11 @@ function EditVariantDialog({ row, onDone, canPrice }: { row: Row; onDone: () => 
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setError(null); }}>
       <DialogTrigger asChild><Button size="sm" variant="ghost" aria-label="Edit"><Pencil className="h-4 w-4" /></Button></DialogTrigger>
-      <DialogContent title={`Edit ${row.product} (${row.label})`} description={canPrice ? "Price changes apply to new sales only; existing bills keep their snapshot prices." : "Only the owner or manager can change prices."}>
+      <DialogContent title={`Edit ${row.product} (${row.label})`} description={canPrice ? undefined : "Only the owner or manager can change prices."}>
         <div className="flex flex-col gap-3">
           <Field label="Price ₹ (GST inclusive)"><Input inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} /></Field>
           <Field label="Reorder level"><Input inputMode="numeric" value={reorder} onChange={(e) => setReorder(e.target.value)} /></Field>
-          <Field label="Barcode" hint="Scan the item's barcode into this box (optional); the SKU always works at the till"><Input value={barcode} onChange={(e) => setBarcode(e.target.value.trim())} /></Field>
+          <Field label="Barcode" hint="Optional"><Input value={barcode} onChange={(e) => setBarcode(e.target.value.trim())} /></Field>
           <RejectionBanner error={error} />
           <Button disabled={busy} onClick={async () => {
             setBusy(true); setError(null);
@@ -198,7 +198,11 @@ function MovementsDialog({ row }: { row: Row }) {
 
 type VRow = { sku: string; label: string; price: string; reorderLevel: string; hsnSac: string };
 
-export function NewProductDialog({ onDone }: { onDone: () => void }) {
+/**
+ * The v3 §9.3 create form. v6 SM-2: on Products & pricing it is the primary "Add product" button and, once created,
+ * opens the product's page for its photos and discounts (`onCreated`).
+ */
+export function NewProductDialog({ onDone, label = "New product", onCreated }: { onDone: () => void; label?: string; onCreated?: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ name: "", brand: "", category: "ACCESSORIES", description: "", isRestring: false });
   const [variants, setVariants] = useState<VRow[]>([{ sku: "", label: "Standard", price: "", reorderLevel: "3", hsnSac: "9506" }]);
@@ -206,8 +210,8 @@ export function NewProductDialog({ onDone }: { onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setError(null); }}>
-      <DialogTrigger asChild><Button><Plus className="h-4 w-4" /> New product</Button></DialogTrigger>
-      <DialogContent title="New product" description="Stock starts at zero — record a receipt to put units on the shelf." wide>
+      <DialogTrigger asChild><Button data-testid="add-product"><Plus className="h-4 w-4" /> {label}</Button></DialogTrigger>
+      <DialogContent title="New product" wide>
         <div className="flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-2">
             <Field label="Name"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
@@ -238,7 +242,7 @@ export function NewProductDialog({ onDone }: { onDone: () => void }) {
           <Button disabled={busy} onClick={async () => {
             setBusy(true); setError(null);
             try {
-              await api("/api/shop/products", { body: {
+              const created = await api<{ id: string }>("/api/shop/products", { body: {
                 ...f,
                 variants: variants.map((v) => {
                   const price = parseRupees(v.price);
@@ -247,6 +251,7 @@ export function NewProductDialog({ onDone }: { onDone: () => void }) {
                 }),
               } });
               setOpen(false); onDone();
+              onCreated?.(created.id);
             } catch (e) { setError(errOf(e)); } finally { setBusy(false); }
           }}>Create product</Button>
         </div>
@@ -318,7 +323,7 @@ export function StockTable({ perms }: { perms: { stock: boolean; price: boolean 
         { key: "reorder", header: "Reorder", className: "text-right", cell: (l) => (l.track_stock ? <span className="tabular">{l.reorder_level}</span> : null) },
         { key: "actions", header: "", cell: (l) => <RowActions r={toRow(l)} perms={perms} /> },
       ]}
-      empty={{ title: "No stock matches these filters", hint: "Clear a filter, or add a product." }}
+      empty={{ title: "No stock matches these filters" }}
     />
   );
 }

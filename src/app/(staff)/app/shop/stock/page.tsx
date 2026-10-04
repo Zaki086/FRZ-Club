@@ -9,7 +9,7 @@ export default async function StockPage() {
   if (!can(actor, "shop.view")) forbidden();
   return (
     <div>
-      <PageHeader title="Stock & receipts" subtitle="One shelf for counter and online. Every change is a stock movement; available = on hand − reserved." />
+      <PageHeader title="Stock & receipts" />
       <StockTable perms={{ stock: can(actor, "shop.stock"), price: can(actor, "dashboard.ops") }} />
     </div>
   );

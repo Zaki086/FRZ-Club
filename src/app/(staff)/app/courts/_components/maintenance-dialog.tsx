@@ -45,7 +45,7 @@ export function MaintenanceDialog({
           <Wrench className="h-4 w-4" /> Block for maintenance
         </Button>
       </DialogTrigger>
-      <DialogContent title="Block a court for maintenance" description="Existing bookings are never overwritten: if any are in the way you are asked whether to cancel them as a club cancellation.">
+      <DialogContent title="Block a court for maintenance">
         <form
           className="flex flex-col gap-3"
           onSubmit={async (e) => {

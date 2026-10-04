@@ -5,6 +5,7 @@ import { api, ApiError, useApi } from "@/components/api";
 import { DataState, RejectionBanner } from "@/components/states";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { WHATSAPP_OPT_IN_LABEL } from "@/components/whatsapp-opt-in";
+import { InfoTip } from "@/components/info-tip";
 
 type OptIn = { optedIn: boolean; optInAt: string | null; optOutAt: string | null; phoneLast4: string; automatic: boolean; juniors: number };
 
@@ -21,6 +22,7 @@ export function WhatsAppConsentCard() {
         <DataState state={state}>
           {(s) => (
             <>
+              <div className="flex items-start gap-1">
               <label className="flex items-start gap-2">
                 <input
                   type="checkbox"
@@ -42,14 +44,15 @@ export function WhatsAppConsentCard() {
                 />
                 <span>
                   {WHATSAPP_OPT_IN_LABEL} (number ending {s.phoneLast4})
-                  <span className="block text-xs text-muted-foreground">
-                    {s.optedIn && s.optInAt ? `Agreed ${when(s.optInAt)}. ` : s.optOutAt ? `Turned off ${when(s.optOutAt)}. ` : ""}
-                    {s.juniors ? "This also covers messages about your Juniors. " : ""}
-                    Reply STOP on WhatsApp at any time to stop them.
-                    {!s.automatic ? " The club sends WhatsApp messages by hand for now." : ""}
-                  </span>
+                  {s.optedIn && s.optInAt ? <span className="block text-xs text-muted-foreground">Agreed {when(s.optInAt)}</span> : s.optOutAt ? <span className="block text-xs text-muted-foreground">Turned off {when(s.optOutAt)}</span> : null}
                 </span>
               </label>
+              <InfoTip place="whatsapp-opt-in" label="About WhatsApp updates" align="end">
+                {s.juniors ? "This also covers messages about your Juniors. " : ""}
+                Reply STOP on WhatsApp at any time to stop them.
+                {!s.automatic ? " The club sends WhatsApp messages by hand for now." : ""}
+              </InfoTip>
+              </div>
               <RejectionBanner error={error} />
             </>
           )}

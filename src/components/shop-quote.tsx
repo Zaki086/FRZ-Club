@@ -44,7 +44,8 @@ export type QuoteLine = {
   explanation: string;
   variantId?: string | null;
 };
-export type ShopQuote = { tier: string; lines: QuoteLine[]; total: number; taxTotal: number; discountTotal: number };
+/** `noSplit` (v6 JR-1): a Junior's / under-18's sale is paid in one go — no split payment. */
+export type ShopQuote = { tier: string; lines: QuoteLine[]; total: number; taxTotal: number; discountTotal: number; noSplit?: boolean };
 export type CartItem = { variantId: string; qty: number };
 
 export function useShopQuote(req: { memberId?: string | null; items: CartItem[]; fulfilment?: "PICKUP" | "DELIVERY" } | null) {

@@ -146,6 +146,9 @@ type TillOption = {
   openSession: { userName: string; mine: boolean } | null; lastClose: { floatCarried: number | null } | null;
 };
 const LOCATION_OF = { DESK: "FRONT_DESK", SHOP: "SHOP", BAR: "BAR", OFFICE: "OFFICE" } as const;
+const AREAS: Array<{ value: keyof typeof LOCATION_OF; label: string }> = [
+  { value: "DESK", label: "Front desk" }, { value: "SHOP", label: "Shop" }, { value: "BAR", label: "Bar" }, { value: "OFFICE", label: "Office" },
+];
 
 /**
  * Open a drawer (v4 §2.3): choose the till and count the float by denomination; the total is computed. Shown on the
@@ -153,9 +156,12 @@ const LOCATION_OF = { DESK: "FRONT_DESK", SHOP: "SHOP", BAR: "BAR", OFFICE: "OFF
  */
 export function DrawerOpener({ onOpened, defaultArea = "DESK" }: { onOpened: () => void; defaultArea?: "DESK" | "SHOP" | "BAR" | "OFFICE" }) {
   const tills = useApi<TillOption[]>("/api/drawer/tills");
-  const rules = useApi<{ rules: { denominations: Denominations } }>("/api/drawer");
+  const rules = useApi<{ rules: { denominations: Denominations; locations?: Array<(typeof LOCATION_OF)[keyof typeof LOCATION_OF]> } }>("/api/drawer");
   const [tillId, setTillId] = useState("");
-  const [area, setArea] = useState(defaultArea);
+  // v6 TL-2: only the locations this person's role may open (the server lists only those tills and refuses others).
+  const allowedAreas = AREAS.filter((a) => !rules.data?.rules.locations || rules.data.rules.locations.includes(LOCATION_OF[a.value]));
+  const [pickedArea, setArea] = useState<keyof typeof LOCATION_OF | null>(null);
+  const area = pickedArea ?? (allowedAreas.some((a) => a.value === defaultArea) ? defaultArea : allowedAreas[0]?.value ?? defaultArea);
   const [counts, setCounts] = useState<CountDraft>({});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -170,10 +176,7 @@ export function DrawerOpener({ onOpened, defaultArea = "DESK" }: { onOpened: () 
       {tills.data && list.length === 0 ? (
         // No tills set up yet (a new club): the drawer is opened for a location and a till is added for it.
         <Select value={area} onChange={(e) => setArea(e.target.value as typeof area)} aria-label="Drawer" className="w-40">
-          <option value="DESK">Front desk</option>
-          <option value="SHOP">Shop</option>
-          <option value="BAR">Bar</option>
-          <option value="OFFICE">Office</option>
+          {allowedAreas.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
         </Select>
       ) : (
         <div className="flex flex-col gap-1">

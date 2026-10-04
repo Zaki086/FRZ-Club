@@ -47,7 +47,7 @@ export function BookingsList({ perms }: { initialDate?: string; perms: { book: b
           { key: "status", header: "Status", cell: (r) => <StatusBadge status={r.status} /> },
           { key: "next", header: "Next", cell: (r) => <NextAction r={r} now={now} /> },
         ]}
-        empty={{ title: "No bookings match", hint: "Change the day or remove a filter; new bookings are made from the command centre." }}
+        empty={{ title: "No bookings match" }}
       />
       {open ? <BookingDetailDialog bookingId={open} onClose={() => setOpen(null)} onChanged={() => undefined} canManage={perms.book} canCheckin={perms.checkin} canMessage={perms.message} /> : null}
     </>

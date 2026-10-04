@@ -43,7 +43,7 @@ export function MovementsList() {
         ) },
         { key: "by", header: "By", cell: (m) => <span className="text-sm">{m.actor_name ?? "System / online"}</span> },
       ]}
-      empty={{ title: "No stock movements match these filters", hint: "Widen the dates or clear a filter." }}
+      empty={{ title: "No stock movements match these filters" }}
     />
   );
 }

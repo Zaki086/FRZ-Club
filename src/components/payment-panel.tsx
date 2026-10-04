@@ -32,6 +32,8 @@ export type BillView = {
   refundable?: number;
   canRequestRefund?: boolean;
   openRefunds?: Array<{ id: string; code: string; amount: number; status: string }>;
+  /** v6 JR-1: a Junior's / under-18's bill — one payment for the whole amount due, no split. */
+  noSplit?: boolean;
 };
 
 export function BillLines({ bill }: { bill: BillView }) {
@@ -96,7 +98,11 @@ export function PaymentPanel({
   const firstUpi = parts.find((p) => p.method === "UPI");
   const upiAmount = firstUpi ? parseRupees(firstUpi.amount) : null;
 
-  const effectiveParts: TenderDraft[] = parts.length ? parts : [emptyTender("CASH", due ? (due / 100).toFixed(2) : "")];
+  const noSplit = !!state.data?.noSplit;
+  // v6 JR-1: a Junior's bill is one part for the whole amount due.
+  const effectiveParts: TenderDraft[] = parts.length
+    ? (noSplit ? [{ ...parts[0], amount: due ? (due / 100).toFixed(2) : "" }] : parts)
+    : [emptyTender("CASH", due ? (due / 100).toFixed(2) : "")];
 
   const update = (i: number, patch: Partial<TenderDraft>) => {
     const base = parts.length ? parts : effectiveParts;
@@ -114,7 +120,7 @@ export function PaymentPanel({
               {effectiveParts.map((p, i) => (
                 <div key={i} className="grid grid-cols-12 gap-2">
                   <MethodSelect className="col-span-12 sm:col-span-3" methods={methods} value={p.method} onChange={(m) => update(i, { method: m })} />
-                  <Input className="col-span-5 sm:col-span-3" inputMode="decimal" placeholder="Amount ₹" value={p.amount} onChange={(e) => update(i, { amount: e.target.value })} aria-label="Amount" />
+                  <Input className="col-span-5 sm:col-span-3" inputMode="decimal" placeholder="Amount ₹" value={p.amount} readOnly={noSplit} onChange={(e) => update(i, { amount: e.target.value })} aria-label="Amount" />
                   <ProofFields className="col-span-5 sm:col-span-4" value={p} onChange={(patch) => update(i, patch)} />
                   <Button
                     className="col-span-2"
@@ -128,7 +134,9 @@ export function PaymentPanel({
                   </Button>
                 </div>
               ))}
-              {methods.length > 1 ? (
+              {noSplit ? (
+                <p className="text-xs text-muted-foreground" data-testid="junior-no-split">Junior member: paid in one go — the whole amount, one method.</p>
+              ) : methods.length > 1 ? (
                 <div className="flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" onClick={() => setParts([...effectiveParts, emptyTender(methods.find((m) => m !== "CASH") ?? "CASH")])}>
                     <Plus className="h-4 w-4" /> Split payment

@@ -217,7 +217,7 @@ function BulkComposer({ list, target, onClose, onStarted, canEditText }: { list:
     <DataState state={lib}>
       {(d) =>
         d.templates.length === 0 ? (
-          <Empty title="No message templates for this list" hint="The Owner adds templates in Settings → Message Templates." />
+          <Empty title="No message templates for this list" />
         ) : (
           <div className="flex flex-col gap-4" data-testid="bulk-composer">
             <p className="text-sm">
@@ -337,7 +337,7 @@ export function BulkSendButton({ list, target, onDone, label = "Send message", c
           <Button size="sm" disabled={!target.count} data-testid="bulk-send-message"><MessageSquareText className="h-4 w-4" /> {label}</Button>
         </DialogTrigger>
         {open ? (
-          <DialogContent wide title={`Send message to ${target.count.toLocaleString("en-IN")}`} description="One ready-made message to everyone selected, on the channels each person can receive.">
+          <DialogContent wide title={`Send message to ${target.count.toLocaleString("en-IN")}`}>
             <BulkComposer list={list} target={target} onClose={() => close(false)} onStarted={() => setStarted(true)} canEditText={canEditText} />
           </DialogContent>
         ) : null}

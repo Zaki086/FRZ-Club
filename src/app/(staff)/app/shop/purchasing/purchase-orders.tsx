@@ -150,7 +150,7 @@ export function PurchaseOrders({ canManage }: { canManage: boolean }) {
             </span>
           </div>
         )}
-        empty={{ title: "No purchase orders match these filters", hint: canManage ? "Create a draft above." : undefined }}
+        empty={{ title: "No purchase orders match these filters" }}
       />
     </div>
   );

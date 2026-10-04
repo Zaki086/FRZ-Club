@@ -51,7 +51,7 @@ function CreateSession({ today, onDone }: { today: string; onDone: () => void })
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setError(null); }}>
       <DialogTrigger asChild><Button><Plus className="h-4 w-4" /> Create social session</Button></DialogTrigger>
-      <DialogContent title="Create social session" description="Template: Fridays 19:00–22:00. A session can't be created over existing bookings — conflicts are listed." wide>
+      <DialogContent title="Create social session" wide>
         <form
           className="flex flex-col gap-3"
           onSubmit={async (e) => {
@@ -121,7 +121,7 @@ function AddPlayer({ session, onDone }: { session: { id: string; title: string }
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setPlayers([]); setError(null); setDone(null); } }}>
       <DialogTrigger asChild><Button size="sm"><Plus className="h-4 w-4" /> Add player</Button></DialogTrigger>
-      <DialogContent title={`Add a player to ${session.title}`} description="Capacity, the daily play limit, time conflicts and the booking window are checked on the server." wide>
+      <DialogContent title={`Add a player to ${session.title}`} wide>
         <div className="flex flex-col gap-3">
           <PlayerPicker players={players} onChange={setPlayers} max={1} />
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={payNow} onChange={(e) => setPayNow(e.target.checked)} /> Take payment now</label>
@@ -245,7 +245,7 @@ export function SocialBoard({ today, perms }: { today: string; perms: Perms }) {
       }
       columns={[]}
       view={(rows) => <div className="flex flex-col gap-3">{rows.map((s) => <SessionCard key={s.id} s={s} perms={perms} />)}</div>}
-      empty={{ title: "No social sessions scheduled", hint: perms.manage ? "Create the Friday social series above." : "A manager can schedule one." }}
+      empty={{ title: "No social sessions scheduled" }}
     />
   );
 }
