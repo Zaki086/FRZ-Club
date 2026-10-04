@@ -8,7 +8,7 @@
 //   (CD-6); the counted cash is split into the float carried in the till and the drop to the safe (CD-7); a shift
 //   handover is a close followed by an open of the same till (CD-8).
 // - The safe: cash drops in, pay-ins and bank deposits out (§2.6).
-import { Prisma, type CashDrawer, type CashDrawerSession, type DrawerMovement } from "@prisma/client";
+import { Prisma, type CashDrawer, type CashDrawerSession, type DrawerMovement, type Role } from "@prisma/client";
 import { z } from "zod";
 import { clock } from "@/lib/clock";
 import { formatINR } from "@/lib/money";
@@ -32,6 +32,35 @@ export const LOCATION_LABEL: Record<TillLocation, string> = { FRONT_DESK: "Front
 const AREA_OF: Record<TillLocation, DrawerArea> = { FRONT_DESK: "DESK", SHOP: "SHOP", BAR: "BAR", OFFICE: "OFFICE" };
 const LOCATION_OF: Record<DrawerArea, TillLocation> = { DESK: "FRONT_DESK", SHOP: "SHOP", BAR: "BAR", OFFICE: "OFFICE" };
 const TILL_BASE_NAME: Record<TillLocation, string> = { FRONT_DESK: "Front Desk Till", SHOP: "Shop Till", BAR: "Bar Till", OFFICE: "Office Till" };
+
+/**
+ * v6 TL-1: the till locations each role may open — front desk staff the front desk tills, shop staff the shop tills,
+ * bar staff the bar tills; the Manager and the Owner any till. The Accountant keeps what it always did: the office
+ * till (cash taken against invoices at the office). The kitchen takes no money.
+ */
+export const ROLE_TILL_LOCATIONS: Record<Exclude<Role, "MEMBER">, readonly TillLocation[]> = {
+  OWNER: TILL_LOCATIONS, MANAGER: TILL_LOCATIONS, FRONT_DESK: ["FRONT_DESK"], SHOP_STAFF: ["SHOP"], BAR_STAFF: ["BAR"], ACCOUNTANT: ["OFFICE"], KITCHEN: [],
+};
+
+/** v6 TL-1/TL-2: the till locations this person may open (none for members, the kitchen and the system). */
+export function allowedTillLocations(actor: Actor): readonly TillLocation[] {
+  if (actor.kind !== "USER" || actor.role === "MEMBER") return [];
+  return ROLE_TILL_LOCATIONS[actor.role] ?? [];
+}
+
+/** v6 TL-1: DRAWER_AREA_MISMATCH unless the till's location is one this person's role may open. */
+export function assertTillAllowed(actor: Actor, till: { name: string; location: string }) {
+  const allowed = allowedTillLocations(actor);
+  if (allowed.includes(till.location as TillLocation)) return;
+  const role = actor.kind === "USER" ? actor.role.replace("_", " ").toLowerCase() : "this account";
+  throw new DomainError(
+    "DRAWER_AREA_MISMATCH",
+    allowed.length
+      ? `${till.name} is at the ${LOCATION_LABEL[till.location as TillLocation]?.toLowerCase() ?? till.location}; ${role} open only ${allowed.map((l) => LOCATION_LABEL[l].toLowerCase()).join(" / ")} tills.`
+      : `${role.charAt(0).toUpperCase()}${role.slice(1)} doesn't take cash, so there is no till to open.`,
+    { till: till.name, location: till.location, allowed },
+  );
+}
 
 export const MOVEMENT_TYPES = ["OPENING_FLOAT", "CASH_SALE", "CASH_REFUND", "PAY_IN", "PAY_OUT", "CASH_DROP", "CLOSING_ADJUSTMENT"] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
@@ -240,11 +269,15 @@ async function lastClosedOf(db: Db, drawerId: string) {
   return db.cashDrawerSession.findFirst({ where: { drawerId, closedAt: { not: null } }, orderBy: { closedAt: "desc" } });
 }
 
-/** The tills (for the open dialog / Settings) with who has them open, the live balance and what the last close left. */
+/**
+ * The tills (for the open dialog / Settings) with who has them open, the live balance and what the last close left.
+ * v6 TL-2: the open dialog lists only the tills this person's role may open; Settings (`all=1`, the Owner) lists all.
+ */
 export async function listTills(actor: Actor, opts: { includeInactive?: boolean } = {}) {
   assertCan(actor, "staff.self");
   const all = !!opts.includeInactive && can(actor, "settings");
-  const tills = await prisma.cashDrawer.findMany({ where: all ? {} : { active: true }, orderBy: [{ location: "asc" }, { name: "asc" }] });
+  const where: Prisma.CashDrawerWhereInput = all ? {} : { active: true, location: { in: [...allowedTillLocations(actor)] } };
+  const tills = await prisma.cashDrawer.findMany({ where, orderBy: [{ location: "asc" }, { name: "asc" }] });
   const open = await prisma.cashDrawerSession.findMany({ where: { closedAt: null, drawerId: { in: tills.map((t) => t.id) } } });
   const users = await prisma.user.findMany({ where: { id: { in: open.map((s) => s.userId) } }, select: { id: true, name: true } });
   const out = [];
@@ -262,20 +295,69 @@ export async function listTills(actor: Actor, opts: { includeInactive?: boolean 
   return out;
 }
 
-/** Legacy `area` callers: a free active till at that location, or the next numbered till there (a new physical till). */
+/**
+ * v6 TL-4: a till by name — the existing one (any case) when it is already there, otherwise a new one. Seeds, tests
+ * and the first-till path below call this, so running them again never adds a second "Front Desk Till 1".
+ */
+export async function ensureTillTx(tx: Tx, actor: Actor, input: z.input<typeof tillSchema>): Promise<CashDrawer> {
+  const t = tillSchema.parse(input);
+  const found = await tx.cashDrawer.findFirst({ where: { name: { equals: t.name, mode: "insensitive" } } });
+  if (found) {
+    if (found.location !== t.location) throw new DomainError("VALIDATION_FAILED", `A till called “${found.name}” already exists at the ${LOCATION_LABEL[found.location as TillLocation]?.toLowerCase() ?? found.location}.`);
+    return found;
+  }
+  return createTillTx(tx, actor, t);
+}
+
+export async function ensureTill(actor: Actor, input: z.input<typeof tillSchema>, outer?: Tx) {
+  assertCan(actor, "settings");
+  return withTx((tx) => ensureTillTx(tx, actor, input), outer);
+}
+
+/**
+ * Legacy `area` callers: a free active till at that location. Only a location with no till at all (a new club that
+ * hasn't set its tills up) gets its first one. v6 TL-4: this used to add the next numbered till ("Front Desk Till 4")
+ * whenever every till there was busy — a till is a physical drawer the Owner adds in Settings, never a side effect.
+ */
 async function tillForArea(tx: Tx, actor: Actor, area: DrawerArea): Promise<CashDrawer> {
   const location = LOCATION_OF[area];
   const tills = await tx.cashDrawer.findMany({ where: { location, active: true }, orderBy: [{ createdAt: "asc" }, { name: "asc" }] });
   for (const t of tills) {
     if (!(await tx.cashDrawerSession.findFirst({ where: { drawerId: t.id, closedAt: null }, select: { id: true } }))) return t;
   }
-  const count = await tx.cashDrawer.count({ where: { location } });
-  for (let n = count + 1; n < count + 50; n++) {
-    const name = location === "FRONT_DESK" || n > 1 ? `${TILL_BASE_NAME[location]} ${n}` : TILL_BASE_NAME[location];
-    if (await tx.cashDrawer.findFirst({ where: { name: { equals: name, mode: "insensitive" } }, select: { id: true } })) continue;
-    return createTillTx(tx, actor, { name, location, defaultFloat: 0 });
+  if (!(await tx.cashDrawer.count({ where: { location } }))) {
+    return ensureTillTx(tx, actor, { name: location === "FRONT_DESK" ? `${TILL_BASE_NAME[location]} 1` : TILL_BASE_NAME[location], location, defaultFloat: 0 });
   }
-  throw new DomainError("VALIDATION_FAILED", "No free till at this location.");
+  throw new DomainError(
+    "DRAWER_IN_USE",
+    `Every ${LOCATION_LABEL[location].toLowerCase()} till is open. Take one over at a handover (it is closed first), or ask the Owner to add a till in Settings.`,
+    { location },
+  );
+}
+
+/**
+ * v6 TL-3: open drawer sessions whose till is at a location the holder's role may not open (e.g. a shop login holding
+ * "Front Desk Till 4" from before TL-1). Read-only — a manager closes each one properly (count, close, re-open the
+ * right till); nothing is closed automatically.
+ */
+export async function mismatchedOpenSessions(db: Db = prisma) {
+  const open = await db.cashDrawerSession.findMany({ where: { closedAt: null }, orderBy: { openedAt: "asc" } });
+  const tills = await db.cashDrawer.findMany({ where: { id: { in: open.map((o) => o.drawerId).filter((x): x is string => !!x) } } });
+  const users = await db.user.findMany({ where: { id: { in: open.map((o) => o.userId) } }, select: { id: true, name: true, role: true } });
+  const out = [];
+  for (const o of open) {
+    const till = tills.find((t) => t.id === o.drawerId) ?? null;
+    const user = users.find((u) => u.id === o.userId);
+    const role = user?.role ?? "MEMBER";
+    const location = (till?.location ?? LOCATION_OF[o.area as DrawerArea] ?? o.area) as TillLocation;
+    const allowed = role === "MEMBER" ? [] : ROLE_TILL_LOCATIONS[role];
+    if (allowed.includes(location)) continue;
+    out.push({
+      sessionId: o.id, till: till?.name ?? `${titleCase(o.area)} drawer`, location, user: user?.name ?? o.userId, role, allowed: [...allowed],
+      openedAt: o.openedAt, cashExpected: await drawerBalanceTx(db, o.id), link: `/app/finance/drawers/${o.id}`,
+    });
+  }
+  return out;
 }
 
 // ───────────── open (§2.3) ─────────────
@@ -314,8 +396,11 @@ export async function openDrawer(actor: Actor, raw: z.input<typeof openDrawerSch
       if (!till) throw new DomainError("NOT_FOUND", "Till was not found.");
       if (!till.active) throw new DomainError("VALIDATION_FAILED", `${till.name} is not in use any more.`);
     } else {
+      // v6 TL-1: the location is checked before a till is looked for (or a first one added) there.
+      assertTillAllowed(actor, { name: "That drawer", location: LOCATION_OF[input.area!] });
       till = await tillForArea(tx, actor, input.area!);
     }
+    assertTillAllowed(actor, till); // v6 TL-1
     await tx.$queryRaw`SELECT id FROM cash_drawers WHERE id = ${till.id} FOR UPDATE`;
     const busy = await tx.cashDrawerSession.findFirst({ where: { drawerId: till.id, closedAt: null } });
     if (busy) {
@@ -403,7 +488,8 @@ function sessionName(s: { area: string }, till: CashDrawer | null) {
 export async function myDrawer(actor: Actor) {
   assertCan(actor, "staff.self");
   const s = await getSettings();
-  const rules = { blindClose: s.blind_close, tolerance: s.drawer_variance_tolerance, denominations: s.cash_denominations };
+  // v6 TL-2: `locations` — the till locations this person may open (the open dialog offers only those).
+  const rules = { blindClose: s.blind_close, tolerance: s.drawer_variance_tolerance, denominations: s.cash_denominations, locations: allowedTillLocations(actor) };
   const d = await currentDrawer(prisma, actor);
   const lastClosed = actor.kind === "USER" && !d
     ? await prisma.cashDrawerSession.findFirst({ where: { userId: actor.userId, closedAt: { not: null } }, orderBy: { closedAt: "desc" } })

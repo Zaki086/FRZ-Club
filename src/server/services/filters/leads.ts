@@ -10,7 +10,11 @@ export const leadsList: ListDef = {
   base: () => Prisma.sql`
     SELECT l.id, l.code, l.name, l.phone, l.email, l.status::text AS status, l.source::text AS source, l.interest,
       l.assigned_to, u.name AS assignee, l.next_follow_up_at, l.created_at, l.lost_reason,
-      (l.status IN ('NEW', 'CONTACTED', 'QUOTED') AND l.next_follow_up_at < app_now()) AS overdue
+      (l.status IN ('NEW', 'CONTACTED', 'QUOTED') AND l.next_follow_up_at < app_now()) AS overdue,
+      -- v6 §3: the board opens the quote builder for a lead with no quote; "Converting…" while a member made from
+      -- this lead ("Convert to member") has not paid yet (the lead turns WON on payment, CR-7).
+      EXISTS (SELECT 1 FROM quotes q WHERE q.lead_id = l.id) AS has_quote,
+      (l.status IN ('NEW', 'CONTACTED', 'QUOTED') AND EXISTS (SELECT 1 FROM members m WHERE m.lead_id = l.id)) AS converting
     FROM leads l LEFT JOIN users u ON u.id = l.assigned_to`,
   search: ["b.name", "b.phone", "b.code", "b.email"],
   dateColumn: { expr: "b.created_at", label: "Created", kind: "timestamp" },

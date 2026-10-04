@@ -153,6 +153,10 @@ export const SETTINGS_SCHEMA = {
   auto_accept_member_orders: z.boolean(),
   member_tab_limit: z.number().int().min(0).max(10_000_000),
   member_order_accept_minutes: z.number().int().min(1).max(120),
+  // v6 §2 (SENDALL): SA-3 a manual WhatsApp task older than this many days is EXPIRED (left out of "Send all", still
+  // sendable one by one after a confirmation); SA-4 when a manual WhatsApp task is created at all.
+  manual_message_max_age_days: z.number().int().min(1).max(365),
+  manual_whatsapp_fallback: z.enum(["ALWAYS", "ONLY_IF_NO_OTHER_CHANNEL", "NEVER"]),
 } as const;
 
 export type SettingKey = keyof typeof SETTINGS_SCHEMA;
@@ -239,6 +243,9 @@ export const DEFAULT_SETTINGS: StoredSettings = {
   auto_accept_member_orders: false,
   member_tab_limit: R(3000),
   member_order_accept_minutes: 5,
+  // v6 SA-3 / SA-4 (SENDALL): 7 days; a manual WhatsApp task only when nothing else reaches the person.
+  manual_message_max_age_days: 7,
+  manual_whatsapp_fallback: "ONLY_IF_NO_OTHER_CHANNEL",
 };
 
 const UNVERIFIED_BY_DEFAULT: SettingKey[] = ["tax_rates"];

@@ -16,16 +16,17 @@ import { effectiveStatus } from "./membership";
 import { getSettings, updateSetting } from "./settings";
 import { invalidateCapabilities, smtpConfigured } from "./capabilities";
 import { mailTransport } from "./notifications";
+import { absoluteUrl, publicOrigin } from "@/lib/url";
 
-export type MessageChannel = "EMAIL" | "WHATSAPP";
+export type MessageChannel = "EMAIL" | "WHATSAPP" | "PUSH"; // PUSH: v6 SA-11, pushes sent by a "Send all" job
 export type MessageStatus = "SENT" | "FAILED" | "OPENED";
 
 export async function logMessage(
   db: Tx | typeof prisma,
-  m: { channel: MessageChannel; to: string; subject?: string; body: string; status: MessageStatus; error?: string | null; entity?: string | null; entityId?: string | null; actorId?: string | null },
+  m: { channel: MessageChannel; to: string; subject?: string; body: string; status: MessageStatus; error?: string | null; entity?: string | null; entityId?: string | null; actorId?: string | null; jobId?: string | null },
 ) {
   return db.messageLog.create({
-    data: { channel: m.channel, to: m.to, subject: m.subject ?? "", body: m.body.slice(0, 4000), status: m.status, error: m.error ?? null, entity: m.entity ?? null, entityId: m.entityId ?? null, actorId: m.actorId ?? null, at: clock.now() },
+    data: { channel: m.channel, to: m.to, subject: m.subject ?? "", body: m.body.slice(0, 4000), status: m.status, error: m.error ?? null, entity: m.entity ?? null, entityId: m.entityId ?? null, actorId: m.actorId ?? null, jobId: m.jobId ?? null, at: clock.now() },
   });
 }
 
@@ -45,7 +46,7 @@ export const whatsappSchema = z.discriminatedUnion("template", [
   z.object({ template: z.literal("CUSTOM"), phone: mobilePhone, text: z.string().trim().min(2).max(1000) }), // v5 CV-1
 ]);
 
-const appUrl = () => (process.env.APP_URL ?? "").replace(/\/$/, "");
+const appUrl = () => publicOrigin(); // URL-1
 
 /** Build the message text and the recipient from the record (staff never type amounts or dates by hand). */
 async function compose(input: z.infer<typeof whatsappSchema>): Promise<{ phone: string | null; text: string; entity: string; entityId: string | null }> {
@@ -69,7 +70,7 @@ async function compose(input: z.infer<typeof whatsappSchema>): Promise<{ phone: 
       const m = await prisma.member.findUnique({ where: { id: input.memberId } });
       if (!m) throw new DomainError("NOT_FOUND", "Member was not found.");
       const st = await effectiveStatus(m.id);
-      const portal = appUrl() ? ` Renew at the desk or online: ${appUrl()}/portal/membership` : " Renew at the front desk.";
+      const portal = appUrl() ? ` Renew at the desk or online: ${absoluteUrl("/portal/membership")}` : " Renew at the front desk.";
       const text =
         st.status === "ACTIVE" && st.endDate
           ? `Hi ${m.name}, your ${st.tier.toLowerCase()} membership is valid until ${fmtDate(st.endDate)} (${st.daysLeft} day${st.daysLeft === 1 ? "" : "s"} left).${portal} — ${club}`
@@ -85,7 +86,7 @@ async function compose(input: z.infer<typeof whatsappSchema>): Promise<{ phone: 
       const bill = await prisma.bill.findUniqueOrThrow({ where: { id: o.billId } });
       const due = billDue(bill);
       const status = o.status.replace(/_/g, " ").toLowerCase();
-      const track = appUrl() ? ` Track it: ${appUrl()}/orders/${o.trackToken}` : "";
+      const track = appUrl() ? ` Track it: ${absoluteUrl(`/orders/${o.trackToken}`)}` : "";
       return { phone: person?.phone ?? null, text: `Hi ${person?.name ?? ""}, your order ${o.code} is ${status}.${due > 0 ? ` ${formatINR(due)} to pay.` : ""}${track} — ${club}`, entity: "shop_order", entityId: o.id };
     }
     case "INVOICE": {
@@ -104,7 +105,7 @@ async function compose(input: z.infer<typeof whatsappSchema>): Promise<{ phone: 
       if (!l) throw new DomainError("NOT_FOUND", "Lead was not found.");
       const q = await prisma.quote.findFirst({ where: { leadId: l.id, status: { in: ["SENT", "INTERESTED"] } }, orderBy: { createdAt: "desc" } });
       const text = q && appUrl()
-        ? `Hi ${l.name}, here is your quote from ${club} (${formatINR(q.total)}): ${appUrl()}/quote/${q.token}`
+        ? `Hi ${l.name}, here is your quote from ${club} (${formatINR(q.total)}): ${absoluteUrl(`/quote/${q.token}`)}`
         : `Hi ${l.name}, thank you for your interest in ${club}. When would be a good time to visit or talk?`;
       return { phone: l.phone, text, entity: "lead", entityId: l.id };
     }

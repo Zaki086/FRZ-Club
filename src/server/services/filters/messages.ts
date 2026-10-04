@@ -11,16 +11,18 @@ export const messagesList: ListDef = {
   exportCaps: ["messages.log"],
   base: (ctx) => Prisma.sql`
     SELECT ml.id, ml.channel, ml."to" AS recipient, ml.subject, ml.body, ml.status, ml.error, ml.entity, ml.entity_id, ml.actor_id,
-      u.name AS actor_name, ml.at
+      u.name AS actor_name, ml.at, ml.job_id -- v6 SA-11: the "Send all" job that sent it
     FROM message_log ml
     LEFT JOIN users u ON u.id = ml.actor_id
     WHERE TRUE
     ${ctx.from ? Prisma.sql`AND ml.at >= ${istDayRange(ctx.from)[0]}` : Prisma.empty}
     ${ctx.to ? Prisma.sql`AND ml.at < ${istDayRange(ctx.to)[1]}` : Prisma.empty}`,
-  search: ["b.recipient", "b.subject", "b.body"],
+  search: ["b.recipient", "b.subject", "b.body", "b.job_id"],
   dateColumn: { expr: "b.at", label: "Date", kind: "timestamp" },
   facets: [
-    { key: "channel", label: "Channel", expr: "b.channel", options: [{ value: "EMAIL", label: "Email" }, { value: "WHATSAPP", label: "WhatsApp" }] },
+    { key: "channel", label: "Channel", expr: "b.channel", options: [{ value: "EMAIL", label: "Email" }, { value: "WHATSAPP", label: "WhatsApp" }, { value: "PUSH", label: "Push" }] },
+    // v6 SA-11: every message a "Send all" job sent, by job.
+    { key: "job", label: "Send all job", expr: "b.job_id" },
     { key: "status", label: "Status", expr: "b.status", options: [{ value: "SENT", label: "Sent" }, { value: "FAILED", label: "Failed" }, { value: "OPENED", label: "Opened (WhatsApp)" }] },
   ],
   sorts: {
@@ -37,6 +39,7 @@ export const messagesList: ListDef = {
   csv: [
     { key: "at", label: "When", format: "datetime" }, { key: "channel", label: "Channel" }, { key: "recipient", label: "To" }, { key: "subject", label: "Subject" },
     { key: "body", label: "Message" }, { key: "status", label: "Status" }, { key: "error", label: "Error" }, { key: "actor_name", label: "By" },
+    { key: "job_id", label: "Send all job" },
   ],
 };
 

@@ -14,6 +14,7 @@ import { getSettings } from "../services/settings";
 import { assertContactsAvailable } from "../services/contacts";
 import { hashPassword, verifyPassword } from "./password";
 import { createPasswordSetToken, findUserByIdentifier, MEMBER_CODE_RE, revokeSessions, tokenHash } from "./sessions";
+import { absoluteUrl } from "@/lib/url";
 
 export async function getProfile(actor: Actor) {
   assertUser(actor);
@@ -108,7 +109,7 @@ export async function forgotPassword(raw: z.infer<typeof forgotSchema>) {
       await queueEmail(tx, {
         to: user.email!,
         subject: `Reset your ${club} password`,
-        body: `Hi ${user.name},\n\nSomeone asked to reset your password. If it was you, choose a new one here (valid for 1 hour): ${process.env.APP_URL ?? ""}/set-password/${token}\n\nIf it wasn't you, ignore this email.`,
+        body: `Hi ${user.name},\n\nSomeone asked to reset your password. If it was you, choose a new one here (valid for 1 hour): ${absoluteUrl(`/set-password/${token}`)}\n\nIf it wasn't you, ignore this email.`,
         dedupeKey: `reset:${tokenHash(token)}`,
       });
     });
@@ -139,5 +140,5 @@ export async function createResetLink(actor: Actor, userId: string) {
   if (!allowed || target.id === staff.userId) throw new DomainError("FORBIDDEN", "Not allowed: you cannot issue a reset link for this account.");
   const token = await createPasswordSetToken(target.id, undefined, { purpose: "RESET", createdBy: actorId(actor) });
   await audit(prisma, actor, "account.reset_link", "user", target.id, { after: { for: target.name } });
-  return { link: `/set-password/${token}`, expiresInMinutes: 60, phone: target.phone, name: target.name };
+  return { link: `/set-password/${token}`, url: absoluteUrl(`/set-password/${token}`), expiresInMinutes: 60, phone: target.phone, name: target.name };
 }

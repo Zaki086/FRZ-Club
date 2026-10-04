@@ -16,6 +16,7 @@ import { billDue, closeBill, createBill, refreshBill } from "./bills";
 import { notify, queueEmail } from "./notifications";
 import { quoteManual, quoteShop, type PricedLine } from "./pricing";
 import { getSettings, type TaxCategory } from "./settings";
+import { absoluteUrl } from "@/lib/url";
 
 /** Next invoice number in the financial year of `issueDate` (atomic upsert = row lock on the FY counter). */
 export async function nextInvoiceNumber(tx: Tx, issueDate: string): Promise<{ fy: string; seq: number; number: string }> {
@@ -48,7 +49,7 @@ export async function issueMembershipInvoice(tx: Tx, actor: Actor, bill: Bill, m
     await queueEmail(tx, {
       to: member.email,
       subject: `${s.gstEnabled ? "Tax invoice" : "Receipt"} ${inv.number} — ${s.club.name}`,
-      body: `Dear ${member.name},\n\nThank you for your membership payment of ${formatINR(bill.total)}. Your ${s.gstEnabled ? "tax invoice" : "receipt"} ${inv.number} is available in the member portal.`,
+      body: `Dear ${member.name},\n\nThank you for your membership payment of ${formatINR(bill.total)}. Your ${s.gstEnabled ? "tax invoice" : "receipt"} ${inv.number} is available in the member portal: ${absoluteUrl("/portal/invoices")}`, // URL-1
       dedupeKey: `invoice-issued:${inv.id}`,
     });
   }

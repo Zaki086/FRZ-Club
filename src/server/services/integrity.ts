@@ -17,6 +17,8 @@ const TRANSACTIONAL_TABLES = [
   "member_orders",
   // v5 §3 (MSGCORE): message templates are archived, never deleted (their versions are append-only); bulk sends.
   "message_templates", "message_bulk_sends",
+  // v6 §2 (SENDALL): "Send all" jobs and their items.
+  "bulk_send_jobs", "bulk_send_job_items",
 ];
 
 type Row = Record<string, unknown>;
@@ -228,8 +230,31 @@ export async function runIntegrityChecks(): Promise<Check[]> {
   }
 
   checks.push(...(await drawerChecks()));
+  checks.push(...(await walkInChecks()));
 
   return checks;
+}
+
+/**
+ * v6 WI-4 (SHOP) #14: every bill's customer kind is explicit (bills.customer_kind, generated from its person). An
+ * anonymous walk-in (WALK_IN: no member, guest or business client) is accepted — but only where the sale itself needs
+ * no person (a counter sale, or an invoice made out to a name) and only at WALK_IN prices; bookings, social play,
+ * memberships, bar tabs and online orders always carry their person.
+ */
+export async function walkInChecks(): Promise<Check[]> {
+  const rows = await q(`
+    SELECT id, source_type::text AS source, tier, customer_kind FROM bills
+     WHERE customer_kind IS NULL
+        OR customer_kind <> (CASE WHEN member_id IS NOT NULL THEN 'MEMBER' WHEN business_client_id IS NOT NULL THEN 'BUSINESS'
+                                  WHEN guest_id IS NOT NULL THEN 'GUEST' ELSE 'WALK_IN' END)
+        OR (customer_kind = 'WALK_IN' AND (source_type::text NOT IN ('COUNTER_SALE', 'SERVICE_TICKET', 'INVOICE') OR tier <> 'WALK_IN'))
+     LIMIT 5`);
+  const walk = await q(`SELECT count(*) AS n FROM bills WHERE customer_kind = 'WALK_IN'`);
+  return [{
+    id: 14, name: "Every bill's customer is explicit; anonymous walk-in bills are counter sales at walk-in prices",
+    ok: rows.length === 0,
+    detail: rows.length ? JSON.stringify(rows) : `${n(walk[0]?.n)} anonymous walk-in bills, all counter sales or named invoices at WALK_IN prices`,
+  }];
 }
 
 /**

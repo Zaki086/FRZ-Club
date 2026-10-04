@@ -30,6 +30,7 @@ import {
   type RefundReason,
 } from "./refund-records";
 import { isRefundCollectToken, refundCollectToken, verifyRefundCollectToken } from "./refund-qr";
+import { isReceiptToken, verifyReceiptToken } from "./receipt-qr";
 import { getSettings } from "./settings";
 import { refundClubCancellationTx } from "./closures";
 
@@ -211,7 +212,9 @@ export async function cancelRefundRequest(actor: Actor, id: string) {
 
 // ───────────── RF-9: paying out at the desk ─────────────
 
-export const IDENTITY_METHODS = ["REFUND_QR", "MEMBER_CARD", "SEARCH", "GUEST_PHONE_CODE"] as const;
+// v6 WI-5: an anonymous walk-in sale (no person on the bill) is proven by its receipt — the code typed in
+// (RECEIPT_CODE) or the signed receipt QR scanned (RECEIPT_QR).
+export const IDENTITY_METHODS = ["REFUND_QR", "MEMBER_CARD", "SEARCH", "GUEST_PHONE_CODE", "RECEIPT_QR", "RECEIPT_CODE"] as const;
 export type IdentityMethod = (typeof IDENTITY_METHODS)[number];
 
 export const payOutSchema = completeRefundSchema.extend({
@@ -222,6 +225,8 @@ export const payOutSchema = completeRefundSchema.extend({
   /** Guests: the phone number they booked/ordered with and the original booking/order code. */
   guestPhone: clearableContact(mobilePhone), // v5 CV-1: the shared mobile validator
   originalCode: z.string().trim().max(40).optional().nullable(),
+  /** v6 WI-5: the scanned receipt QR (`RC1.…`) of the sale — proves the receipt in place of typing its code. */
+  receiptToken: z.string().trim().max(200).optional().nullable(),
 });
 export type PayOutInput = z.infer<typeof payOutSchema>;
 
@@ -259,8 +264,12 @@ export async function payOutRefund(actor: Actor, id: string, raw: PayOutInput) {
     }
     let method: IdentityMethod = input.via ?? "SEARCH";
     if (!bill.memberId) {
-      await verifyGuestCollector(tx, bill, input.guestPhone, input.originalCode);
-      method = "GUEST_PHONE_CODE";
+      // v6 WI-5: a scanned receipt QR of this very bill stands in for the typed receipt/original code.
+      const scanned = input.receiptToken ? verifyReceiptToken(input.receiptToken) : null;
+      if (input.receiptToken && scanned !== bill.id) throw new DomainError("IDENTITY_NOT_CHECKED", "That receipt QR is not this sale's receipt. Scan the customer's receipt or type its code.", { needs: "originalCode" });
+      const code = scanned ? await billSourceCode(tx, bill) : input.originalCode;
+      await verifyGuestCollector(tx, bill, input.guestPhone, code);
+      method = bill.customerKind === "WALK_IN" ? (scanned ? "RECEIPT_QR" : "RECEIPT_CODE") : "GUEST_PHONE_CODE";
     }
     await tx.refundRequest.update({ where: { id }, data: { identityCheckedBy: actorId(actor), identityCheckedAt: clock.now(), identityMethod: method } });
     await audit(tx, actor, "refund_request.identity_checked", "refund_request", id, { after: { method, amount: waiting.reduce((a, p) => a + p.amount, 0) } });
@@ -305,8 +314,9 @@ export type CollectableRefund = {
   id: string; code: string; status: string; collectStatus: string | null; amount: number; toCollect: number; readyAt: Date | null;
   what: string; billId: string; customer: string; reason: string;
   member: { id: string; name: string; memberCode: string; phone: string; photoUrl: string | null; guardianName: string | null } | null;
-  /** Guests: what the desk must ask for (never shown: the guest says it). */
-  guest: { needsPhone: boolean; needsCode: boolean; codeLabel: string } | null;
+  /** Guests: what the desk must ask for (never shown: the guest says it). v6 WI-5: `walkIn` — an anonymous walk-in
+   *  sale, proven by its receipt (code or QR) alone. */
+  guest: { needsPhone: boolean; needsCode: boolean; codeLabel: string; walkIn?: boolean } | null;
 };
 
 async function collectable(db: Tx | typeof prisma, ids: string[]): Promise<CollectableRefund[]> {
@@ -323,7 +333,12 @@ async function collectable(db: Tx | typeof prisma, ids: string[]): Promise<Colle
       id: r.id, code: r.code, status: r.status, collectStatus: r.collectStatus, amount: r.amount, toCollect: pending._sum.amount ?? 0, readyAt: r.readyAt,
       what: await describeBill(db as Tx, bill), billId: bill.id, customer: bill.customerName, reason: REFUND_REASON_LABEL[r.reason as RefundReason] ?? r.reason,
       member: m ? { id: m.id, name: m.name, memberCode: m.memberCode, phone: m.phone, photoUrl: m.photoUrl, guardianName: guardian?.name ?? m.guardianName ?? null } : null,
-      guest: m ? null : { needsPhone: !!guest?.phone, needsCode: !!(await billSourceCode(db as Tx, bill)), codeLabel: `${BILL_WHAT[bill.sourceType]} code` },
+      guest: m ? null : {
+        needsPhone: !!guest?.phone, needsCode: !!(await billSourceCode(db as Tx, bill)),
+        codeLabel: bill.customerKind === "WALK_IN" ? "receipt code" : `${BILL_WHAT[bill.sourceType]} code`,
+        // `walkIn` only on anonymous walk-in sales: every other refund keeps the v4 shape.
+        ...(bill.customerKind === "WALK_IN" ? { walkIn: true } : {}),
+      },
     });
   }
   return out;
@@ -350,6 +365,14 @@ export async function findCollectableRefunds(actor: Actor, text: string): Promis
     if (!id) throw new DomainError("INVALID_REFUND_QR", "This refund QR is not valid (it may have been altered). Search by name, phone or refund code instead.");
     via = "REFUND_QR";
     ids = [id];
+  } else if (isReceiptToken(t)) {
+    // v6 WI-5: the receipt QR of a sale — the refunds waiting on that bill (an anonymous walk-in has nothing else).
+    const billId = verifyReceiptToken(t);
+    if (!billId) throw new DomainError("INVALID_REFUND_QR", "This receipt QR is not valid (it may have been altered). Type the receipt code instead.");
+    via = "RECEIPT_QR";
+    ids = (await prisma.refundRequest.findMany({
+      where: { billId, status: "APPROVED", collectStatus: "READY_TO_COLLECT" }, orderBy: { readyAt: "asc" }, take: READY_SQL_LIMIT, select: { id: true },
+    })).map((r) => r.id);
   } else if (t.startsWith("CC1.")) {
     const memberId = verifyMemberCardPayload(t);
     if (!memberId) throw new DomainError("INVALID_MEMBER_CARD", "This member card QR is not valid (it may have been altered). Search by name or phone instead.");

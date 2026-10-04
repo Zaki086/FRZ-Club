@@ -17,6 +17,7 @@ import { isOptedIn } from "../whatsapp/config";
 import { waAmount, waDate, waFirstName, waTime, type WaMessage } from "../whatsapp/templates";
 import type { RecordOption, TemplateContext } from "./contract";
 import type { AutoWhatsAppTemplate, RenderValues } from "./variables";
+import { absoluteUrl as appAbsoluteUrl, publicOrigin } from "@/lib/url";
 
 /** The person a message reaches, with everything channel availability depends on. */
 export type Person = {
@@ -57,8 +58,9 @@ export type LoadedRecord = {
   wa: Partial<Record<AutoWhatsAppTemplate, WaMessage>>;
 };
 
-export const appUrl = () => (process.env.APP_URL ?? "").replace(/\/$/, "");
-export const absoluteUrl = (href: string) => (/^https?:\/\//.test(href) ? href : `${appUrl()}${href}`);
+// URL-1: both delegate to `src/lib/url.ts` (APP_URL is the only public origin).
+export const appUrl = () => publicOrigin();
+export const absoluteUrl = (href: string) => appAbsoluteUrl(href);
 
 /** The record's deep link (absolute) for a template: its own link when it has one, else the context default. */
 export function linkFor(rec: LoadedRecord, templateKey: string | null): string | null {

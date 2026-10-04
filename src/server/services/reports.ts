@@ -20,6 +20,7 @@ import { INDIAN_STATES } from "@/lib/states";
 import { resolveRange, type DatePreset } from "./filters/core";
 import { assertCapability } from "./capabilities";
 import { refundsPayableSummary } from "./refunds";
+import { absoluteUrl } from "@/lib/url";
 
 export const INCOME_SOURCES: LedgerSource[] = ["COURTS", "SOCIAL", "SHOP", "BAR", "MEMBERSHIP", "INVOICE"];
 export const METHODS: PaymentMethod[] = ["CASH", "CARD", "UPI", "BANK_TRANSFER", "ONLINE"];
@@ -178,7 +179,17 @@ async function shopStats(from: string, to: string) {
     SELECT count(*)::int AS n FROM product_variants v JOIN products p ON p.id = v.product_id
      WHERE p.track_stock AND p.archived_at IS NULL AND v.archived_at IS NULL AND v.on_hand - v.reserved <= v.reorder_level`;
   const openOrders = await prisma.shopOrder.count({ where: { status: { notIn: ["COLLECTED", "DELIVERED", "CANCELLED"] } } });
-  return { topProducts: [...agg.values()].sort((x, y) => y.qty - x.qty || y.revenue - x.revenue).slice(0, 5), lowStock: low[0]?.n ?? 0, openOrders };
+  // v6 WI-6: walk-in counter sales (no member: with a phone or anonymous) — part of Shop revenue, shown on their own.
+  const walk = await prisma.$queryRaw<{ n: number; total: number; anonymous: number }[]>`
+    SELECT count(*)::int AS n, COALESCE(sum(bl.total - bl.amount_refunded), 0)::int AS total,
+           count(*) FILTER (WHERE bl.customer_kind = 'WALK_IN')::int AS anonymous
+      FROM counter_sales cs JOIN bills bl ON bl.id = cs.bill_id
+     WHERE bl.customer_kind <> 'MEMBER' AND bl.closed_at IS NULL AND bl.status IN ('PAID', 'PARTIALLY_REFUNDED')
+       AND bl.created_at >= ${a} AND bl.created_at < ${b}`;
+  return {
+    topProducts: [...agg.values()].sort((x, y) => y.qty - x.qty || y.revenue - x.revenue).slice(0, 5), lowStock: low[0]?.n ?? 0, openOrders,
+    walkInSales: { count: walk[0]?.n ?? 0, total: walk[0]?.total ?? 0, anonymous: walk[0]?.anonymous ?? 0 },
+  };
 }
 
 async function barStats(from: string, to: string) {
@@ -620,7 +631,7 @@ export async function createShareLink(actor: Actor, raw: PeriodInput & { days?: 
     const expiresAt = new Date(clock.now().getTime() + Math.min(raw.days ?? s.share_link_days, 90) * 86_400_000);
     const link = await tx.shareLink.create({ data: { token, reportParams: params as Prisma.InputJsonValue, expiresAt, createdBy: actorId(actor) ?? "system" } });
     await audit(tx, actor, "share_link.create", "share_link", link.id, { after: { params, expiresAt } });
-    return { id: link.id, url: `/share/${token}`, expiresAt };
+    return { id: link.id, url: `/share/${token}`, publicUrl: absoluteUrl(`/share/${token}`), expiresAt }; // URL-1
   });
 }
 
@@ -640,7 +651,7 @@ export async function listShareLinks(actor: Actor) {
   assertCan(actor, "share_links");
   const links = await prisma.shareLink.findMany({ orderBy: { createdAt: "desc" }, take: 100 });
   const now = clock.now().getTime();
-  return links.map((l) => ({ ...l, active: !l.revokedAt && l.expiresAt.getTime() > now }));
+  return links.map((l) => ({ ...l, publicUrl: absoluteUrl(`/share/${l.token}`), active: !l.revokedAt && l.expiresAt.getTime() > now }));
 }
 
 /** Read-only shared report: the owner-level money summary for the saved period, until expiry or revocation. */

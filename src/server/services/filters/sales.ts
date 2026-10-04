@@ -10,7 +10,8 @@ export const salesList: ListDef = {
   base: () => Prisma.sql`
     SELECT s.id, s.code, s.created_at, s.bill_id, s.member_id, s.sold_by, u.name AS sold_by_name,
       COALESCE(m.name, g.name, bl.customer_name) AS customer,
-      CASE WHEN s.member_id IS NOT NULL THEN 'member' ELSE 'walkin' END AS customer_kind,
+      -- v6 WI-6: "Walk-in" = every sale not to a member (WALK_IN tier): with a phone (guest) or anonymous (WALK_IN).
+      CASE WHEN bl.customer_kind = 'MEMBER' THEN 'member' ELSE 'walkin' END AS customer_kind, bl.customer_kind AS bill_customer_kind,
       bl.total, bl.discount_total AS discount, bl.amount_refunded AS refunded, bl.status::text AS status,
       COALESCE((SELECT array_agg(DISTINCT p.method::text) FROM payments p WHERE p.bill_id = s.bill_id AND p.type = 'PAYMENT' AND p.status = 'SUCCEEDED'), ARRAY[]::text[]) AS methods,
       COALESCE((SELECT json_agg(json_build_object('id', l.id, 'description', l.description, 'qty', l.qty, 'netAmount', l.net_amount, 'variantId', l.variant_id) ORDER BY l.created_at, l.id)
