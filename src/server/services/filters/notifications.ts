@@ -12,6 +12,9 @@ const CHANNEL_OPTIONS = [
 const STATUS_OPTIONS = [
   { value: "QUEUED", label: "To send" }, { value: "LINK_OPENED", label: "WhatsApp opened" }, { value: "SENT", label: "Sent" },
   { value: "DELIVERED", label: "Delivered" }, { value: "FAILED", label: "Failed" }, { value: "SKIPPED", label: "Not available" },
+  // v6 §2 (SENDALL): the manual queue's cleanup and "Send all".
+  { value: "SENT_AUTOMATICALLY", label: "Sent automatically" }, { value: "SKIPPED_NOT_RELEVANT", label: "No longer needed" },
+  { value: "SKIPPED_DUPLICATE", label: "Duplicate" }, { value: "EXPIRED", label: "Expired" },
 ];
 const EVENT_OPTIONS = [
   { value: "MEMBERSHIP_WELCOME", label: "Welcome + login link" }, { value: "MEMBERSHIP_RENEWED", label: "Membership confirmed" },
@@ -52,7 +55,9 @@ export const notificationsList: ListDef = {
       CASE WHEN d.triggered_by IS NULL OR d.triggered_by = 'system' THEN 'system' ELSE 'staff' END AS trigger,
       tu.name AS triggered_by_name, hu.name AS handled_by_name,
       -- v5 MT-6: the template and version a message was sent from, and its bulk send.
-      d.template_id, mt.name AS template_name, d.template_version, d.bulk_id
+      d.template_id, mt.name AS template_name, d.template_version, d.bulk_id,
+      -- v6 SA-7: the "Send all" job and the manual task a message was sent for.
+      d.bulk_job_id, d.task_id
     FROM notification_deliveries d
     LEFT JOIN users u ON u.id = d.user_id
     LEFT JOIN guests gu ON gu.id = d.guest_id

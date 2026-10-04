@@ -23,6 +23,7 @@ import { recordSplitPaymentsTx, refundTx, startOnlinePaymentTx } from "./payment
 import { asTaxCategory, priceLine, quoteShop, type ShopItem } from "./pricing";
 import { assertCapability, isEnabled } from "./capabilities";
 import { getSettings } from "./settings";
+import { absoluteUrl } from "@/lib/url";
 
 const itemSchema = z.object({ variantId: z.string().min(1), qty: z.number().int().positive().max(50) });
 
@@ -90,13 +91,18 @@ export async function quoteCart(actor: Actor, raw: { memberId?: string | null; i
   let memberId = raw.memberId ?? null;
   if (actor.kind === "USER" && actor.role === "MEMBER") memberId = actor.memberId;
   const items = await loadItems(prisma, raw.items);
-  return quoteShop(prisma, { memberId, date: istDate(clock.now()), items, deliveryFee: raw.fulfilment === "DELIVERY" ? s.delivery.fee : 0 }, s);
+  const quote = await quoteShop(prisma, { memberId, date: istDate(clock.now()), items, deliveryFee: raw.fulfilment === "DELIVERY" ? s.delivery.fee : 0 }, s);
+  // v6 JR-1: a Junior's / under-18's sale is paid in one go — the POS offers no split.
+  const { isJuniorBill } = await import("./payments");
+  return { ...quote, noSplit: await isJuniorBill(prisma, { memberId, tier: quote.tier }) };
 }
 
 // ───────────── counter sale (SH-4, R-19, E-10) ─────────────
 
 export const counterSaleSchema = z.object({
   memberId: z.string().optional(),
+  // v6 WI-1: the "Walk-in customer" switch — no member on the sale (WI-2: priced at the WALK_IN tier).
+  walkIn: z.boolean().optional(),
   customerName: z.string().trim().max(100).optional(),
   // v5 CV-1: a walk-in's mobile (optional) — the shared validator.
   customerPhone: optionalContact(mobilePhone),
@@ -121,15 +127,21 @@ export async function counterSaleTx(tx: Tx, actor: Actor, raw: z.input<typeof co
   let memberId: string | null = null;
   let guestId: string | null = null;
   let customerName = input.customerName || "Walk-in customer";
+  if (input.walkIn && input.memberId) {
+    throw new DomainError("VALIDATION_FAILED", "A walk-in sale has no member. Switch “Walk-in customer” off to sell to a member at their price.");
+  }
   if (input.memberId) {
     const m = await tx.member.findUnique({ where: { id: input.memberId } });
     if (!m) throw new DomainError("NOT_FOUND", "Member was not found.");
     memberId = m.id;
     customerName = m.name;
   } else if (input.customerPhone) {
+    // v6 WI-4: with a phone the walk-in is linked to (or becomes) a guest record — even when the number is a member's,
+    // the sale stays a walk-in at walk-in prices (WI-3: member pricing only when staff switch to the member).
     const g = await findOrCreateGuest(tx, { name: customerName, phone: input.customerPhone });
     guestId = g.id;
   }
+  // v6 WI-4: without a phone it is an anonymous walk-in sale — no person on the bill (customer kind WALK_IN).
   const items = await loadItems(tx, input.items);
   const needsTicket = items.some((i) => i.isRestring);
   if (needsTicket && !input.restring) throw new DomainError("VALIDATION_FAILED", "Describe the racket for the restringing ticket.");
@@ -169,15 +181,66 @@ export async function counterSaleTx(tx: Tx, actor: Actor, raw: z.input<typeof co
       }
     }
   }
-  await audit(tx, actor, "counter_sale.create", "counter_sale", sale.id, { after: { code, total: quote.total, items: items.map((i) => `${i.qty}× ${i.name}`) } });
   const final = await tx.bill.findUniqueOrThrow({ where: { id: bill.id } });
-  return { saleId: sale.id, code, billId: bill.id, total: final.total, billStatus: final.status, discountTotal: final.discountTotal, changeGiven, tickets, lines: quote.lines };
+  await audit(tx, actor, "counter_sale.create", "counter_sale", sale.id, {
+    after: { code, total: quote.total, items: items.map((i) => `${i.qty}× ${i.name}`), customerKind: final.customerKind, tier: quote.tier },
+  });
+  return {
+    saleId: sale.id, code, billId: bill.id, total: final.total, billStatus: final.status, discountTotal: final.discountTotal, changeGiven, tickets, lines: quote.lines,
+    // v6 WI-4/WI-5: the receipt says "Walk-in" for anyone who isn't a member; WALK_IN = anonymous (no phone).
+    tier: quote.tier, customerKind: final.customerKind, walkIn: !memberId,
+  };
 }
 
 export async function counterSale(actor: Actor, raw: z.input<typeof counterSaleSchema>, idempotencyKey?: string | null) {
   return withTx((tx) =>
     idempotent(tx, { key: idempotencyKey, actorKey: actorKey(actor), endpoint: "shop.counter_sale", body: raw }, () => counterSaleTx(tx, actor, raw)),
   );
+}
+
+/**
+ * v6 WI-3: does the walk-in phone typed at the counter belong to a member? The POS then asks "This number belongs to
+ * {name} ({code}) — use member pricing?" — one tap switches the sale to that member; nothing changes on its own.
+ */
+export async function walkInPhoneMembers(actor: Actor, rawPhone: string) {
+  assertCan(actor, "shop.counter");
+  const parsed = mobilePhone.safeParse(rawPhone);
+  if (!parsed.success) return { phone: null, members: [] };
+  const rows = await prisma.member.findMany({ where: { phone: parsed.data, anonymisedAt: null }, orderBy: { name: "asc" }, take: 5 });
+  const { effectiveStatus } = await import("./membership");
+  const today = istDate(clock.now());
+  const members = await Promise.all(rows.map(async (m) => ({ id: m.id, memberCode: m.memberCode, name: m.name, phone: m.phone, status: await effectiveStatus(m.id, today) })));
+  return { phone: parsed.data, members, prompt: members.map((m) => `This number belongs to ${m.name} (${m.memberCode}) — use member pricing?`) };
+}
+
+/**
+ * v6 WI-5: a counter sale found from its receipt — the receipt code typed in (CS-…) or the receipt QR scanned
+ * (`RC1.…`, signed). Anonymous walk-in sales have no person, so the receipt is how they are found for a return or
+ * a refund.
+ */
+export async function findSaleByReceipt(actor: Actor, text: string) {
+  assertCan(actor, "shop.view");
+  const t = String(text ?? "").trim().slice(0, 200);
+  const { isReceiptToken, verifyReceiptToken } = await import("./receipt-qr");
+  let where: Prisma.CounterSaleWhereInput;
+  let via: "RECEIPT_QR" | "RECEIPT_CODE" = "RECEIPT_CODE";
+  if (isReceiptToken(t)) {
+    const billId = verifyReceiptToken(t);
+    if (!billId) throw new DomainError("INVALID_REFUND_QR", "This receipt QR is not valid (it may have been altered). Type the receipt code instead.");
+    where = { billId };
+    via = "RECEIPT_QR";
+  } else {
+    if (t.length < 3) throw new DomainError("VALIDATION_FAILED", "Type the receipt code (e.g. CS-000123) or scan the receipt QR.");
+    where = { code: { equals: t, mode: "insensitive" } };
+  }
+  const sale = await prisma.counterSale.findFirst({ where });
+  if (!sale) throw new DomainError("NOT_FOUND", "No counter sale has that receipt.");
+  const bill = await prisma.bill.findUniqueOrThrow({ where: { id: sale.billId }, include: { lines: true, payments: true } });
+  return {
+    via, saleId: sale.id, code: sale.code, billId: bill.id, at: bill.createdAt, customer: bill.customerName, customerKind: bill.customerKind, tier: bill.tier,
+    total: bill.total, refunded: bill.amountRefunded, status: bill.status, lines: bill.lines.filter((l) => !l.voidedAt),
+    methods: [...new Set(bill.payments.filter((p) => p.type === "PAYMENT").map((p) => p.method))],
+  };
 }
 
 // ───────────── online orders (SH-5, SH-6, SH-11; R-20…R-22) ─────────────
@@ -268,7 +331,7 @@ export async function checkoutTx(tx: Tx, actor: Actor, raw: z.input<typeof check
   if (email) {
     await queueEmail(tx, {
       to: email, subject: `Order ${code} received`,
-      body: `Thanks ${customerName}! Order ${code} (${formatINR(quote.total)}) is ${order.status === "PENDING_PAYMENT" ? "waiting for payment" : "confirmed"}. Track it at ${process.env.APP_URL ?? ""}/orders/${order.trackToken}`,
+      body: `Thanks ${customerName}! Order ${code} (${formatINR(quote.total)}) is ${order.status === "PENDING_PAYMENT" ? "waiting for payment" : "confirmed"}. Track it at ${absoluteUrl(`/orders/${order.trackToken}`)}`,
       dedupeKey: `order-created:${order.id}`,
     });
   }
@@ -291,7 +354,7 @@ async function notifyOrderCustomer(tx: Tx, order: { id: string; code: string; me
     } else if (m?.userId) await notify(tx, { userIds: [m.userId], type: "ORDER_STATUS", title, body: note, link: "/portal/orders", dedupeKey: `order-status:${order.id}:${status}`, email: true });
   } else if (order.guestId) {
     const g = await tx.guest.findUnique({ where: { id: order.guestId } });
-    if (g?.email) await queueEmail(tx, { to: g.email, subject: title, body: `${note}\nTrack: ${process.env.APP_URL ?? ""}/orders/${order.trackToken}`, dedupeKey: `order-status:${order.id}:${status}` });
+    if (g?.email) await queueEmail(tx, { to: g.email, subject: title, body: `${note}\nTrack: ${absoluteUrl(`/orders/${order.trackToken}`)}`, dedupeKey: `order-status:${order.id}:${status}` });
   }
 }
 
@@ -559,7 +622,7 @@ export async function listCounterSales(actor: Actor, date?: string) {
     .filter((s) => istDate(s.createdAt) === day)
     .map((s) => {
       const b = bills.find((x) => x.id === s.billId)!;
-      return { id: s.id, code: s.code, at: fmtDateTime(s.createdAt), customer: b.customerName, total: b.total, discount: b.discountTotal, status: b.status, billId: b.id, lines: b.lines.filter((l) => !l.voidedAt), methods: [...new Set(b.payments.filter((p) => p.type === "PAYMENT").map((p) => p.method))] };
+      return { id: s.id, code: s.code, at: fmtDateTime(s.createdAt), customer: b.customerName, customerKind: b.customerKind, total: b.total, discount: b.discountTotal, status: b.status, billId: b.id, lines: b.lines.filter((l) => !l.voidedAt), methods: [...new Set(b.payments.filter((p) => p.type === "PAYMENT").map((p) => p.method))] };
     });
 }
 

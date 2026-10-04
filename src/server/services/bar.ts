@@ -14,7 +14,7 @@ import { audit } from "./audit";
 import { addBillLines, billDue, createBill, netPaid, refreshBill, voidBillLines } from "./bills";
 import { findOrCreateGuest } from "./guests";
 import { idempotent } from "./idempotency";
-import { recordSplitPaymentsTx, refundTx } from "./payments";
+import { isJuniorBill, recordSplitPaymentsTx, refundTx } from "./payments";
 import { entitlementsFor, quoteBar } from "./pricing";
 import { addLegacyMenuItem, editMenuItem, legacyMenuItemSchema } from "./menu";
 
@@ -462,6 +462,7 @@ export async function getTab(actor: Actor, tabId: string) {
   return {
     id: tab.id, code: tab.code, status: tab.status, payer: await payerName(prisma, tab), memberId: tab.memberId, guestId: tab.guestId,
     tier: bill.tier, table: table ? { id: table.id, number: table.number } : null, guestIdVerified: tab.guestIdVerified,
+    noSplit: await isJuniorBill(prisma, bill), // v6 JR-1: a Junior's / under-18's tab is settled in one payment
     billId: tab.billId, total: bill.total, paid: netPaid(bill), due: billDue(bill), discountTotal: bill.discountTotal,
     carriedReason: tab.carriedReason, openedAt: tab.createdAt, barDate: fromDbDate(tab.barDate),
     lines: tab.lines.map((l) => {

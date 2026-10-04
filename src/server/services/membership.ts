@@ -24,6 +24,7 @@ import { getSettings } from "./settings";
 import { guardianUserIds } from "./family";
 import { notifyMember } from "./channels";
 import { assertContactsAvailable, duplicateContactError } from "./contacts";
+import { absoluteUrl, publicOrigin } from "@/lib/url";
 
 const today = () => istDate(clock.now());
 
@@ -137,7 +138,7 @@ function noOwnLogin(member: { dob: Date; guardianName: string | null }, onDate: 
   return ageOn(fromDbDate(member.dob), onDate) < 13 && !!member.guardianName;
 }
 
-export const setPasswordUrl = (token: string) => `${(process.env.APP_URL ?? "").replace(/\/$/, "")}/set-password/${token}`;
+export const setPasswordUrl = (token: string) => absoluteUrl(`/set-password/${token}`); // URL-1
 
 /**
  * WK-2/WK-3/WK-4: on the first paid membership, issue the one-time set-password link (no password is ever generated)
@@ -164,7 +165,7 @@ export async function issueFirstCredentialsTx(tx: Tx, actor: Actor, ms: { id: st
     body: [
       `${ms.plan.name} membership ${start} – ${end}. Member code ${ms.member.memberCode}.`,
       `Log in with your mobile number ${ms.member.phone}. Set your password (link works for ${s.credential_link_hours} hours, once): ${link}`,
-      `Member portal and your member card: ${(process.env.APP_URL ?? "").replace(/\/$/, "")}/portal`,
+      `Member portal and your member card: ${absoluteUrl("/portal")}`,
     ].join("\n"),
     link: "/portal", dedupeKey: `membership-welcome:${ms.id}`,
     params: [ms.member.name, ms.plan.name, start, end, ms.member.memberCode, link],
@@ -214,6 +215,7 @@ export async function credentialsStatus(actor: Actor, memberId: string) {
     username: member.phone, memberCode: member.memberCode,
     canLogIn: !!user.passwordHash, lastLoginAt: user.lastLoginAt, credentialsIssuedAt: user.credentialsIssuedAt,
     linkActiveUntil: link?.expiresAt ?? null,
+    publicOrigin: publicOrigin(), // URL-1: the set-password QR is built on APP_URL
     noOwnLogin: noOwnLogin(member, today()),
     deliveries: deliveries.filter((d) => d.dedupeKey === latestKey).map((d) => ({ id: d.id, channel: d.channel, status: d.status, error: d.error, at: d.sentAt ?? d.createdAt })),
   };

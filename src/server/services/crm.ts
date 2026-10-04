@@ -19,6 +19,8 @@ import { notifyMember } from "./channels";
 import { assertCapability } from "./capabilities";
 import { quoteManual, quoteMembership } from "./pricing";
 import { getSettings } from "./settings";
+import { convertLeadUrl, LEAD_COLUMN_TITLE, LEAD_COLUMNS, leadMove, REOPEN_NEEDS_MANAGER, type LeadColumn } from "@/lib/lead-moves";
+import { absoluteUrl } from "@/lib/url";
 
 const OPEN_STATUSES: LeadStatus[] = ["NEW", "CONTACTED", "QUOTED"];
 
@@ -242,7 +244,7 @@ export async function reassignLeadsOf(tx: Tx, actor: Actor, userId: string) {
 }
 
 /** CR-2: LOST needs a reason. WON comes from conversion (CR-7). */
-export async function markLost(actor: Actor, leadId: string, reason: string) {
+export async function markLost(actor: Actor, leadId: string, reason: string, outer?: Tx) {
   assertCan(actor, "crm");
   if (reason.trim().length < 3) throw new DomainError("VALIDATION_FAILED", "A reason is required to mark a lead as lost.");
   return withTx(async (tx) => {
@@ -252,6 +254,64 @@ export async function markLost(actor: Actor, leadId: string, reason: string) {
     await tx.leadActivity.create({ data: { leadId, type: "STATUS_CHANGE", note: `Marked lost: ${reason}`, byUserId: actorId(actor), at: clock.now() } });
     await audit(tx, actor, "lead.lost", "lead", leadId, { before: { status: lead.status }, after: { status: "LOST" }, reason });
     return { leadId, status: "LOST" as const };
+  }, outer);
+}
+
+// ───────────── v6 §3 leads board moves (LD-1…LD-4) ─────────────
+
+export const moveSchema = z.object({
+  to: z.enum(LEAD_COLUMNS),
+  /** New → Contacted: an optional quick note, logged as an activity. */
+  note: z.string().trim().max(2000).optional(),
+  /** → Lost and Lost → New/Contacted ("Reopened"): required. */
+  reason: z.string().trim().max(300).optional(),
+  /** Where the move came from (drag & drop or the "Move to…" menu) — kept in the audit. */
+  via: z.enum(["drag", "menu"]).default("menu"),
+});
+
+/**
+ * One column move on the leads board (drag & drop or "Move to…"), by the rules in `lib/lead-moves.ts`, through the
+ * existing transitions: Lost uses `markLost` (CR-2); Quoted needs a quote (else the board opens the quote builder,
+ * whose `createQuote` moves it); Won only comes from paying the membership (CR-7, `markLeadWon`); out of Won never;
+ * Lost → New/Contacted ("Reopened") is the Manager's/Owner's with a reason. LD-4: every move is audited (`lead.move`)
+ * and written on the lead's timeline.
+ */
+export async function moveLead(actor: Actor, leadId: string, raw: z.input<typeof moveSchema>) {
+  assertCan(actor, "crm");
+  const input = moveSchema.parse(raw);
+  return withTx(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM leads WHERE id = ${leadId} FOR UPDATE`;
+    const lead = await getLeadOrThrow(tx, leadId);
+    const from = lead.status as LeadColumn;
+    const hasQuote = (await tx.quote.count({ where: { leadId } })) > 0;
+    const rule = leadMove(from, input.to, { hasQuote, canReopen: true });
+    if (!rule.ok) throw new DomainError("LEAD_MOVE_NOT_ALLOWED", rule.why, { from, to: input.to });
+    if (rule.kind === "reopen" && !can(actor, "leads.reopen")) throw new DomainError("FORBIDDEN", REOPEN_NEEDS_MANAGER);
+    if (rule.kind === "quote-builder") throw new DomainError("LEAD_MOVE_NOT_ALLOWED", `${lead.name} has no quote yet — create one in the quote builder to move the lead to Quoted.`, { from, to: input.to });
+    if (rule.kind === "convert") throw new DomainError("LEAD_MOVE_NOT_ALLOWED", "A lead becomes Won only when its membership is paid — use “Convert to member”.", { from, to: input.to });
+    const now = clock.now();
+    const s = await getSettings(tx);
+    const followUp = new Date(now.getTime() + s.lead_follow_up_hours * HOUR);
+    const by = actorId(actor);
+    let reason: string | null = null;
+    if (rule.kind === "lost") {
+      reason = input.reason ?? "";
+      await markLost(actor, leadId, reason, tx);
+    } else if (rule.kind === "reopen") {
+      reason = input.reason ?? "";
+      if (reason.length < 3) throw new DomainError("VALIDATION_FAILED", "A reason is required to reopen a lost lead.");
+      await tx.lead.update({ where: { id: leadId }, data: { status: input.to, lostReason: null, nextFollowUpAt: followUp, overdueNotifiedAt: null, escalatedAt: null } });
+      await tx.leadActivity.create({ data: { leadId, type: "STATUS_CHANGE", note: `Reopened → ${LEAD_COLUMN_TITLE[input.to]}: ${reason}`, byUserId: by, at: now } });
+    } else {
+      // contact (New → Contacted) or quote (→ Quoted with an existing quote): the next follow-up starts again.
+      await tx.lead.update({ where: { id: leadId }, data: { status: input.to, nextFollowUpAt: followUp, overdueNotifiedAt: null } });
+      await tx.leadActivity.create({ data: { leadId, type: "STATUS_CHANGE", note: `Moved ${LEAD_COLUMN_TITLE[from]} → ${LEAD_COLUMN_TITLE[input.to]}`, byUserId: by, at: now } });
+      if (rule.kind === "contact" && input.note && input.note.length >= 2) {
+        await tx.leadActivity.create({ data: { leadId, type: "NOTE", note: input.note, byUserId: by, at: now } });
+      }
+    }
+    await audit(tx, actor, "lead.move", "lead", leadId, { before: { status: from }, after: { status: input.to, kind: rule.kind, via: input.via }, reason });
+    return { leadId, from, status: input.to };
   });
 }
 
@@ -293,14 +353,16 @@ export async function createQuote(actor: Actor, leadId: string, raw: z.input<typ
     const token = randomBytes(16).toString("base64url");
     const validUntil = new Date(clock.now().getTime() + (input.validDays ?? s.quote_valid_days) * DAY);
     const quote = await tx.quote.create({ data: { leadId, token, lines: lines as unknown as Prisma.InputJsonValue, total, validUntil, createdBy: actorId(actor) } });
-    const link = `${process.env.APP_URL ?? ""}/quote/${token}`;
+    const link = absoluteUrl(`/quote/${token}`); // URL-1
     await tx.lead.update({ where: { id: leadId }, data: { status: "QUOTED", nextFollowUpAt: new Date(clock.now().getTime() + s.lead_follow_up_hours * HOUR), overdueNotifiedAt: null } });
+    // v6 LD-4: the move to Quoted (the board opens the quote builder for it) is audited like every other column move.
+    if (lead.status !== "QUOTED") await audit(tx, actor, "lead.move", "lead", leadId, { before: { status: lead.status }, after: { status: "QUOTED", kind: "quote-builder" } });
     await tx.leadActivity.create({ data: { leadId, type: "QUOTE_SENT", note: `Quote for ${formatINR(total)} (valid until ${fmtDate(istDate(validUntil))}) ${input.send === "EMAIL" && lead.email ? `emailed to ${lead.email}` : "shared as a link"}: ${link}`, byUserId: actorId(actor), at: clock.now() } });
     if (input.send === "EMAIL" && lead.email) {
       await queueEmail(tx, { to: lead.email, subject: `Your quote from ${s.club.name}`, body: `Hi ${lead.name},\n\n${lines.map((l) => `• ${l.description}: ${formatINR(l.amount)}`).join("\n")}\nTotal: ${formatINR(total)}\nValid until ${fmtDate(istDate(validUntil))}.\n\nView and respond: ${link}`, dedupeKey: `quote:${quote.id}` });
     }
     await audit(tx, actor, "quote.create", "quote", quote.id, { after: { leadId, total, validUntil } });
-    return { quoteId: quote.id, token, link: `/quote/${token}`, total, validUntil: validUntil.toISOString() };
+    return { quoteId: quote.id, token, link: `/quote/${token}`, url: link, total, validUntil: validUntil.toISOString() };
   }, outer);
 }
 
@@ -449,6 +511,6 @@ export async function getLead(actor: Actor, leadId: string) {
     // LA-7: only a Manager/Owner reassigns (with a reason); everyone sees why it went to whom (LA-6).
     assignable: can(actor, "leads.assign") ? staff : [],
     canReassign: can(actor, "leads.assign"),
-    convertUrl: `/app/members/new?leadId=${lead.id}&name=${encodeURIComponent(lead.name)}&phone=${encodeURIComponent(lead.phone ?? "")}&email=${encodeURIComponent(lead.email ?? "")}`,
+    convertUrl: convertLeadUrl(lead),
   };
 }

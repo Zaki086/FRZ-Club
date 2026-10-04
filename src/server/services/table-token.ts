@@ -4,6 +4,7 @@
 // expires (a reprinted card is the same card); whether the table still exists is the caller's check. Verification is
 // constant-time.
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { absoluteUrl } from "@/lib/url";
 
 const PREFIX = "TBL1";
 const MAC_LENGTH = 32;
@@ -43,6 +44,5 @@ export function verifyTableToken(token: string): { tableId: string } | null {
 
 /** The URL a table card's QR encodes: `<APP_URL>/t/<token>`. */
 export function tableCardUrl(tableId: string): string {
-  const base = (process.env.APP_URL ?? "").replace(/\/$/, "");
-  return `${base}/t/${signTableToken(tableId)}`;
+  return absoluteUrl(`/t/${signTableToken(tableId)}`); // URL-1
 }

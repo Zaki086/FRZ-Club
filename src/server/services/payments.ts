@@ -11,6 +11,7 @@ import { z } from "zod";
 import { clock } from "@/lib/clock";
 import { isValidApprovalCode, isValidUtr } from "@/lib/codes";
 import { formatINR, roundDiv } from "@/lib/money";
+import { ageOn, fromDbDate, istDate } from "@/lib/time";
 import { prisma, withTx, type Tx } from "../db";
 import { DomainError } from "../errors";
 import { actorId, actorKey, SYSTEM, type Actor } from "../rbac/actor";
@@ -24,6 +25,7 @@ import { activeGateway, gatewayByName, razorpayGateway } from "./gateway";
 import { idempotent } from "./idempotency";
 import { LEDGER_SOURCE_FOR_BILL, writeLedger } from "./ledger";
 import { createPolicyRequest, notifyRefund, settleRequestIfPaid, type RefundReason } from "./refund-records";
+import { entitlementsFor } from "./pricing";
 
 export const BILL_CAPABILITY: Record<BillSource, Capability> = {
   BOOKING: "bookings.any",
@@ -98,6 +100,36 @@ async function validateTender(t: Tender, bill: Bill, kind: "payment" | "refund")
   if (t.method !== "CASH" && t.tendered) throw new DomainError("VALIDATION_FAILED", "Cash tendered can only be entered for cash payments.");
 }
 
+// ───────────── v6 JR-1: no split payments for Juniors ─────────────
+
+/**
+ * v6 JR-1: a bill whose member is a Junior (the bill was priced at the JUNIOR tier, or the member holds a Junior plan
+ * today) or is under 18 today — the same two tests as BR-5 (bar.ts `assertAlcoholAllowed`). Such a bill is paid in one
+ * go: never split across several payment rows or methods.
+ */
+export async function isJuniorBill(db: Tx | typeof prisma, bill: Pick<Bill, "memberId" | "tier">): Promise<boolean> {
+  if (bill.tier === "JUNIOR") return true;
+  if (!bill.memberId) return false;
+  const m = await db.member.findUnique({ where: { id: bill.memberId }, select: { id: true, dob: true } });
+  if (!m) return false;
+  const today = istDate(clock.now());
+  if (ageOn(fromDbDate(m.dob), today) < 18) return true;
+  return (await entitlementsFor(db, { memberId: m.id }, today)).tier === "JUNIOR";
+}
+
+export function juniorNoSplit(bill: Pick<Bill, "customerName">, what: string) {
+  return new DomainError(
+    "JUNIOR_NO_SPLIT",
+    `${bill.customerName} is a Junior (or under 18): ${what}. Take the whole amount due in one payment, by one method.`,
+    { customer: bill.customerName },
+  );
+}
+
+/** v6 JR-1: refuse a payment that is only part of what is due on a Junior's / under-18's bill. */
+async function assertNotJuniorPart(tx: Tx, bill: Bill, amount: number, due: number) {
+  if (amount < due && (await isJuniorBill(tx, bill))) throw juniorNoSplit(bill, `a part payment of ${formatINR(amount)} out of ${formatINR(due)} would split the bill`);
+}
+
 // ───────────── counter payments ─────────────
 
 export const counterPaymentSchema = tenderSchema.extend({
@@ -121,6 +153,7 @@ export async function recordPaymentTx(tx: Tx, actor: Actor, raw: CounterPaymentI
     );
   }
   await validateTender(input, before, "payment");
+  await assertNotJuniorPart(tx, before, input.amount, due); // v6 JR-1
   if (input.method === "CASH" && input.tendered != null && input.tendered < input.amount) {
     throw new DomainError("VALIDATION_FAILED", `Cash tendered (${formatINR(input.tendered)}) is less than the amount (${formatINR(input.amount)}).`);
   }
@@ -168,6 +201,11 @@ export async function recordCounterPayment(actor: Actor, raw: CounterPaymentInpu
 
 /** E-14: several counter payments (split across enabled methods) in one transaction. */
 export async function recordSplitPaymentsTx(tx: Tx, actor: Actor, billId: string, parts: Array<Tender & { amount: number }>) {
+  // v6 JR-1: a Junior's / under-18's bill is never split across several payment rows or methods.
+  if (parts.length > 1) {
+    const bill = await lockBill(tx, billId);
+    if (await isJuniorBill(tx, bill)) throw juniorNoSplit(bill, "split payments are not allowed");
+  }
   let changeGiven = 0;
   let bill: Bill | null = null;
   for (const p of parts) {
@@ -481,7 +519,11 @@ export async function getBill(actor: Actor, billId: string) {
   // v3 RF-1/RF-2: what can still be asked for, and whether this person may ask.
   const open = await prisma.refundRequest.aggregate({ where: { billId, status: "REQUESTED" }, _sum: { amount: true } });
   const openRequests = await prisma.refundRequest.findMany({ where: { billId, status: { in: ["REQUESTED", "APPROVED"] } }, select: { id: true, code: true, amount: true, status: true }, orderBy: { createdAt: "asc" } });
-  return { ...bill, due: billDue(bill), refundable: Math.max(0, netPaid(bill) - (open._sum.amount ?? 0)), canRequestRefund: can(actor, "refunds.request"), openRefunds: openRequests };
+  return {
+    ...bill, due: billDue(bill), refundable: Math.max(0, netPaid(bill) - (open._sum.amount ?? 0)), canRequestRefund: can(actor, "refunds.request"), openRefunds: openRequests,
+    // v6 JR-1: a Junior's / under-18's bill — payment screens offer no split.
+    noSplit: await isJuniorBill(prisma, bill),
+  };
 }
 
 export async function getPaymentForGateway(paymentId: string) {

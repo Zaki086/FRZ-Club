@@ -78,6 +78,8 @@ export const CAPABILITIES = {
   "notifications.log": [O, M, FD],
   // v3 LA-7: reassigning a lead (with a reason).
   "leads.assign": [O, M],
+  // v6 §3 LD-1: moving a LOST lead back to New/Contacted ("Reopened", with a reason).
+  "leads.reopen": [O, M],
   // v3 §9.2: the price book (base prices, bands, special dates, promotions); §9.3 product admin uses shop.stock.
   // v4 RN-3: the price book is the Owner's alone (the Manager's v3 PR-11 rights and approvals are gone).
   "pricing.manage": [O],
@@ -86,10 +88,11 @@ export const CAPABILITIES = {
   // v4 RN-3: no longer the Manager; a shop discount above `max_staff_discount_pct` waits for the Owner.
   "shop.pricing": [O, SS],
   // v5 MN-1: the bar menu (categories, items, photos, availability, archive, print, table QR cards).
-  "menu.manage": [O, M, BS],
+  // v6 SM-1: shop staff run the café menu too (same rights as the bar staff, "Café menu" on their sidebar).
+  "menu.manage": [O, M, BS, SS],
   // v5 MN-1: menu item BASE prices, written to the price book — an explicit exception to v4 RN-3 for menu base prices
-  // only. Promotions, time bands and plan discounts stay `pricing.manage` (the Owner's).
-  "menu.price": [O, M, BS],
+  // only. Promotions, time bands and plan discounts stay `pricing.manage` (the Owner's). v6 SM-1: shop staff as well.
+  "menu.price": [O, M, BS, SS],
   // v5 §3 (MSGCORE) ready-made messages. The Owner edits the template library (Settings → Message Templates); the
   // Manager reads it. MT-4: front desk, Manager and Owner send TRANSACTIONAL templates (one person, or in bulk from
   // Renewal & Dues, Check-in Risk and the Leads Board); MT-5: only Manager and Owner send ANNOUNCEMENT templates and
@@ -100,6 +103,9 @@ export const CAPABILITIES = {
   "messages.announce": [O, M],
   "messages.bulk": [O, M, FD],
   "messages.bulk_members": [O, M],
+  // v6 §2 SA-5/SA-10 (SENDALL): "Send all" on Messages to Send — front desk (TRANSACTIONAL tasks only), Manager and
+  // Owner (ANNOUNCEMENT tasks too, through `messages.announce`).
+  "messages.send_all": [O, M, FD],
 } as const satisfies Record<string, Role[]>;
 
 export type Capability = keyof typeof CAPABILITIES;

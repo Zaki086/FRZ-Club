@@ -25,7 +25,8 @@ import {
 import { absoluteUrl, linkFor, type LoadedRecord, type Person } from "./records";
 import { buildEmail, linkLabel, pushText, type EmailClub } from "./render";
 import { unsubscribePostUrl, unsubscribeUrl } from "./unsubscribe";
-import { hasFillIn, isAutoWhatsAppTemplate, maskEmail, maskPhone, renderText, unknownVariables, waMeLink } from "./variables";
+import { hasFillIn, isAutoWhatsAppTemplate, maskEmail, maskPhone, renderText, unknownVariables, waMeLink, type RenderValues } from "./variables";
+import { renderDelivery, templateSpec } from "./manual-queue";
 
 /** `notification_deliveries.event` of every template message. */
 export const MSG_EVENT = "TEMPLATE_MESSAGE";
@@ -68,6 +69,9 @@ export async function clubInfo(): Promise<ClubInfo> {
 }
 
 export type RenderedParts = {
+  /** v6 URL-3: every variable of this send and the per-send overrides — stored on each row as its render spec. */
+  values?: RenderValues;
+  overrides?: Record<string, string> | null;
   link: string | null;
   linkText: string;
   whatsapp: string;
@@ -87,6 +91,8 @@ export function renderParts(t: TemplateLike, rec: LoadedRecord, club: ClubInfo, 
   const link = linkFor(rec, t.key);
   const values = { ...rec.values, "club.name": club.name, "club.phone": club.phone, "club.address": club.address, "portal.url": club.portalUrl, link: link ?? "" };
   return {
+    values,
+    overrides: overrides ? (Object.fromEntries(Object.entries(overrides).filter(([, v]) => typeof v === "string")) as Record<string, string>) : null,
     link,
     linkText: link ? linkLabel(link, t.key) : "",
     whatsapp: renderText(src.whatsappText, values),
@@ -251,10 +257,14 @@ export async function planRows(
 ): Promise<PlannedRow[]> {
   const { template: t, rec, person: p } = b;
   const now = clock.now();
+  // v6 URL-3: template id + version + variables + record, rendered again when the row is sent or opened.
+  const autoWa = t.waTemplate ? rec.wa[t.waTemplate as keyof typeof rec.wa] ?? null : null;
+  const renderSpec = parts.values && t.id !== "draft" ? templateSpec({ id: t.id, version: t.version, context: t.context, key: t.key }, rec.id, parts.values, parts.overrides, autoWa) : undefined;
   const base = {
     event: MSG_EVENT, userId: p.userId, memberId: p.memberId, guestId: p.guestId, leadId: p.leadId, triggeredBy: actorId(b.actor) ?? "system",
     templateId: t.id, templateVersion: t.version, templateContext: t.context, templateCategory: t.category, recordId: rec.id, recipientKey: recipientKey(p),
     sendId: b.sendId, bulkId: b.bulkId ?? null, link: parts.link, createdAt: now, updatedAt: now,
+    ...(renderSpec ? { renderSpec: renderSpec as unknown as Prisma.InputJsonValue, contextIds: { context: t.context, recordId: rec.id, templateKey: t.key } } : {}),
   };
   const key = `msg:${b.sendId}`;
   const rows: PlannedRow[] = [];
@@ -329,6 +339,9 @@ const finish = (id: string, data: Prisma.NotificationDeliveryUpdateInput) => pri
 export async function deliverRow(d: NotificationDelivery, caps?: Capabilities): Promise<"SENT" | "FAILED"> {
   const c = caps ?? (await getCapabilities());
   const attempts = d.attempts + 1;
+  // v6 URL-3: subject/body/link as they read now (template + version + variables, today's APP_URL); older rows as stored.
+  const now = await renderDelivery(d);
+  const job = d.bulkJobId ?? null;
   try {
     if (d.channel === "EMAIL") {
       if (!c.email.enabled) throw new Error(`Email is no longer available: ${c.email.reason}`);
@@ -339,7 +352,7 @@ export async function deliverRow(d: NotificationDelivery, caps?: Capabilities): 
       const key = d.templateId ? (await prisma.messageTemplate.findUnique({ where: { id: d.templateId }, select: { key: true } }))?.key ?? null : null;
       const who = { kind, id: d.memberId ?? d.leadId ?? "" } as Person;
       const email = buildEmail({
-        subject: d.title, body: d.body, link: d.link, linkLabel: d.link ? linkLabel(d.link, key) : "", club, category: announce ? "ANNOUNCEMENT" : "TRANSACTIONAL",
+        subject: now.title, body: now.body, link: now.link, linkLabel: now.link ? linkLabel(now.link, key) : "", club, category: announce ? "ANNOUNCEMENT" : "TRANSACTIONAL",
         recipientKind: kind, unsubscribeUrl: announce ? unsubscribeFor(who) : null,
       });
       const post = announce ? unsubscribeFor(who, true) : null;
@@ -350,14 +363,14 @@ export async function deliverRow(d: NotificationDelivery, caps?: Capabilities): 
       };
       await mailTransport().sendMail(mail);
       await finish(d.id, { status: "SENT", sentAt: clock.now(), handledBy: null, attempts, error: null });
-      await logMessage(prisma, { channel: "EMAIL", to: d.toAddress, subject: email.subject, body: email.text, status: "SENT", entity: "message_template", entityId: d.templateId, actorId: d.triggeredBy === "system" ? null : d.triggeredBy });
+      await logMessage(prisma, { channel: "EMAIL", to: d.toAddress, subject: email.subject, body: email.text, status: "SENT", entity: d.templateId ? "message_template" : null, entityId: d.templateId, actorId: d.triggeredBy === "system" ? null : d.triggeredBy, jobId: job });
       return "SENT";
     }
     if (d.channel === "PUSH") {
       if (!c.push.enabled) throw new Error(`Push is no longer available: ${c.push.reason}`);
       const sub = d.pushSubscriptionId ? await prisma.pushSubscription.findUnique({ where: { id: d.pushSubscriptionId } }) : null;
       if (!sub) throw new Error("This device turned notifications off");
-      const { payload, options } = pushPayload({ event: d.event, title: d.title, body: d.body, link: d.link, dedupeKey: d.dedupeKey });
+      const { payload, options } = pushPayload({ event: d.event, title: now.title, body: now.body, link: now.link ?? d.link, dedupeKey: d.dedupeKey });
       try {
         await sendWebPush({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, JSON.stringify(payload), options, (await getSettings()).club.email);
       } catch (e) {
@@ -368,14 +381,19 @@ export async function deliverRow(d: NotificationDelivery, caps?: Capabilities): 
       }
       await prisma.pushSubscription.update({ where: { id: sub.id }, data: { lastSuccessAt: clock.now() } });
       await finish(d.id, { status: "SENT", sentAt: clock.now(), handledBy: null, attempts, error: null });
+      // v6 SA-11: a push sent by a "Send all" job is in the Message Log with the job id.
+      if (job) await logMessage(prisma, { channel: "PUSH", to: d.toAddress ?? "device", subject: now.title, body: now.body, status: "SENT", jobId: job });
       return "SENT";
     }
     throw new Error(`Channel ${d.channel} is not delivered here`);
   } catch (e) {
     const msg = (e instanceof Error ? e.message : String(e)).slice(0, 400);
     await finish(d.id, { status: "FAILED", handledBy: null, attempts, error: msg, notBefore: null });
-    if (d.channel === "EMAIL") {
-      await logMessage(prisma, { channel: "EMAIL", to: d.toAddress ?? "", subject: d.title, body: d.body, status: "FAILED", error: msg, entity: "message_template", entityId: d.templateId, actorId: d.triggeredBy === "system" ? null : d.triggeredBy });
+    if (d.channel === "EMAIL" || job) {
+      await logMessage(prisma, {
+        channel: d.channel === "PUSH" ? "PUSH" : "EMAIL", to: d.toAddress ?? "", subject: now.title, body: now.body, status: "FAILED", error: msg,
+        entity: d.templateId ? "message_template" : null, entityId: d.templateId, actorId: d.triggeredBy === "system" ? null : d.triggeredBy, jobId: job,
+      });
     }
     return "FAILED";
   }

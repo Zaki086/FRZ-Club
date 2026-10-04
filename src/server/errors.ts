@@ -64,6 +64,16 @@ export const REJECTION_CODES = [
   "UNKNOWN_TEMPLATE_VARIABLE",
   "DUPLICATE_RECENT_SEND",
   "CHANNEL_NOT_AVAILABLE",
+  // v6 §3 (LEADS) leads board: a column move the transition rules don't allow (out of Won, backwards, …).
+  "LEAD_MOVE_NOT_ALLOWED",
+  // v6 §4.3 (SHOP) TL-1: staff open only their own area's tills.
+  "DRAWER_AREA_MISMATCH",
+  // v6 JR-1 (SHOP): no split / multi-part payment on a Junior's or under-18's bill.
+  "JUNIOR_NO_SPLIT",
+  // v6 §2 (SENDALL) SA-3: a manual WhatsApp task older than the age limit — sending it by hand needs a confirmation;
+  // SA-1: a manual task that is no longer relevant (the bill is paid, the refund collected, …).
+  "MESSAGE_EXPIRED",
+  "MESSAGE_NOT_RELEVANT",
   // Transport-level codes (not business rules) — see DECISIONS.md D-03.
   "NOT_FOUND",
   "UNAUTHENTICATED",

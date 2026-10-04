@@ -12,7 +12,16 @@
 //   pauses all WhatsApp sending and keeps the rows QUEUED. A failed or impossible automatic message becomes a manual
 //   task in "Messages to send" with the same text (fallback, WA-53) — the other channels go out as usual.
 // - Manual WhatsApp (WHATSAPP_MANUAL) waits in the front desk's "Messages to send" queue and is only ever marked SENT
-//   by a person. Channel names stay WHATSAPP_API (automatic) and WHATSAPP_MANUAL (by hand).
+//   by a person — or SENT_AUTOMATICALLY by a v6 "Send all" job (messages/send-all.ts) that sent it through the Cloud
+//   API or by email / push instead. Channel names stay WHATSAPP_API (automatic) and WHATSAPP_MANUAL (by hand).
+// - v6 SA-4: `manual_whatsapp_fallback` decides whether a manual task is created at all: ALWAYS, NEVER, or (default)
+//   ONLY_IF_NO_OTHER_CHANNEL — only when neither the WhatsApp API, push nor email reaches the person.
+// - v6 URL-3: every row stores what it is made of (`render_spec`: title/body with the origin as {{app.url}}, the
+//   in-app path, the WhatsApp template values) and the records it is about (`context_ids`); emails, pushes and the
+//   manual wa.me link are rendered from it when sent / opened, with the APP_URL of that moment.
+// - v6 SA-0 (hard rule): automatic WhatsApp only through the official WhatsApp Cloud API (whatsapp/*). Never automate
+//   WhatsApp Web or Desktop, simulate clicks or use unofficial libraries — that breaks WhatsApp's terms and gets the
+//   club's number banned.
 import { createHash } from "node:crypto";
 import { Prisma, type NotificationDelivery } from "@prisma/client";
 import webpush from "web-push";
@@ -20,6 +29,7 @@ import { z } from "zod";
 import { formatPhone, mobilePhone } from "@/lib/validation/contact"; // v5 CV-1 (WhatsApp test number), CV-3 display
 import { parseOrValidation } from "./contacts";
 import { clock } from "@/lib/clock";
+import { absoluteUrl, publicOrigin } from "@/lib/url";
 import { addDays, HOUR, istDate, istParts, istToUtc } from "@/lib/time";
 import { afterCommit, prisma, withTx, type Tx } from "../db";
 import { DomainError } from "../errors";
@@ -33,10 +43,13 @@ import { getSettings, updateSetting } from "./settings";
 import { sendTemplateMessage, setWhatsAppFetchForTests } from "./whatsapp/client";
 import { templateFor, toWhatsAppNumber, whatsappOptedIn, whatsappReady } from "./whatsapp/config";
 import { buildTemplate, type WaMessage, type WaTemplateName } from "./whatsapp/templates";
+import { contextIdsFromKey, eventSpec, isStillRelevant, manualWhatsAppText, renderDelivery, type ContextIds, type RenderSpec } from "./messages/manual-queue";
 
 export const CHANNELS = ["IN_APP", "PUSH", "EMAIL", "WHATSAPP_API", "WHATSAPP_MANUAL"] as const;
 export type Channel = (typeof CHANNELS)[number];
-export type DeliveryStatus = "QUEUED" | "SENT" | "DELIVERED" | "FAILED" | "LINK_OPENED" | "SKIPPED";
+export type DeliveryStatus = "QUEUED" | "SENT" | "DELIVERED" | "FAILED" | "LINK_OPENED" | "SKIPPED"
+  // v6 §2 (SENDALL): the manual queue's cleanup (SA-1/SA-2/SA-3) and "Send all" (SA-7).
+  | "SKIPPED_NOT_RELEVANT" | "SKIPPED_DUPLICATE" | "EXPIRED" | "SENT_AUTOMATICALLY";
 type OutChannel = Exclude<Channel, "IN_APP">;
 
 /** Member-facing events. `params` are the v3 manual-template parameters; v4 WhatsApp API messages use `wa`. */
@@ -190,8 +203,9 @@ export function pushNotBefore(urgent: boolean, now: Date): Date | null {
   return urgent || !inQuietHours(now) ? null : quietHoursEnd(now);
 }
 
-const appUrl = () => (process.env.APP_URL ?? "").replace(/\/$/, "");
-export const absolute = (link: string | null | undefined) => (!link ? "" : /^https?:\/\//.test(link) ? link : `${appUrl()}${link}`);
+// URL-1: every absolute link comes from `src/lib/url.ts` (APP_URL only).
+const appUrl = () => publicOrigin();
+export const absolute = (link: string | null | undefined) => (!link ? "" : absoluteUrl(link));
 
 function cuid(): string {
   return "nd_" + globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 22);
@@ -203,24 +217,29 @@ type DeliveryInsert = {
   notBefore?: Date | null; urgent?: boolean; wa?: { template: string; language: string; params: string[]; buttonParam: string | null } | null;
   /** The template the event meant to use when the automatic message was not possible (shown in the WhatsApp log). */
   waTemplate?: string | null;
+  /** v6 URL-3: what the message is made of (rendered at open/send time) and the records it is about. */
+  renderSpec?: RenderSpec | null;
+  contextIds?: ContextIds | null;
 };
 
 /** One delivery row; the id, or null when this dedupe key + channel already exists (exactly once). */
 async function insertDelivery(tx: Tx, d: DeliveryInsert): Promise<string | null> {
   const rows = await tx.$queryRaw<{ id: string }[]>`
     INSERT INTO notification_deliveries (id, event, dedupe_key, channel, status, user_id, guest_id, member_id, to_address, title, body, link, whatsapp_text, error,
-                                         triggered_by, sent_at, not_before, urgent, wa_template, wa_language, wa_params, wa_button_param, updated_at)
+                                         triggered_by, sent_at, not_before, urgent, wa_template, wa_language, wa_params, wa_button_param, render_spec, context_ids, updated_at)
     VALUES (${cuid()}, ${d.event}, ${d.dedupeKey}, ${d.channel}, ${d.status}, ${d.userId}, ${d.guestId ?? null}, ${d.memberId ?? null}, ${d.to ?? null}, ${d.title}, ${d.body},
             ${d.link ?? null}, ${d.whatsappText ?? null}, ${d.error ?? null}, ${d.triggeredBy ?? null}, ${d.status === "SENT" ? clock.now() : null},
             ${d.notBefore ?? null}, ${d.urgent ?? false}, ${d.wa?.template ?? d.waTemplate ?? null}, ${d.wa?.language ?? null},
-            ${d.wa ? JSON.stringify(d.wa.params) : null}::jsonb, ${d.wa?.buttonParam ?? null}, now())
+            ${d.wa ? JSON.stringify(d.wa.params) : null}::jsonb, ${d.wa?.buttonParam ?? null},
+            ${d.renderSpec ? JSON.stringify(d.renderSpec) : null}::jsonb, ${d.contextIds && Object.keys(d.contextIds).length ? JSON.stringify(d.contextIds) : null}::jsonb, now())
     ON CONFLICT (dedupe_key, channel) DO NOTHING RETURNING id`;
   return rows[0]?.id ?? null;
 }
 
-/** The text of a manual WhatsApp task (and of the fallback when the API can't send). */
+/** The text of a manual WhatsApp task (and of the fallback when the API can't send) as it reads now; the task is
+ *  re-rendered from its `render_spec` when it is opened (URL-3). */
 function manualText(m: { title: string; body: string; link?: string | null }) {
-  return [m.title, m.body, absolute(m.link)].filter(Boolean).join("\n");
+  return manualWhatsAppText(m);
 }
 
 type WaPlan = { ok: true; wa: { template: string; language: string; params: string[]; buttonParam: string | null } } | { ok: false; reason: string };
@@ -260,7 +279,11 @@ function sendAfterCommit(tx: Tx, deliveryId: string) {
 export async function notifyMember(tx: Tx, m: MemberMessage): Promise<Array<{ channel: Channel; status: DeliveryStatus; reason?: string }>> {
   const cat = EVENT_CATALOGUE[m.event];
   const triggeredBy = m.actor ? (m.actor.kind === "USER" ? actorId(m.actor) : "system") : "system";
-  const base = { event: m.event, dedupeKey: m.dedupeKey, userId: m.userId, memberId: m.memberId ?? null, title: m.title, body: m.body, link: m.link ?? null, triggeredBy };
+  // URL-3: every row keeps its render spec and context ids (the text is rendered again when it is sent or opened).
+  const base = {
+    event: m.event, dedupeKey: m.dedupeKey, userId: m.userId, memberId: m.memberId ?? null, title: m.title, body: m.body, link: m.link ?? null, triggeredBy,
+    renderSpec: eventSpec(m), contextIds: contextIdsFromKey(m.dedupeKey),
+  };
   // In-app first: it is the exactly-once gate for the whole fan-out.
   if (!(await insertDelivery(tx, { ...base, channel: "IN_APP", status: "SENT" }))) return [];
   await notify(tx, { userIds: [m.userId], type: m.event, title: m.title, body: m.body, link: m.link ?? null, dedupeKey: m.dedupeKey });
@@ -298,10 +321,12 @@ export async function notifyMember(tx: Tx, m: MemberMessage): Promise<Array<{ ch
     else await record("EMAIL", "QUEUED", { to: user.email });
   }
 
-  // WhatsApp: the Cloud API when it is on, the template approved and the person opted in; otherwise a manual task.
+  // WhatsApp: the Cloud API when it is on, the template approved and the person opted in; otherwise a manual task —
+  // v6 SA-4: only as `manual_whatsapp_fallback` allows (default: when no other channel reaches the person).
   if (wanted.has("WHATSAPP_API") || wanted.has("WHATSAPP_MANUAL")) {
     const number = toWhatsAppNumber(user.phone);
     const text = manualText(m);
+    const reachedOtherwise = out.some((o) => (o.channel === "PUSH" || o.channel === "EMAIL") && o.status === "QUEUED");
     if (!number) {
       await record("WHATSAPP_API", "SKIPPED", { reason: "No mobile number" });
       await record("WHATSAPP_MANUAL", "SKIPPED", { reason: "No mobile number" });
@@ -316,11 +341,24 @@ export async function notifyMember(tx: Tx, m: MemberMessage): Promise<Array<{ ch
         if (id) sendAfterCommit(tx, id);
       } else {
         await record("WHATSAPP_API", "SKIPPED", { reason: plan.reason, waTemplate: m.wa?.template ?? null, to: m.wa ? number : null });
-        await record("WHATSAPP_MANUAL", "QUEUED", { to: number, whatsappText: text });
+        const skip = await manualFallbackSkip(tx, reachedOtherwise);
+        if (skip) await record("WHATSAPP_MANUAL", "SKIPPED", { reason: skip, to: number, whatsappText: text });
+        else await record("WHATSAPP_MANUAL", "QUEUED", { to: number, whatsappText: text });
       }
     }
   }
   return out;
+}
+
+/**
+ * v6 SA-4: why no manual WhatsApp task is made (null = make it). `reachedOtherwise`: the WhatsApp API, push or email
+ * already reaches the person for this message.
+ */
+async function manualFallbackSkip(db: Tx | typeof prisma, reachedOtherwise: boolean): Promise<string | null> {
+  const mode = (await getSettings(db as Tx)).manual_whatsapp_fallback;
+  if (mode === "NEVER") return "Manual WhatsApp is turned off (Settings → Hours & policies → Manual WhatsApp messages)";
+  if (mode === "ONLY_IF_NO_OTHER_CHANNEL" && reachedOtherwise) return "Reached by push or email (manual WhatsApp only when nothing else reaches them)";
+  return null;
 }
 
 /**
@@ -352,7 +390,10 @@ export async function notifyGuest(tx: Tx, g: { event: MemberEvent; guestId: stri
   if (!guest) return [];
   const cat = EVENT_CATALOGUE[g.event];
   const caps = await getCapabilities();
-  const base = { event: g.event, dedupeKey: g.dedupeKey, userId: null, guestId: g.guestId, title: g.title, body: g.body, link: g.link ?? null, triggeredBy: g.actor?.kind === "USER" ? actorId(g.actor) : "system" };
+  const base = {
+    event: g.event, dedupeKey: g.dedupeKey, userId: null, guestId: g.guestId, title: g.title, body: g.body, link: g.link ?? null, triggeredBy: g.actor?.kind === "USER" ? actorId(g.actor) : "system",
+    renderSpec: eventSpec(g), contextIds: contextIdsFromKey(g.dedupeKey), // URL-3
+  };
   const out: Array<{ channel: Channel; status: DeliveryStatus }> = [];
   const put = async (channel: Channel, status: DeliveryStatus, extra: Partial<DeliveryInsert> = {}) => {
     const id = await insertDelivery(tx, { ...base, ...extra, channel, status });
@@ -371,7 +412,10 @@ export async function notifyGuest(tx: Tx, g: { event: MemberEvent; guestId: stri
       const id = await put("WHATSAPP_API", "QUEUED", { to: number, whatsappText: text, wa: plan.wa });
       if (id) sendAfterCommit(tx, id);
     } else {
-      await put("WHATSAPP_MANUAL", "QUEUED", { to: number, whatsappText: text });
+      // v6 SA-4: a guest who gets the email has no manual task (default); a guest with only a phone keeps it.
+      const skip = await manualFallbackSkip(tx, out.some((o) => o.channel === "EMAIL" && o.status === "QUEUED"));
+      if (skip) await put("WHATSAPP_MANUAL", "SKIPPED", { to: number, whatsappText: text, error: skip });
+      else await put("WHATSAPP_MANUAL", "QUEUED", { to: number, whatsappText: text });
     }
   }
   return out;
@@ -411,7 +455,7 @@ export function pushPayload(d: { event: string; title: string; body: string; lin
   const row = EVENT_CATALOGUE[d.event as NotifyEvent];
   const tag = `${d.event.toLowerCase().replace(/_/g, "-")}-${createHash("sha256").update(d.dedupeKey).digest("hex").slice(0, 10)}`;
   return {
-    payload: { title: cap(d.title, 80), body: cap(d.body.replace(/\s*\n\s*/g, " "), 180), url: d.link || "/", tag },
+    payload: { title: cap(d.title, 80), body: cap(d.body.replace(/\s*\n\s*/g, " "), 180), url: absoluteUrl(d.link || "/"), tag },
     options: { TTL: PUSH_TTL_SECONDS, urgency: row?.urgency ?? "normal" },
   };
 }
@@ -456,7 +500,7 @@ async function emailText(d: { body: string; link: string | null; userId: string 
     d.body,
     link ? `${who?.role === "MEMBER" ? "Open in the member portal" : "Details"}: ${link}` : "",
     [club.name || "The club", formatPhone(club.phone)].filter(Boolean).join(" · "),
-    who?.role === "MEMBER" && appUrl() ? `To change how the club reaches you: ${appUrl()}/portal/notifications` : "",
+    who?.role === "MEMBER" && appUrl() ? `To change how the club reaches you: ${absoluteUrl("/portal/notifications")}` : "",
   ].filter(Boolean).join("\n\n");
 }
 
@@ -511,6 +555,8 @@ export async function flushDeliveries(limit = 100) {
     const before = d.attempts;
     const note = before && d.error ? `Sent on attempt ${before + 1} (before: ${d.error.replace(/^Attempt \d+ of \d+ failed[^:]*:\s*/, "")})`.slice(0, 500) : null;
     try {
+      // URL-3: the text and links as they read now (from the row's render spec; older rows: their stored text).
+      const now = await renderDelivery(d);
       if (d.channel === "PUSH") {
         if (!caps.push.enabled) throw new PermanentFailure(`Push no longer available: ${caps.push.reason}`);
         const subs = await prisma.pushSubscription.findMany({ where: { userId: d.userId ?? "" } });
@@ -518,7 +564,7 @@ export async function flushDeliveries(limit = 100) {
         let ok = 0;
         let lastError: unknown = null;
         let transient = false;
-        const { payload, options } = pushPayload(d);
+        const { payload, options } = pushPayload({ ...d, title: now.title, body: now.body });
         for (const sub of subs) {
           try {
             await sendPush({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, JSON.stringify(payload), options, vapidSubject(club.email));
@@ -540,9 +586,9 @@ export async function flushDeliveries(limit = 100) {
       } else {
         if (!caps.email.enabled) throw new PermanentFailure(`Email no longer available: ${caps.email.reason}`);
         if (!d.toAddress) throw new PermanentFailure("No email address");
-        await mailTransport().sendMail({ from: process.env.SMTP_FROM, to: d.toAddress, subject: d.title, text: await emailText(d, club) });
+        await mailTransport().sendMail({ from: process.env.SMTP_FROM, to: d.toAddress, subject: now.title, text: await emailText({ ...d, body: now.body }, club) });
         await done(d.id, { status: "SENT", sentAt: clock.now(), error: note, handledBy: null, attempts: before + 1, notBefore: null });
-        await logMessage(prisma, { channel: "EMAIL", to: d.toAddress, subject: d.title, body: d.body, status: "SENT" });
+        await logMessage(prisma, { channel: "EMAIL", to: d.toAddress, subject: now.title, body: now.body, status: "SENT" });
       }
       result.sent++;
     } catch (e) {
@@ -592,13 +638,29 @@ async function pauseChannel(channel: "WHATSAPP_API", ms: number, reason: string)
 export async function whatsappFallback(deliveryId: string, reason: string, db: Tx | typeof prisma = prisma): Promise<boolean> {
   const now = clock.now();
   const why = `Automatic WhatsApp failed: ${reason}`.slice(0, 500);
+  const api = await db.notificationDelivery.findUnique({ where: { id: deliveryId }, select: { channel: true, dedupeKey: true, taskId: true } });
+  if (!api || api.channel !== "WHATSAPP_API") return false;
+  if (api.taskId) {
+    // v6 SA-7: sent by a "Send all" job for an existing manual task — that task stays in (or goes back to) the queue
+    // with the reason; no second task is made.
+    const n = await db.notificationDelivery.updateMany({
+      where: { id: api.taskId, channel: "WHATSAPP_MANUAL", status: { in: ["QUEUED", "SENT_AUTOMATICALLY"] } },
+      data: { status: "QUEUED", error: why, handledBy: null, sentAt: null, updatedAt: now },
+    });
+    return n.count > 0;
+  }
+  // v6 SA-4: no manual task when the setting says never, or (default) when push or email reached the person.
+  const reached = await db.notificationDelivery.count({ where: { dedupeKey: api.dedupeKey, channel: { in: ["PUSH", "EMAIL"] }, status: { in: ["QUEUED", "SENT", "DELIVERED"] } } });
+  if (await manualFallbackSkip(db, reached > 0)) return false;
   const rows = await db.$queryRaw<{ id: string }[]>`
-    INSERT INTO notification_deliveries (id, event, dedupe_key, channel, status, user_id, guest_id, member_id, to_address, title, body, link, whatsapp_text, error, triggered_by, created_at, updated_at)
+    INSERT INTO notification_deliveries (id, event, dedupe_key, channel, status, user_id, guest_id, member_id, to_address, title, body, link, whatsapp_text, error, triggered_by,
+                                         render_spec, context_ids, created_at, updated_at)
     SELECT ${cuid()}, d.event, d.dedupe_key, 'WHATSAPP_MANUAL', 'QUEUED', d.user_id, d.guest_id, d.member_id, d.to_address, d.title, d.body, d.link,
-           COALESCE(d.whatsapp_text, d.title || E'\n' || d.body), ${why}, d.triggered_by, ${now}, ${now}
+           COALESCE(d.whatsapp_text, d.title || E'\n' || d.body), ${why}, d.triggered_by, d.render_spec, d.context_ids, ${now}, ${now}
       FROM notification_deliveries d
      WHERE d.id = ${deliveryId} AND d.channel = 'WHATSAPP_API' AND d.to_address IS NOT NULL
-    ON CONFLICT (dedupe_key, channel) DO UPDATE SET status = 'QUEUED', error = EXCLUDED.error, whatsapp_text = EXCLUDED.whatsapp_text, to_address = EXCLUDED.to_address, updated_at = EXCLUDED.updated_at
+    ON CONFLICT (dedupe_key, channel) DO UPDATE SET status = 'QUEUED', error = EXCLUDED.error, whatsapp_text = EXCLUDED.whatsapp_text, to_address = EXCLUDED.to_address,
+           render_spec = COALESCE(notification_deliveries.render_spec, EXCLUDED.render_spec), context_ids = COALESCE(notification_deliveries.context_ids, EXCLUDED.context_ids), updated_at = EXCLUDED.updated_at
      WHERE notification_deliveries.status = 'SKIPPED'
     RETURNING id`;
   return rows.length > 0;
@@ -627,7 +689,7 @@ export async function dispatchWhatsApp(deliveryIds?: string[], limit = 50) {
         status: "FAILED", error: (attempt > 1 ? `${reason} (gave up after ${attempt} attempts)` : reason).slice(0, 500), handledBy: null, attempts: attempt, notBefore: null, updatedAt: now(),
         waStatus: "failed", waFailedAt: now(), waErrorCode: code ?? null,
       });
-      await logMessage(prisma, { channel: "WHATSAPP", to: d.toAddress ?? "", subject: d.title, body: d.whatsappText ?? d.body, status: "FAILED", error: reason });
+      await logMessage(prisma, { channel: "WHATSAPP", to: d.toAddress ?? "", subject: d.title, body: d.whatsappText ?? d.body, status: "FAILED", error: reason, jobId: d.bulkJobId });
       await whatsappFallback(d.id, reason);
     };
     if (!ready) {
@@ -644,7 +706,7 @@ export async function dispatchWhatsApp(deliveryIds?: string[], limit = 50) {
       result.sent++;
       const note = d.attempts && d.error ? `Sent on attempt ${attempt} (before: ${d.error.replace(/^Attempt \d+ failed[^:]*:\s*/, "")})`.slice(0, 500) : null;
       await done(d.id, { status: "SENT", sentAt: now(), providerId: r.wamid, error: note, handledBy: null, attempts: attempt, notBefore: null });
-      await logMessage(prisma, { channel: "WHATSAPP", to: d.toAddress, subject: d.title, body: d.whatsappText ?? d.body, status: "SENT" });
+      await logMessage(prisma, { channel: "WHATSAPP", to: d.toAddress, subject: d.title, body: d.whatsappText ?? d.body, status: "SENT", jobId: d.bulkJobId });
     } else if (r.kind === "RATE_LIMITED") {
       // §5.4 step 9: stop sending; this row and the rest of the batch stay QUEUED until the pause ends.
       const until = await pauseChannel("WHATSAPP_API", r.pauseMs, r.reason);
@@ -658,7 +720,7 @@ export async function dispatchWhatsApp(deliveryIds?: string[], limit = 50) {
       const wait = WA_RETRY_DELAYS_MS[attempt - 1];
       const label = wait < 60_000 ? `${wait / 1000} s` : wait < 3600_000 ? `${wait / 60_000} min` : `${wait / 3600_000} h`;
       await done(d.id, { error: `Attempt ${attempt} failed, trying again in ${label}: ${r.reason}`.slice(0, 500), handledBy: null, attempts: attempt, notBefore: new Date(now().getTime() + wait), updatedAt: now() });
-      await logMessage(prisma, { channel: "WHATSAPP", to: d.toAddress, subject: d.title, body: d.whatsappText ?? d.body, status: "FAILED", error: `${r.reason} — will try again` });
+      await logMessage(prisma, { channel: "WHATSAPP", to: d.toAddress, subject: d.title, body: d.whatsappText ?? d.body, status: "FAILED", error: `${r.reason} — will try again`, jobId: d.bulkJobId });
     } else {
       const code = r.kind === "PERMANENT" ? r.code : undefined;
       await fail(code != null && !r.reason.includes(`#${code}`) ? `#${code} ${r.reason}` : r.reason, code);
@@ -700,21 +762,54 @@ async function manualRow(id: string) {
   return d;
 }
 
-/** One click: the wa.me link with the prepared text. Recorded as LINK_OPENED — never as delivered. */
-export async function openManualMessage(actor: Actor, id: string) {
+const MANUAL_DONE: Record<string, string> = {
+  SKIPPED: "This message does not need to be sent by hand.",
+  SKIPPED_NOT_RELEVANT: "This message is no longer needed",
+  SKIPPED_DUPLICATE: "A newer copy of this message is in the queue — send that one.",
+  SENT_AUTOMATICALLY: "This message was already sent automatically.",
+};
+
+/**
+ * One click: the wa.me link with the prepared text. Recorded as LINK_OPENED — never as delivered. v6: the text is
+ * rendered now from the task's render spec (URL-3, today's APP_URL); a task that is no longer relevant is taken out of
+ * the queue (SA-1); an EXPIRED task (SA-3) opens only with `confirmExpired`.
+ */
+export async function openManualMessage(actor: Actor, id: string, opts: { confirmExpired?: boolean } = {}) {
   assertCan(actor, "messages.send");
   const d = await manualRow(id);
-  if (d.status === "SKIPPED") throw new DomainError("ORDER_STATE_INVALID", "This message does not need to be sent by hand.");
-  if (d.status === "QUEUED") await done(d.id, { status: "LINK_OPENED", openedAt: clock.now(), handledBy: actorId(actor) });
-  await logMessage(prisma, { channel: "WHATSAPP", to: d.toAddress ?? "", subject: d.title, body: d.whatsappText ?? d.body, status: "OPENED", actorId: actorId(actor) });
-  return { url: `https://wa.me/${d.toAddress}?text=${encodeURIComponent(d.whatsappText ?? d.body)}` };
+  if (d.status in MANUAL_DONE) {
+    throw new DomainError(d.status === "SKIPPED_NOT_RELEVANT" ? "MESSAGE_NOT_RELEVANT" : "ORDER_STATE_INVALID",
+      d.status === "SKIPPED_NOT_RELEVANT" && d.error ? `This message is no longer needed: ${d.error.charAt(0).toLowerCase()}${d.error.slice(1)}.` : MANUAL_DONE[d.status]);
+  }
+  if (d.status === "QUEUED" && d.handledBy?.startsWith("sendall:")) {
+    throw new DomainError("ORDER_STATE_INVALID", "This message is being sent right now by \"Send all\".");
+  }
+  if (d.status === "QUEUED" || d.status === "EXPIRED") {
+    const rel = await isStillRelevant(d);
+    if (!rel.relevant) {
+      await done(d.id, { status: "SKIPPED_NOT_RELEVANT", error: rel.reason, updatedAt: clock.now() });
+      await prisma.$transaction(async (tx) => audit(tx, actor, "message.not_relevant", "notification_delivery", d.id, { before: { status: d.status }, after: { status: "SKIPPED_NOT_RELEVANT", reason: rel.reason } }));
+      throw new DomainError("MESSAGE_NOT_RELEVANT", `This message is no longer needed: ${rel.reason.charAt(0).toLowerCase()}${rel.reason.slice(1)}.`, { reason: rel.reason });
+    }
+  }
+  if (d.status === "EXPIRED") {
+    if (!opts.confirmExpired) {
+      const days = Math.max(1, Math.floor((clock.now().getTime() - d.createdAt.getTime()) / 86_400_000));
+      throw new DomainError("MESSAGE_EXPIRED", `This message is ${days} day${days === 1 ? "" : "s"} old. Send it anyway?`, { createdAt: d.createdAt.toISOString(), days });
+    }
+    await prisma.$transaction(async (tx) => audit(tx, actor, "message.expired_send_confirmed", "notification_delivery", d.id, { before: { status: "EXPIRED" }, after: { status: "LINK_OPENED" } }));
+  }
+  const text = (await renderDelivery(d)).whatsappText;
+  if (d.status === "QUEUED" || d.status === "EXPIRED") await done(d.id, { status: "LINK_OPENED", openedAt: clock.now(), handledBy: actorId(actor) });
+  await logMessage(prisma, { channel: "WHATSAPP", to: d.toAddress ?? "", subject: d.title, body: text, status: "OPENED", actorId: actorId(actor) });
+  return { url: `https://wa.me/${d.toAddress}?text=${encodeURIComponent(text)}` };
 }
 
 /** Staff confirm they sent it from the club phone. */
 export async function markManualSent(actor: Actor, id: string) {
   assertCan(actor, "messages.send");
   const d = await manualRow(id);
-  if (!["QUEUED", "LINK_OPENED"].includes(d.status)) throw new DomainError("ORDER_STATE_INVALID", `This message is already ${d.status.toLowerCase().replace("_", " ")}.`);
+  if (!["QUEUED", "LINK_OPENED"].includes(d.status)) throw new DomainError("ORDER_STATE_INVALID", `This message is already ${d.status.toLowerCase().replace(/_/g, " ")}.`);
   await done(d.id, { status: "SENT", sentAt: clock.now(), handledBy: actorId(actor) });
   await prisma.$transaction(async (tx) => audit(tx, actor, "message.manual_sent", "notification_delivery", d.id, { after: { channel: "WHATSAPP_MANUAL", to: d.toAddress } }));
   return { id: d.id, status: "SENT" };

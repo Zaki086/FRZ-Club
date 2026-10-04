@@ -15,13 +15,14 @@ import { getSettings, writeSettingTx, type StoredSettings } from "../settings";
 import { graphBase, graphFetch, sendTemplateMessage, classifyWhatsAppError } from "./client";
 import { toWhatsAppNumber, WHATSAPP_ENV, writeHealth } from "./config";
 import { WA_TEMPLATE_NAMES, WA_TEMPLATES, type WaTemplateName } from "./templates";
+import { absoluteUrl, publicOrigin } from "@/lib/url";
 
 type TemplateMap = StoredSettings["whatsapp_template_map"];
 
 /** Meta's template statuses we show (anything else is shown as Meta wrote it). */
 export const META_TEMPLATE_STATUSES = ["APPROVED", "PENDING", "REJECTED", "PAUSED", "DISABLED", "IN_APPEAL", "PENDING_DELETION", "DELETED", "LIMIT_EXCEEDED"] as const;
 
-const appUrl = () => (process.env.APP_URL ?? "").replace(/\/$/, "");
+const appUrl = () => publicOrigin(); // URL-1
 
 /** Everything the Settings page shows. */
 export async function whatsappSetupStatus(actor: Actor) {
@@ -35,9 +36,9 @@ export async function whatsappSetupStatus(actor: Actor) {
     env,
     envOk: env.every((e) => e.set),
     token: { ok: s.whatsapp_health.token_ok, checkedAt: s.whatsapp_health.token_checked_at, reason: s.whatsapp_health.token_reason, phone: s.whatsapp_health.phone_display },
-    webhook: { url: appUrl() ? `${appUrl()}/api/whatsapp/webhook` : null, verifiedAt: s.whatsapp_health.webhook_verified_at },
+    webhook: { url: appUrl() ? absoluteUrl("/api/whatsapp/webhook") : null, verifiedAt: s.whatsapp_health.webhook_verified_at },
     testSentAt: s.whatsapp_verified_at,
-    buttonBase: appUrl() ? `${appUrl()}/` : null,
+    buttonBase: appUrl() ? absoluteUrl("/") : null,
     templates: WA_TEMPLATE_NAMES.map((key) => ({
       key,
       required: WA_TEMPLATES[key].required,

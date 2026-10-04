@@ -225,6 +225,24 @@ export async function runList(def: ListDef, actor: Actor, params: Record<string,
   }, { timeout: 60_000 });
 }
 
+/**
+ * v6 SA-5 (SENDALL): the ids of every row matching the list's filter (no paging, no facets), in the list's sort order,
+ * capped at `max` — "Send all" applies to exactly what the FilterBar shows.
+ */
+export async function listMatchingIds(def: ListDef, actor: Actor, params: Record<string, string>, max = 10_000): Promise<string[]> {
+  assertListAccess(def, actor);
+  const q = parseQuery(def, params);
+  const ctx = makeCtx(actor, q);
+  return prisma.$transaction(async (tx: Tx) => {
+    await tx.$executeRaw`SELECT set_config('app.now', ${ctx.now.toISOString()}, true)`;
+    await tx.$executeRaw(Prisma.sql`CREATE TEMP TABLE ${baseTable(def)} ON COMMIT DROP AS ${def.base(ctx)}`);
+    const rows = await tx.$queryRaw<{ id: string }[]>(
+      Prisma.sql`SELECT b.id::text AS id FROM ${baseTable(def)} b WHERE ${conditions(def, q, ctx)} ORDER BY ${Prisma.raw(def.sorts[q.sort].sql)} LIMIT ${max}`,
+    );
+    return rows.map((r) => r.id);
+  }, { timeout: 60_000 });
+}
+
 function csvCell(v: unknown): string {
   const s = v === null || v === undefined ? "" : v instanceof Date ? v.toISOString() : String(v);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;

@@ -218,7 +218,7 @@ type QueueOpts = {
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** Take the permit to send one message now: the gate's last send is ≥ 1 s ago. Returns ms to wait when not yet. */
-async function takePermit(): Promise<number> {
+export async function takePermit(): Promise<number> {
   const now = clock.now();
   await prisma.$executeRaw`INSERT INTO message_rate_gate (id, last_sent_at, updated_at) VALUES (${GATE}, 'epoch', ${now}) ON CONFLICT (id) DO NOTHING`;
   const took = await prisma.$queryRaw<{ id: string }[]>`
