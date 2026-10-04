@@ -32,6 +32,7 @@ import { payrollList } from "./payroll";
 import { notificationsList, renewalsList } from "./notifications";
 import { refundsList } from "./refunds";
 import { attendanceList, attendanceSummaryList, employeesList } from "./staff";
+import { menuItemsList } from "./menu"; // v5 §1.1 (MENU)
 
 export const LISTS: Record<string, ListDef> = {
   [membersList.name]: membersList,
@@ -69,6 +70,7 @@ export const LISTS: Record<string, ListDef> = {
   [renewalsList.name]: renewalsList,
   [attendanceList.name]: attendanceList,
   [attendanceSummaryList.name]: attendanceSummaryList,
+  [menuItemsList.name]: menuItemsList, // v5 §1.1 (MENU)
 };
 
 function def(name: string): ListDef {

@@ -2,7 +2,8 @@
 import type { MenuCategory, Prisma, TabLineStatus } from "@prisma/client";
 import { z } from "zod";
 import { clock } from "@/lib/clock";
-import { CODE_SEQUENCE, formatCode, normalisePhone } from "@/lib/codes";
+import { CODE_SEQUENCE, formatCode } from "@/lib/codes";
+import { mobilePhone, optionalContact } from "@/lib/validation/contact";
 import { formatINR } from "@/lib/money";
 import { ageOn, dbDate, fromDbDate, istDate, istDayRange, isValidDateStr, MINUTE } from "@/lib/time";
 import { nextSeq, pgErrorCode, prisma, withTx, type Tx } from "../db";
@@ -15,12 +16,13 @@ import { findOrCreateGuest } from "./guests";
 import { idempotent } from "./idempotency";
 import { recordSplitPaymentsTx, refundTx } from "./payments";
 import { entitlementsFor, quoteBar } from "./pricing";
+import { addLegacyMenuItem, editMenuItem, legacyMenuItemSchema } from "./menu";
 
 // ───────────── tabs (BR-3) ─────────────
 
 export const openTabSchema = z.object({
   memberId: z.string().optional(),
-  guest: z.object({ name: z.string().trim().min(2).max(100), phone: z.string().optional() }).optional(),
+  guest: z.object({ name: z.string().trim().min(2).max(100), phone: optionalContact(mobilePhone) }).optional(), // v5 CV-1
   tableId: z.string().optional().nullable(),
   guestIdVerified: z.boolean().default(false),
 });
@@ -41,8 +43,7 @@ export async function openTabTx(tx: Tx, actor: Actor, raw: z.input<typeof openTa
     memberId = m.id;
     name = m.name;
   } else {
-    const phone = input.guest!.phone ? normalisePhone(input.guest!.phone) : null;
-    const g = await findOrCreateGuest(tx, { name: input.guest!.name, phone });
+    const g = await findOrCreateGuest(tx, { name: input.guest!.name, phone: input.guest!.phone ?? null });
     guestId = g.id;
     name = input.guest!.name;
   }
@@ -110,16 +111,19 @@ export const addLinesSchema = z.object({
 });
 
 /** BR-4: items priced through the pricing engine with the payer's bar discount; each line belongs to the tab (R-26). */
-export async function addLines(actor: Actor, tabId: string, raw: z.infer<typeof addLinesSchema>, outer?: Tx) {
-  assertCan(actor, "bar.operate");
+export async function addLines(actor: Actor, tabId: string, raw: z.infer<typeof addLinesSchema>, outer?: Tx, via?: { memberOrderId: string }) {
+  // v5 MO-2: `via` is passed only by member-orders.ts, which checks the member, MO-1 and the tab itself.
+  if (!via) assertCan(actor, "bar.operate");
   const input = addLinesSchema.parse(raw);
   return withTx(async (tx) => {
     const tab = await lockTab(tx, tabId);
     if (tab.status !== "OPEN") throw new DomainError("ORDER_STATE_INVALID", `Tab ${tab.code} is ${tab.status.toLowerCase()}; open a new tab to order.`);
-    const menu = await tx.menuItem.findMany({ where: { id: { in: input.items.map((i) => i.menuItemId) } } });
+    const menu = await tx.menuItem.findMany({ where: { id: { in: input.items.map((i) => i.menuItemId) } }, include: { menuCategory: { select: { active: true } } } });
     for (const i of input.items) {
       const m = menu.find((x) => x.id === i.menuItemId);
-      if (!m || m.archivedAt) throw new DomainError("NOT_FOUND", "A menu item was not found.");
+      if (!m) throw new DomainError("NOT_FOUND", "A menu item was not found.");
+      // v5 §1.1: only ACTIVE items of an active category can be ordered (drafts and archived items are off the menu).
+      if (m.status !== "ACTIVE" || m.archivedAt || !m.menuCategory.active) throw new DomainError("NOT_FOUND", `${m.name} is not on the menu.`);
       if (!m.available) throw new DomainError("VALIDATION_FAILED", `${m.name} is sold out.`);
       if (m.isAlcoholic) await assertAlcoholAllowed(tx, tab, m.name);
     }
@@ -138,7 +142,7 @@ export async function addLines(actor: Actor, tabId: string, raw: z.infer<typeof 
         data: {
           tabId: tab.id, menuItemId: l.menuItemId!, billLineId: billLineIds[idx], qty: l.qty, unitPrice: l.unitPrice,
           discountPct: l.discountPct, discountAmount: l.discountAmount, netAmount: l.netAmount, note: input.items[idx].note ?? null,
-          addedBy: actorId(actor) ?? "system",
+          addedBy: actorId(actor) ?? "system", memberOrderId: via?.memberOrderId ?? null,
         },
       });
       created.push({ id: line.id, name: l.description, qty: l.qty, netAmount: l.netAmount, discountPct: l.discountPct, explanation: l.explanation });
@@ -176,11 +180,12 @@ export async function moveTab(actor: Actor, tabId: string, tableId: string | nul
 // ───────────── kitchen (BR-6, E-11) ─────────────
 
 /** "Send to kitchen": the tab's unsent lines become one kitchen ticket. */
-export async function sendToKitchen(actor: Actor, tabId: string, outer?: Tx) {
+export async function sendToKitchen(actor: Actor, tabId: string, outer?: Tx, opts: { memberOrderId?: string } = {}) {
   assertCan(actor, "bar.operate");
   return withTx(async (tx) => {
     const tab = await lockTab(tx, tabId);
-    const lines = await tx.tabLine.findMany({ where: { tabId: tab.id, kitchenTicketId: null, status: "NEW" } });
+    // v5 MO-3: a member's app order reaches the kitchen only when the bar accepts it (then only its own lines).
+    const lines = await tx.tabLine.findMany({ where: { tabId: tab.id, kitchenTicketId: null, status: "NEW", memberOrderId: opts.memberOrderId ?? null } });
     if (!lines.length) throw new DomainError("VALIDATION_FAILED", "There are no new items to send.");
     const ticket = await tx.kitchenTicket.create({ data: { tabId: tab.id, tableId: tab.tableId, sentAt: clock.now(), sentBy: actorId(actor) ?? "system" } });
     await tx.tabLine.updateMany({ where: { id: { in: lines.map((l) => l.id) } }, data: { kitchenTicketId: ticket.id } });
@@ -204,12 +209,14 @@ export async function setLineStatus(actor: Actor, lineId: string, status: "PREPA
       data: { status, preparingAt: status === "PREPARING" ? now : undefined, readyAt: status === "READY" ? now : undefined, servedAt: status === "SERVED" ? now : undefined },
     });
     await audit(tx, actor, `kitchen.${status.toLowerCase()}`, "tab_line", line.id, { before: { status: line.status }, after: { status } });
+    // v5 MO-9: "Your order is ready" once every item of a member's app order is ready.
+    if (status === "READY" && line.memberOrderId) await (await import("./member-orders")).notifyOrderReadyTx(tx, line.memberOrderId, actor);
     return { lineId: line.id, status };
   }, outer);
 }
 
 /** BR-7: before PREPARING any bar staff may void; after that only a Manager, with a reason (audited). */
-export async function voidLine(actor: Actor, lineId: string, reason: string) {
+export async function voidLine(actor: Actor, lineId: string, reason: string, outer?: Tx) {
   assertCan(actor, "bar.operate");
   return withTx(async (tx) => {
     const line = await tx.tabLine.findUnique({ where: { id: lineId }, include: { tab: true } });
@@ -233,7 +240,7 @@ export async function voidLine(actor: Actor, lineId: string, reason: string) {
     const after = await refreshBill(tx, line.tab.billId);
     await audit(tx, actor, "tab.void_line", "tab_line", line.id, { before: { status: line.status, netAmount: line.netAmount }, after: { status: "VOID" }, reason });
     return { lineId: line.id, total: after.total, due: billDue(after) };
-  });
+  }, outer);
 }
 
 /**
@@ -307,6 +314,8 @@ export async function settleTab(actor: Actor, tabId: string, raw: z.infer<typeof
       if (due === 0) {
         await tx.tab.update({ where: { id: tab.id }, data: { status: "SETTLED", settledAt: clock.now() } });
         await audit(tx, actor, "tab.settle", "tab", tab.id, { before: { status: tab.status }, after: { status: "SETTLED", total: r.bill.total } });
+        // v5 MO-9: the member's receipt (in-app + push).
+        if (tab.memberId) await (await import("./member-orders")).notifyTabSettledTx(tx, tab.id, actor);
       }
       return { tabId: tab.id, status: due === 0 ? "SETTLED" : tab.status, total: r.bill.total, paid: netPaid(r.bill), due, changeGiven: r.changeGiven };
     }),
@@ -326,6 +335,7 @@ export async function closeTab(actor: Actor, tabId: string) {
     const status = lines === 0 && bill.total === 0 ? "VOID" : "SETTLED";
     await tx.tab.update({ where: { id: tab.id }, data: { status, settledAt: clock.now() } });
     await audit(tx, actor, status === "VOID" ? "tab.void" : "tab.settle", "tab", tab.id, { before: { status: tab.status }, after: { status } });
+    if (status === "SETTLED" && tab.memberId) await (await import("./member-orders")).notifyTabSettledTx(tx, tab.id, actor); // v5 MO-9
     return { tabId: tab.id, status };
   });
 }
@@ -447,6 +457,8 @@ export async function getTab(actor: Actor, tabId: string) {
     tab.tableId ? prisma.barTable.findUnique({ where: { id: tab.tableId } }) : null,
   ]);
   const billLines = await prisma.billLine.findMany({ where: { id: { in: tab.lines.map((l) => l.billLineId) } } });
+  // v5 MO-10: lines ordered in the app ("via app") vs entered by staff; app lines wait for the bar's Accept (MO-3).
+  const pendingOrders = new Set((await prisma.memberOrder.findMany({ where: { tabId: tab.id, status: "PENDING" }, select: { id: true } })).map((o) => o.id));
   return {
     id: tab.id, code: tab.code, status: tab.status, payer: await payerName(prisma, tab), memberId: tab.memberId, guestId: tab.guestId,
     tier: bill.tier, table: table ? { id: table.id, number: table.number } : null, guestIdVerified: tab.guestIdVerified,
@@ -458,6 +470,8 @@ export async function getTab(actor: Actor, tabId: string) {
         id: l.id, name: m?.name ?? "?", category: m?.category ?? "FOOD", isAlcoholic: m?.isAlcoholic ?? false, qty: l.qty, unitPrice: l.unitPrice,
         discountPct: l.discountPct, discountAmount: l.discountAmount, netAmount: l.netAmount, note: l.note, status: l.status,
         sent: !!l.kitchenTicketId, voidReason: l.voidReason, explanation: billLines.find((b) => b.id === l.billLineId)?.explanation ?? "",
+        source: l.memberOrderId ? ("APP" as const) : ("STAFF" as const), memberOrderId: l.memberOrderId,
+        awaitingAcceptance: !!l.memberOrderId && pendingOrders.has(l.memberOrderId) && l.status === "NEW",
       };
     }),
   };
@@ -510,7 +524,9 @@ export async function kitchenQueue(actor: Actor) {
       return {
         ticketId: t.id, sentAt: t.sentAt, ageMinutes: Math.floor((now - t.sentAt.getTime()) / MINUTE),
         table: table?.number ?? null, tabCode: tab.code, payer: names.get(tab.id)!,
-        lines: lines.filter((l) => l.kitchenTicketId === t.id).map((l) => ({ id: l.id, name: menu.find((m) => m.id === l.menuItemId)?.name ?? "?", qty: l.qty, note: l.note, status: l.status })),
+        lines: lines.filter((l) => l.kitchenTicketId === t.id).map((l) => ({ id: l.id, name: menu.find((m) => m.id === l.menuItemId)?.name ?? "?", qty: l.qty, note: l.note, status: l.status, source: l.memberOrderId ? ("APP" as const) : ("STAFF" as const), prepMinutes: menu.find((m) => m.id === l.menuItemId)?.prepMinutes ?? null })), // v5 §1.1 prep time on the KDS
+        // v5 MO-10: "via app" (an accepted member order) or "by staff".
+        source: lines.some((l) => l.kitchenTicketId === t.id && l.memberOrderId) ? ("APP" as const) : ("STAFF" as const),
       };
     });
 }
@@ -523,7 +539,7 @@ export async function readyQueue(actor: Actor) {
   const out = [];
   for (const l of lines) {
     out.push({
-      id: l.id, name: menu.find((m) => m.id === l.menuItemId)?.name ?? "?", qty: l.qty, note: l.note, readyAt: l.readyAt,
+      id: l.id, name: menu.find((m) => m.id === l.menuItemId)?.name ?? "?", qty: l.qty, note: l.note, readyAt: l.readyAt, source: l.memberOrderId ? ("APP" as const) : ("STAFF" as const),
       table: tables.find((t) => t.id === l.tab.tableId)?.number ?? null, tabCode: l.tab.code, payer: await payerName(prisma, l.tab),
     });
   }
@@ -550,51 +566,33 @@ export async function myTabs(actor: Actor) {
 
 // ───────────── menu & tables (BR-1, BR-2) ─────────────
 
+/**
+ * The bar item grid (and the public menu list): v5 §1.1 only ACTIVE items of an active category, available ones
+ * unless `includeUnavailable` (the sold-out switches on Bar Day). The Menu screen itself uses services/menu.ts.
+ */
 export async function listMenu(opts: { includeUnavailable?: boolean } = {}) {
   return prisma.menuItem.findMany({
-    where: { archivedAt: null, available: opts.includeUnavailable ? undefined : true },
-    orderBy: [{ category: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
+    where: { status: "ACTIVE", archivedAt: null, available: opts.includeUnavailable ? undefined : true, menuCategory: { active: true } },
+    orderBy: [{ category: "asc" }, { menuCategory: { sortOrder: "asc" } }, { sortOrder: "asc" }, { name: "asc" }],
   });
 }
 
-export const menuItemSchema = z.object({
-  name: z.string().trim().min(2).max(80),
-  category: z.enum(["FOOD", "BEVERAGE", "ALCOHOL"]),
-  price: z.number().int().min(0),
-  isAlcoholic: z.boolean().optional(),
-  hsnSac: z.string().trim().min(4).max(10).default("996331"),
-  sortOrder: z.number().int().default(0),
-});
+/** Pre-v5 shape (seed, tests): name, kind (FOOD / BEVERAGE / ALCOHOL), price; v5 adds the optional food type. */
+export const menuItemSchema = legacyMenuItemSchema;
 
+/** v5 §1.1: an ACTIVE item in the Food / Drinks / Alcoholic drinks category (`menu.manage`: Bar staff, Manager, Owner). */
 export async function createMenuItem(actor: Actor, raw: z.input<typeof menuItemSchema>, outer?: Tx) {
-  assertCan(actor, "bar.close_day"); // OWNER / MANAGER manage the menu
-  const input = menuItemSchema.parse(raw);
-  return withTx(async (tx) => {
-    const alcoholic = input.isAlcoholic ?? input.category === "ALCOHOL";
-    const item = await tx.menuItem.create({
-      data: { name: input.name, category: input.category, price: input.price, isAlcoholic: alcoholic, taxCategory: alcoholic ? "OUTSIDE_GST" : "RESTAURANT", hsnSac: input.hsnSac, sortOrder: input.sortOrder },
-    });
-    await audit(tx, actor, "menu.create", "menu_item", item.id, { after: item });
-    return item;
-  }, outer);
+  return addLegacyMenuItem(actor, raw, outer);
 }
 
-/** Bar staff can mark an item sold out / back on (BR-1). Price changes are Owner/Manager only. */
+/**
+ * Sold out / back on (BR-1) and, v5 MN-1, the base price (`menu.price`: Bar staff, Manager, Owner — the price book's
+ * MENU target; v4 RN-3 keeps promotions, bands and plan discounts with the Owner).
+ */
 export async function updateMenuItem(actor: Actor, id: string, raw: { available?: boolean; price?: number }) {
   assertCan(actor, "bar.operate");
-  if (raw.price !== undefined) assertCan(actor, "bar.close_day");
-  return withTx(async (tx) => {
-    const before = await tx.menuItem.findUnique({ where: { id } });
-    if (!before) throw new DomainError("NOT_FOUND", "Menu item was not found.");
-    // v3 §9.2: a price change is a new price-book version (in effect now); availability is the item's own switch.
-    if (raw.price !== undefined && raw.price !== before.price) {
-      const { setBasePriceTx } = await import("./price-book");
-      await setBasePriceTx(tx, actor, { target: `MENU:${id}`, price: raw.price });
-    }
-    const item = await tx.menuItem.update({ where: { id }, data: { available: raw.available } });
-    await audit(tx, actor, "menu.update", "menu_item", id, { before, after: item });
-    return item;
-  });
+  if (raw.price !== undefined) assertCan(actor, "menu.price");
+  return editMenuItem(actor, id, { ...(raw.available !== undefined ? { available: raw.available } : {}), ...(raw.price !== undefined ? { price: raw.price } : {}) });
 }
 
 export async function createTable(actor: Actor, raw: { number: number; capacity: number; area: string }, outer?: Tx) {

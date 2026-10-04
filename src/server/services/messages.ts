@@ -2,6 +2,7 @@
 // emails when they are delivered or fail, WhatsApp messages when staff open the prepared wa.me link (status OPENED —
 // the app can't know whether the staff member pressed send in WhatsApp, so it never claims "sent").
 import { z } from "zod";
+import { email as emailField, mobilePhone, optionalContact } from "@/lib/validation/contact";
 import { clock } from "@/lib/clock";
 import { formatINR } from "@/lib/money";
 import { fmtDate, fmtDateTime, istDate } from "@/lib/time";
@@ -41,7 +42,7 @@ export const whatsappSchema = z.discriminatedUnion("template", [
   z.object({ template: z.literal("ORDER"), orderId: z.string().min(1) }),
   z.object({ template: z.literal("INVOICE"), invoiceId: z.string().min(1) }),
   z.object({ template: z.literal("LEAD"), leadId: z.string().min(1) }),
-  z.object({ template: z.literal("CUSTOM"), phone: z.string().min(10).max(20), text: z.string().trim().min(2).max(1000) }),
+  z.object({ template: z.literal("CUSTOM"), phone: mobilePhone, text: z.string().trim().min(2).max(1000) }), // v5 CV-1
 ]);
 
 const appUrl = () => (process.env.APP_URL ?? "").replace(/\/$/, "");
@@ -123,7 +124,7 @@ export async function whatsappLink(actor: Actor, raw: z.infer<typeof whatsappSch
   return { url: `https://wa.me/${number}?text=${encodeURIComponent(c.text)}`, to: number, text: c.text };
 }
 
-export const testEmailSchema = z.object({ to: z.string().trim().email().optional() });
+export const testEmailSchema = z.object({ to: optionalContact(emailField) }); // v5 CV-4
 
 /** Owner: send a real test email now; success marks email as verified (capability `email`). */
 export async function sendTestEmail(actor: Actor, raw: z.infer<typeof testEmailSchema> = {}) {

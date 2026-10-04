@@ -3,6 +3,7 @@ import type { Bill, Invoice, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { clock } from "@/lib/clock";
 import { formatInvoiceNumber, isValidGstin } from "@/lib/codes";
+import { contactPhone as contactPhoneField, email as emailField, optionalContact } from "@/lib/validation/contact";
 import { formatINR } from "@/lib/money";
 import { addDays, dbDate, financialYear, fromDbDate, istDate } from "@/lib/time";
 import { prisma, withTx, type Tx } from "../db";
@@ -79,8 +80,9 @@ export const clientSchema = z.object({
   stateCode: z.string().regex(/^\d{2}$/).optional(),
   address: z.string().trim().min(5).max(300),
   contactName: z.string().trim().min(2).max(100),
-  contactEmail: z.string().trim().email().optional().or(z.literal("").transform(() => undefined)),
-  contactPhone: z.string().trim().max(20).optional().or(z.literal("").transform(() => undefined)),
+  // v5 CV-3/CV-4: a business contact may give a mobile or an STD landline.
+  contactEmail: optionalContact(emailField),
+  contactPhone: optionalContact(contactPhoneField),
   paymentTermsDays: z.number().int().min(0).max(180).optional(),
 });
 

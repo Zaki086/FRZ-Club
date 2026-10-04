@@ -2,10 +2,11 @@
 import type { Bill, Membership, Plan, PlanCode } from "@prisma/client";
 import { z } from "zod";
 import { clock } from "@/lib/clock";
-import { CODE_SEQUENCE, formatCode, isIndianMobile, normalisePhone } from "@/lib/codes";
+import { CODE_SEQUENCE, formatCode } from "@/lib/codes";
+import { clearableContact, email as emailField, mobilePhone, optionalContact } from "@/lib/validation/contact";
 import { formatINR, roundDiv } from "@/lib/money";
 import { addDays, addMonths, ageOn, dbDate, diffDays, fmtDate, fromDbDate, istDate } from "@/lib/time";
-import { nextSeq, pgConstraint, pgErrorCode, prisma, withTx, type Tx } from "../db";
+import { nextSeq, pgErrorCode, prisma, withTx, type Tx } from "../db";
 import { DomainError } from "../errors";
 import { actorId, actorKey, type Actor } from "../rbac/actor";
 import { assertCan, assertStaffOrSelf } from "../rbac/permissions";
@@ -22,6 +23,7 @@ import { effectiveMembership, quoteMembership } from "./pricing";
 import { getSettings } from "./settings";
 import { guardianUserIds } from "./family";
 import { notifyMember } from "./channels";
+import { assertContactsAvailable, duplicateContactError } from "./contacts";
 
 const today = () => istDate(clock.now());
 
@@ -36,16 +38,17 @@ const photoSchema = z
 
 export const createMemberSchema = z.object({
   name: z.string().trim().min(2, "name is required").max(100),
-  phone: z.string().transform(normalisePhone).refine(isIndianMobile, "must be a 10-digit Indian mobile number"),
-  email: z.string().trim().toLowerCase().email().optional().or(z.literal("").transform(() => undefined)),
+  // v5 CV-1/CV-4: the shared contact validators (canonical 10-digit mobile, lower-case email).
+  phone: mobilePhone,
+  email: optionalContact(emailField),
   dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date of birth is required"),
   photoUrl: photoSchema,
   emergencyContactName: z.string().trim().max(100).optional().or(z.literal("").transform(() => undefined)),
-  emergencyContactPhone: z.string().trim().max(20).optional().or(z.literal("").transform(() => undefined)),
+  emergencyContactPhone: optionalContact(mobilePhone),
   leadId: z.string().optional(),
   // Completion pass P1: a guardian for members under 18 (required) — linked if the guardian is a member too.
   guardianName: z.string().trim().max(100).optional().or(z.literal("").transform(() => undefined)),
-  guardianPhone: z.string().optional().or(z.literal("").transform(() => undefined)).transform((p) => (p ? normalisePhone(p) : undefined)).refine((p) => !p || isIndianMobile(p), "guardian's mobile must be a 10-digit Indian mobile number"),
+  guardianPhone: optionalContact(mobilePhone),
   // DPDP: the member agreed to the club storing their details (ticked at the desk).
   consent: z.boolean().optional(),
   // v4 §5.1: a separate tick — "Send me booking and refund updates on WhatsApp" (stored with the time).
@@ -83,6 +86,8 @@ export async function createMemberTx(tx: Tx, actor: Actor, input: z.infer<typeof
   }
   if (input.guardianPhone && input.guardianPhone === input.phone) throw new DomainError("VALIDATION_FAILED", "The guardian's mobile must be different from the member's.");
   const guardian = input.guardianPhone ? await tx.member.findUnique({ where: { phone: input.guardianPhone }, select: { id: true } }) : null;
+  // v5 CV-6: a phone or email already registered → PHONE_/EMAIL_ALREADY_REGISTERED (staff see the member code).
+  await assertContactsAvailable(tx, actor, { phone: input.phone, email: input.email });
   const passwordHash = internal.password ? await hashPassword(internal.password) : null;
   let user;
   try {
@@ -90,11 +95,7 @@ export async function createMemberTx(tx: Tx, actor: Actor, input: z.infer<typeof
       data: { name: input.name, phone: input.phone, email: input.email ?? null, passwordHash, role: "MEMBER", credentialsIssuedAt: passwordHash ? clock.now() : null },
     });
   } catch (e) {
-    if (pgErrorCode(e) === "23505") {
-      const field = (pgConstraint(e) ?? "").includes("email") ? `email ${input.email}` : `phone ${input.phone}`;
-      throw new DomainError("VALIDATION_FAILED", `Someone is already registered with ${field}.`);
-    }
-    throw e;
+    throw duplicateContactError(e, actor, { phone: input.phone, email: input.email }) ?? e;
   }
   const seq = await nextSeq(tx, CODE_SEQUENCE.member);
   const member = await tx.member.create({
@@ -253,10 +254,10 @@ export async function createMember(actor: Actor, raw: CreateMemberInput, idempot
 
 export const updateMemberSchema = z.object({
   name: z.string().trim().min(2).max(100).optional(),
-  email: z.string().trim().toLowerCase().email().optional().or(z.literal("").transform(() => null)).nullable(),
+  email: clearableContact(emailField),
   photoUrl: photoSchema.nullable(),
   emergencyContactName: z.string().trim().max(100).optional().nullable(),
-  emergencyContactPhone: z.string().trim().max(20).optional().nullable(),
+  emergencyContactPhone: clearableContact(mobilePhone),
 });
 
 export async function updateMember(actor: Actor, memberId: string, raw: z.infer<typeof updateMemberSchema>) {
@@ -265,6 +266,7 @@ export async function updateMember(actor: Actor, memberId: string, raw: z.infer<
   return withTx(async (tx) => {
     const before = await tx.member.findUnique({ where: { id: memberId } });
     if (!before) throw new DomainError("NOT_FOUND", "Member was not found.");
+    if (input.email) await assertContactsAvailable(tx, actor, { email: input.email }, { memberId, userId: before.userId }, "edit");
     const member = await tx.member.update({
       where: { id: memberId },
       data: {

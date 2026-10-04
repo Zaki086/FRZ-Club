@@ -2,7 +2,7 @@
 // forgotten password (email only when email really works — otherwise the club issues a link), staff-issued reset
 // links, and "log out everywhere".
 import { z } from "zod";
-import { normalisePhone } from "@/lib/codes";
+import { classifyLoginIdentifier, clearableContact, email as emailField, LOGIN_IDENTIFIER_MESSAGE, mobilePhone } from "@/lib/validation/contact";
 import { prisma } from "../db";
 import { DomainError } from "../errors";
 import { actorId, type Actor, type UserActor } from "../rbac/actor";
@@ -11,8 +11,9 @@ import { audit } from "../services/audit";
 import { isEnabled } from "../services/capabilities";
 import { queueEmail } from "../services/notifications";
 import { getSettings } from "../services/settings";
+import { assertContactsAvailable } from "../services/contacts";
 import { hashPassword, verifyPassword } from "./password";
-import { createPasswordSetToken, findUserByIdentifier, revokeSessions, tokenHash } from "./sessions";
+import { createPasswordSetToken, findUserByIdentifier, MEMBER_CODE_RE, revokeSessions, tokenHash } from "./sessions";
 
 export async function getProfile(actor: Actor) {
   assertUser(actor);
@@ -25,9 +26,10 @@ export async function getProfile(actor: Actor) {
 }
 
 export const profileSchema = z.object({
-  email: z.string().trim().toLowerCase().email().or(z.literal("")).optional(),
+  // v5 CV-1/CV-4: blank clears the value.
+  email: clearableContact(emailField),
   emergencyContactName: z.string().trim().max(80).optional(),
-  emergencyContactPhone: z.string().trim().max(20).optional(),
+  emergencyContactPhone: clearableContact(mobilePhone),
 });
 
 /** Edit your own contact details. Name and phone (the login) are changed at the desk / by the Owner. */
@@ -37,16 +39,13 @@ export async function updateProfile(actor: Actor, raw: z.infer<typeof profileSch
   const before = await prisma.user.findUniqueOrThrow({ where: { id: actor.userId }, select: { email: true } });
   if (input.email !== undefined) {
     const email = input.email || null;
-    if (email) {
-      const other = await prisma.user.findFirst({ where: { email, NOT: { id: actor.userId } } });
-      if (other) throw new DomainError("VALIDATION_FAILED", "That email address is already used by another account.");
-    }
+    // v5 CV-6: case-insensitive; a member only hears "already registered" (an edit keeps VALIDATION_FAILED).
+    if (email) await assertContactsAvailable(prisma, actor, { email }, { userId: actor.userId, memberId: actor.memberId }, "edit");
     await prisma.user.update({ where: { id: actor.userId }, data: { email } });
     if (actor.memberId) await prisma.member.update({ where: { id: actor.memberId }, data: { email } });
   }
   if (actor.memberId && (input.emergencyContactName !== undefined || input.emergencyContactPhone !== undefined)) {
-    const phone = input.emergencyContactPhone ? normalisePhone(input.emergencyContactPhone) : input.emergencyContactPhone;
-    if (phone && !/^[6-9]\d{9}$/.test(phone)) throw new DomainError("VALIDATION_FAILED", "Emergency contact phone must be a 10-digit Indian mobile.");
+    const phone = input.emergencyContactPhone;
     await prisma.member.update({ where: { id: actor.memberId }, data: { emergencyContactName: input.emergencyContactName || null, emergencyContactPhone: phone || null } });
   }
   await audit(prisma, actor, "account.profile", "user", actor.userId, { before: { email: before.email }, after: { email: input.email ?? before.email } });
@@ -76,7 +75,20 @@ export async function logoutEverywhere(actor: Actor) {
   return { ok: true };
 }
 
-export const forgotSchema = z.object({ identifier: z.string().trim().min(3).max(160) });
+/** v5 CV-5: a mobile or an email (or a member code, v3 WK-2) — anything else is "Enter your registered mobile number or email." */
+export const loginIdentifierField = z
+  .string({ error: LOGIN_IDENTIFIER_MESSAGE })
+  .trim()
+  .max(254, LOGIN_IDENTIFIER_MESSAGE)
+  .transform((v, ctx) => {
+    const id = classifyLoginIdentifier(v);
+    if (id) return id.value;
+    if (MEMBER_CODE_RE.test(v)) return v;
+    ctx.addIssue({ code: "custom", message: LOGIN_IDENTIFIER_MESSAGE });
+    return z.NEVER;
+  });
+
+export const forgotSchema = z.object({ identifier: loginIdentifierField });
 
 /**
  * Forgotten password. The answer never says whether an account exists. With working email the link is mailed;

@@ -85,6 +85,21 @@ export const CAPABILITIES = {
   // through the same price book and guardrails. Courts, social play, plans and the bar menu stay `pricing.manage`.
   // v4 RN-3: no longer the Manager; a shop discount above `max_staff_discount_pct` waits for the Owner.
   "shop.pricing": [O, SS],
+  // v5 MN-1: the bar menu (categories, items, photos, availability, archive, print, table QR cards).
+  "menu.manage": [O, M, BS],
+  // v5 MN-1: menu item BASE prices, written to the price book — an explicit exception to v4 RN-3 for menu base prices
+  // only. Promotions, time bands and plan discounts stay `pricing.manage` (the Owner's).
+  "menu.price": [O, M, BS],
+  // v5 §3 (MSGCORE) ready-made messages. The Owner edits the template library (Settings → Message Templates); the
+  // Manager reads it. MT-4: front desk, Manager and Owner send TRANSACTIONAL templates (one person, or in bulk from
+  // Renewal & Dues, Check-in Risk and the Leads Board); MT-5: only Manager and Owner send ANNOUNCEMENT templates and
+  // bulk from the Members list.
+  "messages.templates.manage": [O],
+  "messages.templates.view": [O, M],
+  "messages.compose": [O, M, FD],
+  "messages.announce": [O, M],
+  "messages.bulk": [O, M, FD],
+  "messages.bulk_members": [O, M],
 } as const satisfies Record<string, Role[]>;
 
 export type Capability = keyof typeof CAPABILITIES;

@@ -2,20 +2,22 @@
 import type { Role } from "@prisma/client";
 import { reassignLeadsOf } from "./crm";
 import { z } from "zod";
-import { isIndianMobile, normalisePhone } from "@/lib/codes";
+import { email as emailField, mobilePhone, optionalContact } from "@/lib/validation/contact";
 import { dbDate } from "@/lib/time";
-import { prisma, withTx, pgErrorCode, type Tx } from "../db";
+import { prisma, withTx, type Tx } from "../db";
 import { DomainError } from "../errors";
 import type { Actor } from "../rbac/actor";
 import { assertCan } from "../rbac/permissions";
 import { hashPassword } from "../auth/password";
 import { revokeSessions } from "../auth/sessions";
 import { audit } from "./audit";
+import { assertContactsAvailable, duplicateContactError } from "./contacts";
 
 export const createStaffSchema = z.object({
   name: z.string().trim().min(2).max(100),
-  phone: z.string().transform(normalisePhone).refine(isIndianMobile, "must be a 10-digit Indian mobile number"),
-  email: z.string().trim().toLowerCase().email().optional().or(z.literal("").transform(() => undefined)),
+  // v5 CV-1/CV-4: shared contact validators.
+  phone: mobilePhone,
+  email: optionalContact(emailField),
   role: z.enum(["OWNER", "MANAGER", "FRONT_DESK", "SHOP_STAFF", "BAR_STAFF", "ACCOUNTANT", "KITCHEN"]),
   password: z.string().min(8).max(100),
   monthlySalary: z.number().int().min(0),
@@ -28,6 +30,8 @@ export async function createStaff(actor: Actor, raw: CreateStaffInput, outer?: T
   const input = createStaffSchema.parse(raw);
   const passwordHash = await hashPassword(input.password);
   return withTx(async (tx) => {
+    // v5 CV-6: PHONE_/EMAIL_ALREADY_REGISTERED, naming the member when the number belongs to one.
+    await assertContactsAvailable(tx, actor, { phone: input.phone, email: input.email });
     try {
       const user = await tx.user.create({
         data: {
@@ -46,10 +50,7 @@ export async function createStaff(actor: Actor, raw: CreateStaffInput, outer?: T
       });
       return { user, employee };
     } catch (e) {
-      if (pgErrorCode(e) === "23505") {
-        throw new DomainError("VALIDATION_FAILED", `A user with phone ${input.phone} or that email already exists.`);
-      }
-      throw e;
+      throw duplicateContactError(e, actor, { phone: input.phone, email: input.email }) ?? e;
     }
   }, outer);
 }

@@ -53,6 +53,17 @@ export const REJECTION_CODES = [
   "LINK_INVALID",
   "LINK_EXPIRED",
   "LINK_USED",
+  // v5 §1.3 (ORDER) member bar orders: MO-1 not at the club (no table scan / check-in), MO-5 tab limit.
+  "NOT_AT_CLUB",
+  "TAB_LIMIT_REACHED",
+  // v5 §2.2 (VALID) contact validation: a phone / email already on another member or account (CV-6).
+  "PHONE_ALREADY_REGISTERED",
+  "EMAIL_ALREADY_REGISTERED",
+  // v5 §3 (MSGCORE) message templates: MT-1 a variable the context doesn't have; the same template to the same person
+  // within 24 h (confirm to send again); a channel that isn't available or the recipient can't receive.
+  "UNKNOWN_TEMPLATE_VARIABLE",
+  "DUPLICATE_RECENT_SEND",
+  "CHANNEL_NOT_AVAILABLE",
   // Transport-level codes (not business rules) — see DECISIONS.md D-03.
   "NOT_FOUND",
   "UNAUTHENTICATED",

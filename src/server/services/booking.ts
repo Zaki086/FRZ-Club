@@ -5,6 +5,7 @@ import type { BookingChannel, Court, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { clock } from "@/lib/clock";
 import { CODE_SEQUENCE, formatCode, normalisePhone } from "@/lib/codes";
+import { email as emailField, mobilePhone, optionalContact } from "@/lib/validation/contact";
 import { formatINR } from "@/lib/money";
 import {
   addDays, fmtDate, fmtRange, HOUR, istDate, istDayRange, istTime, istToUtc, isValidDateStr, MINUTE, minutesToTime, timeToMinutes,
@@ -34,7 +35,8 @@ export const playerInputSchema = z.union([
   // Completion pass §7 (member): add a partner by their mobile number as well as by member code.
   z.object({ memberPhone: z.string().min(10).max(20) }),
   z.object({ guestId: z.string().min(1) }),
-  z.object({ guest: z.object({ name: z.string().trim().min(2).max(100), phone: z.string().optional(), email: z.string().email().optional() }) }),
+  // v5 CV-1/CV-4: a guest player's mobile and email (both optional) use the shared validators.
+  z.object({ guest: z.object({ name: z.string().trim().min(2).max(100), phone: optionalContact(mobilePhone), email: optionalContact(emailField) }) }),
 ]);
 export type PlayerInput = z.infer<typeof playerInputSchema>;
 
@@ -116,8 +118,7 @@ async function resolvePlayers(tx: Tx, inputs: PlayerInput[]): Promise<ResolvedPl
       if (!g) throw new DomainError("PLAYERS_INVALID", "Guest was not found.");
       out.push({ memberId: null, guestId: g.id, name: g.name });
     } else {
-      const phone = p.guest.phone ? normalisePhone(p.guest.phone) : null;
-      const g = await findOrCreateGuest(tx, { name: p.guest.name, phone, email: p.guest.email ?? null });
+      const g = await findOrCreateGuest(tx, { name: p.guest.name, phone: p.guest.phone ?? null, email: p.guest.email ?? null });
       out.push({ memberId: null, guestId: g.id, name: g.name });
     }
   }

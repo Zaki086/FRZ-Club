@@ -23,6 +23,7 @@ import { getSettings } from "./settings";
 import { signResolutionToken } from "./signed-links";
 import { cancelSocialSessionTx, notifySocialCancelled } from "./social";
 import { waAmount, waDate, waDateTime, waFirstName, waSession, waTime, type WaMessage } from "./whatsapp/templates";
+import { formatPhone } from "@/lib/validation/contact";
 
 export const CLOSURE_REASONS = ["MAINTENANCE", "WET_COURT", "WEATHER", "EVENT", "OTHER"] as const;
 export const CLOSURE_REASON_LABEL: Record<(typeof CLOSURE_REASONS)[number], string> = {
@@ -214,7 +215,7 @@ async function notifyCancelled(tx: Tx, actor: Actor, b: Affected["bookings"][num
       wa: waFor(recipient?.name, isBooker),
     });
   }
-  const call = s.club.phone ? ` Call the club on ${s.club.phone}` : " Reply or call the club";
+  const call = s.club.phone ? ` Call the club on ${formatPhone(s.club.phone)}` : " Reply or call the club";
   const guestIds = [...new Set([booking.primaryGuestId, ...booking.players.filter((p) => !p.removedAt).map((p) => p.guestId)].filter((x): x is string => !!x))];
   for (const g of guestIds) {
     const guest = await tx.guest.findUnique({ where: { id: g }, select: { name: true } });

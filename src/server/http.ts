@@ -11,6 +11,22 @@ export type RouteCtx<P> = { req: NextRequest; actor: Actor; params: P; idempoten
 
 type Handler<P, T> = (ctx: RouteCtx<P>) => Promise<T>;
 
+type Issue = { code?: string; path?: PropertyKey[]; message?: string; errors?: Issue[][] };
+
+/**
+ * v5 §2.2 (VALID): a failed union (e.g. a booking player: member / guest) is reported by Zod as "Invalid input" at the
+ * union's path. Report the branch the input got furthest into instead, so the message names the field
+ * ("players.1.guest.phone: Enter a valid 10-digit Indian mobile number.").
+ */
+function mostSpecificIssue(issue: Issue | undefined): Issue | undefined {
+  if (!issue || issue.code !== "invalid_union" || !issue.errors?.length) return issue;
+  const depth = (b: Issue[]) => Math.max(0, ...b.map((i) => i.path?.length ?? 0));
+  const ranked = [...issue.errors].sort((x, y) => depth(y) - depth(x));
+  if (ranked.length > 1 && depth(ranked[0]) === depth(ranked[1])) return issue;
+  const inner = mostSpecificIssue(ranked[0][0]);
+  return inner ? { ...inner, path: [...(issue.path ?? []), ...(inner.path ?? [])] } : issue;
+}
+
 export function errorResponse(e: unknown): NextResponse {
   if (e instanceof DomainError) {
     return NextResponse.json(
@@ -19,8 +35,8 @@ export function errorResponse(e: unknown): NextResponse {
     );
   }
   if (e instanceof ZodError) {
-    const first = e.issues[0];
-    const where = first?.path?.length ? `${first.path.join(".")}: ` : "";
+    const first = mostSpecificIssue(e.issues[0] as Issue | undefined);
+    const where = first?.path?.length ? `${first.path.map(String).join(".")}: ` : "";
     return NextResponse.json(
       {
         error: {
