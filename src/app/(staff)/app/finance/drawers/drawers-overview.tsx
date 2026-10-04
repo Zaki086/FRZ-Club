@@ -49,7 +49,7 @@ function DepositDialog({ open, onOpenChange, safe, onDone }: { open: boolean; on
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="Record a bank deposit" description={`Cash taken from the safe to the bank. The safe holds ${formatINR(safe)}.`}>
+      <DialogContent title="Record a bank deposit" description={`The safe holds ${formatINR(safe)}.`}>
         <div className="flex flex-col gap-3">
           <Field label="Amount ₹"><Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
           <Field label="Deposit date"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
@@ -106,7 +106,7 @@ function SafePanel({ canDeposit }: { canDeposit: boolean }) {
           <CardContent className="grid gap-4 lg:grid-cols-2">
             <div>
               <h3 className="mb-1 text-sm font-semibold">Safe movements</h3>
-              {s.movements.length === 0 ? <Empty title="Nothing in the safe yet" hint="Cash drops from the drawers go in; pay-ins and bank deposits come out." /> : (
+              {s.movements.length === 0 ? <Empty title="Nothing in the safe yet" /> : (
                 <Table>
                   <THead><TR><TH>When</TH><TH>What</TH><TH className="text-right">Amount</TH><TH className="text-right">Safe</TH></TR></THead>
                   <TBody>
@@ -163,7 +163,7 @@ export function DrawersOverview() {
             </div>
           </div>
           {o.tills.length === 0 ? (
-            <Empty title="No tills yet" hint="The Owner adds the tills in Settings → Cash drawers." />
+            <Empty title="No tills yet" />
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="tills">
               {o.tills.map((t) => (

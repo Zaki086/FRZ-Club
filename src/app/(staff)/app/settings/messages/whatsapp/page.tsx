@@ -13,10 +13,7 @@ export default async function WhatsAppLogPage() {
   if (!can(actor, "messages.log")) forbidden();
   return (
     <div>
-      <PageHeader
-        title="WhatsApp messages"
-        subtitle="Every automatic WhatsApp message: template, recipient, status timeline, error and tries. A message that could not go automatically shows why — the desk got it in Messages to send."
-      />
+      <PageHeader title="WhatsApp messages" />
       <p className="mb-3 text-sm"><Link className="text-primary hover:underline" href="/app/settings/messages">← Message log</Link></p>
       <WhatsAppLogView />
     </div>

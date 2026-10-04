@@ -234,7 +234,7 @@ export function RefundsQueue({ userId, canApprove, isOwner, managerLimit }: { us
             <Link className="self-start text-xs font-semibold text-primary underline" href={`/app/refunds/${r.id}`}>Open the refund</Link>
           </div>
         )}
-        empty={{ title: "No refunds match these filters", hint: "Ask for a refund from the bill (booking, sale, membership or tab)." }}
+        empty={{ title: "No refunds match these filters" }}
       />
     </div>
   );

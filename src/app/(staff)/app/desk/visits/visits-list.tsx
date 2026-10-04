@@ -86,7 +86,7 @@ export function VisitsList() {
           {r.open_tab_code && r.state === "IN" ? ` · open bar tab ${r.open_tab_code}` : ""}
         </p>
       )}
-      empty={{ title: "No check-ins match these filters", hint: "Players are checked in from the court bookings and social play screens." }}
+      empty={{ title: "No check-ins match these filters" }}
     />
   );
 }

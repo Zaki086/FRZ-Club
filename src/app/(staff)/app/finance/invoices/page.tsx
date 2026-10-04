@@ -9,7 +9,7 @@ export default async function InvoicesPage() {
   if (!can(actor, "invoices")) forbidden();
   return (
     <div>
-      <PageHeader title="Invoices" subtitle="Membership tax invoices are issued automatically on payment. Business and member invoices start as drafts." />
+      <PageHeader title="Invoices" />
       <InvoicesList />
     </div>
   );

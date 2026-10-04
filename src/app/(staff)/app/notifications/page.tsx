@@ -10,7 +10,7 @@ export default async function StaffNotificationsPage() {
   await requireUser(STAFF_ROLES, "/app/notifications");
   return (
     <div className="mx-auto max-w-3xl">
-      <PageHeader title="Notifications" subtitle="Alerts for your role: bookings, low stock, leads, leave and more." />
+      <PageHeader title="Notifications" />
       <NotificationsList />
     </div>
   );

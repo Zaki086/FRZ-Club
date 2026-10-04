@@ -174,7 +174,7 @@ function ShiftsList({ employees }: { employees: Employee[] }) {
         },
         { key: "next", header: "", cell: (r) => <span onClick={(e) => e.stopPropagation()}><ShiftNext r={r} employees={employees} /></span> },
       ]}
-      empty={{ title: "No shifts for these filters", hint: "Widen the dates or remove a filter. Assign shifts from the Roster tab." }}
+      empty={{ title: "No shifts for these filters" }}
     />
   );
 }

@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { InfoField } from "@/components/info-tip";
 import { formatINR } from "@/lib/money";
 import { assertNumbers, fromRupeeText, putSetting, SaveBar, toRupeeText, type SettingRow } from "./shared";
 
@@ -62,7 +63,6 @@ export function CashTab({ rows, onSaved }: { rows: SettingRow[]; onSaved: () => 
       <Card className="lg:col-span-2">
         <CardHeader><CardTitle>Tills</CardTitle></CardHeader>
         <CardContent className="flex flex-col gap-3 text-sm">
-          <p className="text-muted-foreground">Each physical till holds one open drawer session at a time. Staff choose the till when they open their drawer; the default float is shown to them.</p>
           <DataState state={tills}>
             {(ts) => (
               <Table>
@@ -95,9 +95,10 @@ export function CashTab({ rows, onSaved }: { rows: SettingRow[]; onSaved: () => 
           <Field label="Notes counted (₹, comma-separated)"><Input value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
           <Field label="Coins counted (₹, comma-separated)"><Input value={coins} onChange={(e) => setCoins(e.target.value)} /></Field>
           <label className="flex items-center gap-2"><input type="checkbox" checked={blindClose} onChange={(e) => setBlindClose(e.target.checked)} /> Blind close: staff count without seeing the expected amount</label>
-          <Field label="Variance tolerance ₹" hint={`A closing variance above this (now ${formatINR(tol)}) needs a reason and a Manager's or the Owner's approval.`}>
+          <InfoField label="Variance tolerance ₹" place="variance-tolerance" infoLabel="About the variance tolerance"
+            info={`A closing count that differs from the expected cash by more than this (now ${formatINR(tol)}) needs a reason and a Manager's or the Owner's approval before the drawer is settled.`}>
             <Input inputMode="decimal" value={tolerance} onChange={(e) => setTolerance(e.target.value)} />
-          </Field>
+          </InfoField>
           <SaveBar onSave={async () => {
             const n = list(notes);
             const c = list(coins);

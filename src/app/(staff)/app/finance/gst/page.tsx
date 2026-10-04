@@ -12,7 +12,7 @@ export default async function GstPage() {
   const gst = (await getCapabilities()).gst;
   return (
     <div>
-      <PageHeader title="GST report" subtitle="Tax in collections for the period, by rate and category, split CGST/SGST (intra-state) and IGST (inter-state); GSTR-1 tables and a Tally day book to download." />
+      <PageHeader title="GST report" />
       {gst.enabled ? (
         <GstReport />
       ) : (

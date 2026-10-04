@@ -83,7 +83,7 @@ export function NewInvoiceForm({ initialClientId }: { initialClientId: string })
             </Button>
           </div>
           {customerKind === "CLIENT" ? (
-            <Field label="Client" hint="Inter-state clients (GSTIN state ≠ 24) are billed IGST; in-state clients CGST + SGST.">
+            <Field label="Client">
               <Select value={clientId} onChange={(e) => setClientId(e.target.value)} required>
                 <option value="">Choose a client…</option>
                 {(clients.data ?? []).map((c) => (

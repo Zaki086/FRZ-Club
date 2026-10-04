@@ -9,7 +9,7 @@ export default async function ClientsPage() {
   if (!can(actor, "invoices")) forbidden();
   return (
     <div>
-      <PageHeader title="Business clients" subtitle="GSTIN state code decides CGST + SGST (Gujarat, 24) or IGST (other states)." />
+      <PageHeader title="Business clients" />
       <ClientsList />
     </div>
   );

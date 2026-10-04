@@ -27,7 +27,7 @@ export function AttendanceLog({ canCorrect, selfEmployeeId }: { canCorrect: bool
           <EditedNote r={r} />
         </div>
       )}
-      empty={{ title: "No attendance for these filters", hint: "Widen the dates or remove a filter." }}
+      empty={{ title: "No attendance for these filters" }}
     />
   );
 }

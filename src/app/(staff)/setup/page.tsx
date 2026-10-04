@@ -12,8 +12,7 @@ export default async function SetupPage() {
   if (await isSetupComplete()) redirect("/app");
   return (
     <div className="mx-auto max-w-3xl p-4 sm:p-6">
-      <h1 className="text-2xl font-bold">Set up your club</h1>
-      <p className="mb-4 text-sm text-muted-foreground">A few details before the staff app opens. Everything can be changed later in Settings.</p>
+      <h1 className="mb-4 text-2xl font-bold">Set up your club</h1>
       <SetupWizard />
     </div>
   );

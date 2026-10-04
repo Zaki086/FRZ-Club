@@ -26,7 +26,7 @@ export default async function RefundPage({ params }: { params: Promise<{ id: str
   const s = await getSettings();
   return (
     <div>
-      <PageHeader title={`Refund ${r.code}`} subtitle={`${r.customer} · ${r.what}`} />
+      <PageHeader title={`Refund ${r.code}`} meta={`${r.customer} · ${r.what}`} />
       <RefundDetail
         id={r.id}
         me={actor.userId}

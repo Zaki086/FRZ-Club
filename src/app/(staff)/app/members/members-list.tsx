@@ -1,6 +1,7 @@
 "use client";
 // v3 §3, §6.2: members with the standard FilterBar, a summary strip and the next action on each row.
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,7 +31,12 @@ function NextAction({ r }: { r: Row }) {
   return null;
 }
 
-export function MembersList({ canCreate, canBulkSend = false, canEditText = false }: { canCreate: boolean; canBulkSend?: boolean; canEditText?: boolean }) {
+/**
+ * `openOnRowClick` (v6 DESK-1, the front desk's Check-in & Search Members): a row click opens the member instead of
+ * expanding the row.
+ */
+export function MembersList({ canCreate, canBulkSend = false, canEditText = false, openOnRowClick = false }: { canCreate: boolean; canBulkSend?: boolean; canEditText?: boolean; openOnRowClick?: boolean }) {
+  const router = useRouter();
   return (
     <FilteredList<Row>
       list="members"
@@ -55,6 +61,7 @@ export function MembersList({ canCreate, canBulkSend = false, canEditText = fals
         { key: "visit", header: "Last visit", cell: (r) => <RelTime when={r.last_visit} className="text-sm" /> },
         { key: "next", header: "Next", cell: (r) => <NextAction r={r} /> },
       ]}
+      onRowClick={openOnRowClick ? (r) => router.push(`/app/members/${r.id}`) : undefined}
       rowExtra={(r) => (
         <div className="grid gap-1 text-sm sm:grid-cols-3">
           <span>{r.phone}{r.email ? ` · ${r.email}` : ""}</span>

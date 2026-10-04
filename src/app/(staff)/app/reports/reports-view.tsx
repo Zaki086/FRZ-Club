@@ -14,7 +14,7 @@ import { fmtDateTime } from "@/lib/time";
 import { PeriodPicker } from "../_dashboard/period-picker";
 import { periodQuery, periodReady, type PeriodState } from "../_dashboard/types";
 
-type Link = { id: string; token: string; reportParams: { period: string; from?: string; to?: string }; expiresAt: string; revokedAt: string | null; createdAt: string; active: boolean };
+type Link = { id: string; token: string; reportParams: { period: string; from?: string; to?: string }; expiresAt: string; revokedAt: string | null; createdAt: string; active: boolean; publicUrl: string };
 
 export function ReportsView({ today, clubName, perms }: { today: string; clubName: string; perms: { ledger: boolean; gst: boolean; share: boolean } }) {
   const [period, setPeriod] = useState<PeriodState>({ period: "MONTH", from: today, to: today });
@@ -25,8 +25,7 @@ export function ReportsView({ today, clubName, perms }: { today: string; clubNam
     <div className="flex flex-col gap-4">
       <div className="no-print flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Reports & sharing</h1>
-          <p className="text-sm text-muted-foreground">Print or export the numbers, or share a read-only link that expires.</p>
+          <h1 className="text-2xl font-bold leading-tight sm:text-[1.75rem]">Reports & sharing</h1>
         </div>
         <PeriodPicker value={period} onChange={setPeriod} />
       </div>
@@ -67,7 +66,9 @@ function ShareLinks({ period }: { period: PeriodState }) {
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   const [created, setCreated] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
-  const absolute = (token: string) => `${typeof window !== "undefined" ? window.location.origin : ""}/share/${token}`;
+  const [createdUrl, setCreatedUrl] = useState<string | null>(null);
+  // URL-1: the server builds the public link from APP_URL (never this browser's address).
+  const absolute = (token: string) => links.data?.find((l) => l.token === token)?.publicUrl ?? (token === created ? createdUrl : null) ?? `/share/${token}`;
   const copy = async (token: string) => {
     try {
       await navigator.clipboard.writeText(absolute(token));
@@ -94,10 +95,11 @@ function ShareLinks({ period }: { period: PeriodState }) {
               setBusy(true);
               setError(null);
               try {
-                const r = await api<{ url: string }>("/api/reports/share-links", {
+                const r = await api<{ url: string; publicUrl: string }>("/api/reports/share-links", {
                   body: { period: period.period, ...(period.period === "CUSTOM" ? { from: period.from, to: period.to } : {}), days: Number(days) || undefined },
                 });
                 setCreated(r.url.split("/").pop() ?? null);
+                setCreatedUrl(r.publicUrl);
                 await links.reload();
               } catch (e) {
                 setError(e instanceof ApiError ? { code: e.code, message: e.message } : { message: String(e) });

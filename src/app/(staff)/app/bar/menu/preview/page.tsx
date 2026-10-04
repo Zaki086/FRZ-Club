@@ -13,7 +13,7 @@ export default async function MenuPreviewPage() {
   if (!can(actor, "menu.manage")) forbidden();
   return (
     <div className="mx-auto max-w-3xl">
-      <PageHeader title="Preview as member" subtitle="Exactly what members see in “Bar & Café” right now: active items that are available, with their own price." />
+      <PageHeader title="Preview as member" />
       <MenuPreview />
     </div>
   );

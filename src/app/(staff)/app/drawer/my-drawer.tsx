@@ -18,6 +18,7 @@ import { drawerChanged } from "@/components/drawer-badge";
 import { FilteredList } from "@/components/list/filtered-list";
 import { MovementAmount, MovementBill, MovementDetail, MovementType, type MovementRow } from "@/components/drawer-movements";
 import { useCapabilities } from "@/components/capabilities";
+import { InfoTip } from "@/components/info-tip";
 import { fmtDateTime } from "@/lib/time";
 import { formatINR, parseRupees } from "@/lib/money";
 
@@ -47,7 +48,7 @@ function StatTile({ label, stat, money, testId }: { label: string; stat?: Stat; 
 
 /** A small amount + text form in a dialog (pay in, pay out, cash drop). */
 function MoveDialog({ open, onOpenChange, title, description, children, submit, label }: {
-  open: boolean; onOpenChange: (o: boolean) => void; title: string; description: string; children: ReactNode; submit: () => Promise<unknown>; label: string;
+  open: boolean; onOpenChange: (o: boolean) => void; title: string; description?: string; children: ReactNode; submit: () => Promise<unknown>; label: string;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Err>(null);
@@ -104,12 +105,12 @@ function Actions({ d, rules, onChanged, onClosed }: { d: Open; rules: Rules; onC
         <Button variant="outline" onClick={() => open("drop")}>Cash drop</Button>
         <Button onClick={() => setDlg("close")}>Close drawer</Button>
       </div>
-      <MoveDialog open={dlg === "in"} onOpenChange={(o) => setDlg(o ? "in" : null)} title="Pay in" description="Cash brought from the safe into this drawer, e.g. change." label="Add to drawer"
+      <MoveDialog open={dlg === "in"} onOpenChange={(o) => setDlg(o ? "in" : null)} title="Pay in" label="Add to drawer"
         submit={async () => { await api("/api/drawer/pay-in", { body: { amount: amountOrThrow(amount), reason } }); done(); }}>
         <Field label="Amount ₹"><Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
         <Field label="Reason"><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Change for the evening rush" /></Field>
       </MoveDialog>
-      <MoveDialog open={dlg === "out"} onOpenChange={(o) => setDlg(o ? "out" : null)} title="Pay out" description="Petty cash spent from this drawer. It is recorded as a paid expense." label="Pay out"
+      <MoveDialog open={dlg === "out"} onOpenChange={(o) => setDlg(o ? "out" : null)} title="Pay out" label="Pay out"
         submit={async () => { await api("/api/drawer/pay-out", { body: { amount: amountOrThrow(amount), reason, category, paidTo: paidTo.trim() || undefined } }); done(); }}>
         <Field label="Amount ₹"><Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
         <Field label="Category">
@@ -124,7 +125,7 @@ function Actions({ d, rules, onChanged, onClosed }: { d: Open; rules: Rules; onC
         <Field label="Reason"><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Bulbs for court 3" /></Field>
         <Field label="Paid to (optional)"><Input value={paidTo} onChange={(e) => setPaidTo(e.target.value)} placeholder="Shop or person" /></Field>
       </MoveDialog>
-      <MoveDialog open={dlg === "drop"} onOpenChange={(o) => setDlg(o ? "drop" : null)} title="Cash drop" description="Excess cash sealed in a bag and moved to the safe." label="Drop to safe"
+      <MoveDialog open={dlg === "drop"} onOpenChange={(o) => setDlg(o ? "drop" : null)} title="Cash drop" label="Drop to safe"
         submit={async () => { await api("/api/drawer/drop", { body: { amount: amountOrThrow(amount), bagRef: bag } }); done(); }}>
         <Field label="Amount ₹"><Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
         <Field label="Sealed bag no."><Input value={bag} onChange={(e) => setBag(e.target.value)} /></Field>
@@ -149,8 +150,16 @@ function CloseDialog({ open, onOpenChange, d, rules, onClosed }: { open: boolean
   const drop = carried === null ? null : total - carried;
   return (
     <Dialog open={open} onOpenChange={(o) => { setError(null); onOpenChange(o); }}>
-      <DialogContent title={`Close ${d.name}`} description={rules.blindClose ? "Count the cash by denomination. The expected amount is shown after you submit (blind count)." : `Expected in the drawer: ${formatINR(d.balance)}.`} wide>
+      <DialogContent title={`Close ${d.name}`} description={rules.blindClose ? undefined : `Expected in the drawer: ${formatINR(d.balance)}.`} wide>
         <div className="flex flex-col gap-3" data-testid="close-drawer">
+          {rules.blindClose ? (
+            <p className="flex items-center gap-1 text-sm font-semibold">
+              Blind count
+              <InfoTip place="blind-count" label="About the blind count">
+                Count every note and coin by denomination. The expected amount is shown only after you submit, so the count can&apos;t be steered towards it.
+              </InfoTip>
+            </p>
+          ) : null}
           <DenominationGrid denominations={rules.denominations ?? DEFAULT_DENOMINATIONS} value={counts} onChange={setCounts} testId="closing-count" />
           <div className="grid gap-2 sm:grid-cols-2">
             <Field label="Leave in the till for the next shift ₹" hint={`Default float ${formatINR(d.defaultFloat)}. The rest goes to the safe.`}>
@@ -282,7 +291,6 @@ export function MyDrawer({ defaultArea = "DESK" }: { defaultArea?: "DESK" | "SHO
                 <Card>
                   <CardHeader><CardTitle>Collected by other methods</CardTitle></CardHeader>
                   <CardContent>
-                    <p className="mb-2 text-xs text-muted-foreground">UPI, card and online money is with the bank or the terminal — it is not in the drawer and not in the cash figure.</p>
                     <DrawerBreakdown
                       sessionId={d.open.id}
                       collections={d.open.collections.filter((c) => c.method !== "CASH")}

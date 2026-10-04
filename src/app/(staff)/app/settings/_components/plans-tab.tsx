@@ -18,9 +18,6 @@ export function PlansTab() {
   const plans = useApi<Plan[]>("/api/plans");
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-sm text-muted-foreground">
-        Plan entitlements drive every price and discount (R-03). Changes apply to new bills only — existing bookings, sales and tabs keep their snapshotted prices (PR-8, MB-9).
-      </p>
       <DataState state={plans} isEmpty={(d) => d.length === 0} empty={{ title: "No plans" }}>
         {(rows) => (
           <div className="grid gap-4 lg:grid-cols-3">

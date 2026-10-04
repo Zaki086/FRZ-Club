@@ -9,7 +9,7 @@ export default async function MembersPage() {
   if (!can(actor, "members.view")) forbidden();
   return (
     <div>
-      <PageHeader title="Members" subtitle="Search by name, phone or member code. Status is computed from membership dates and payments." />
+      <PageHeader title="Members" />
       {/* v5 §3.4: bulk messages from Members are the Manager's (and the Owner's). */}
       <MembersList canCreate={can(actor, "members.manage")} canBulkSend={can(actor, "messages.bulk_members")} canEditText={can(actor, "messages.templates.view")} />
     </div>

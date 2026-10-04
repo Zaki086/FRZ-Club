@@ -50,7 +50,7 @@ export function LedgerExplorer() {
         { key: "amount", header: "Amount", className: "text-right", cell: (r) => <span className="flex flex-col items-end"><Money paise={r.amount} />{r.direction === "IN" && r.amount < 0 ? <span className="text-xs text-muted-foreground">refund</span> : null}</span> },
         { key: "tax", header: "Tax", className: "text-right text-xs", cell: (r) => <Money paise={r.tax_amount} /> },
       ]}
-      empty={{ title: "No ledger entries", hint: "Try a longer period or remove a filter." }}
+      empty={{ title: "No ledger entries" }}
     />
   );
 }

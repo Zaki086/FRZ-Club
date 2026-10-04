@@ -16,7 +16,6 @@ export default async function VisitsPage() {
     <div>
       <PageHeader
         title="Check-ins"
-        subtitle="Who came in, for which booking or social session, their tier on the day and who checked them in."
         actions={<Button asChild variant="outline"><Link href="/app/desk">Desk</Link></Button>}
       />
       <VisitsList />

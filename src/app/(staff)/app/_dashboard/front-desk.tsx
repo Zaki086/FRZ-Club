@@ -7,6 +7,7 @@ import { useApi } from "@/components/api";
 import { DataState } from "@/components/states";
 import { Money } from "@/components/money";
 import { DRAWER_CHANGED_EVENT } from "@/components/drawer-badge";
+import { SendAllButton } from "@/components/send-all";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { fmtDateTime, fmtRange } from "@/lib/time";
 
@@ -58,7 +59,13 @@ export function FrontDeskDashboard() {
               {d.refundsReady.value ? <span className="ml-1 text-xs font-normal text-muted-foreground">(<Money paise={d.refundsReady.amountPaise} />)</span> : null}
             </Tile>
             <Tile label="Renewals due this week" href={d.renewals.href} testId="fd-renewals">{d.renewals.value}</Tile>
-            {d.messagesToSend ? <Tile label="Messages to send" href={d.messagesToSend.href} testId="fd-messages" warn={d.messagesToSend.value > 0}>{d.messagesToSend.value}</Tile> : null}
+            {d.messagesToSend ? (
+              // v6 SA-5: "Send all" next to the waiting messages (the whole queue; the preflight shows what happens).
+              <div className="flex flex-col gap-1">
+                <Tile label="Messages to send" href={d.messagesToSend.href} testId="fd-messages" warn={d.messagesToSend.value > 0}>{d.messagesToSend.value}</Tile>
+                {d.messagesToSend.value > 0 ? <SendAllButton filter="" variant="outline" testId="fd-send-all" /> : null}
+              </div>
+            ) : null}
             {d.overdueLeads ? <Tile label="My overdue leads" href={d.overdueLeads.href} testId="fd-leads" warn={d.overdueLeads.value > 0}>{d.overdueLeads.value}</Tile> : null}
           </div>
           <Card>

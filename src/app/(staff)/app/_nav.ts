@@ -146,7 +146,8 @@ export const ROLE_NAV: Record<StaffRole, NavGroup[]> = {
   MANAGER: MANAGER_NAV,
   FRONT_DESK: FRONT_DESK_NAV,
   SHOP_STAFF: [
-    { label: "Shop", items: [I.pos, I.orders, I.restring, I.sales, I.products, I.stock, I.movements, I.purchasing, I.stockTake, I.refunds, I.drawer] },
+    // v6 SM-1: "Café menu" — the v5 menu builder (the bar staff's "Menu"), under its café name.
+    { label: "Shop", items: [I.pos, I.orders, I.restring, I.sales, I.products, I.stock, I.movements, I.purchasing, I.stockTake, as(I.barMenu, "Café menu"), I.refunds, I.drawer] },
     ME,
   ],
   BAR_STAFF: [

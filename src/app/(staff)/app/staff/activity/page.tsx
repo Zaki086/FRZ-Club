@@ -12,7 +12,7 @@ export default async function StaffActivityPage() {
   if (!can(actor, "staff.activity")) forbidden();
   return (
     <div>
-      <PageHeader title="Staff activity" subtitle="Everything staff did on a day, from the audit trail." />
+      <PageHeader title="Staff activity" />
       <StaffActivity />
     </div>
   );

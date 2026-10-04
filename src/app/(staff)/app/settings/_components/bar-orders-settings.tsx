@@ -26,10 +26,10 @@ export function BarOrdersSettings({ rows, onSaved }: { rows: SettingRow[]; onSav
           </span>
         </label>
         <div className="grid grid-cols-2 gap-2">
-          <Field label="Member tab limit (₹)" hint="MO-5 — app orders stop when the member would owe more than this">
+          <Field label="Member tab limit (₹)">
             <Input inputMode="decimal" value={limit} onChange={(e) => setLimit(e.target.value)} aria-label="Member tab limit (₹)" />
           </Field>
-          <Field label="Incoming order turns red after (min)" hint="MO-3">
+          <Field label="Incoming order turns red after (min)">
             <Input inputMode="numeric" value={minutes} onChange={(e) => setMinutes(e.target.value)} aria-label="Incoming order turns red after (min)" />
           </Field>
         </div>

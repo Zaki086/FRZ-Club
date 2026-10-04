@@ -57,7 +57,7 @@ export function CorrectAttendance({ r, onDone }: { r: AttRow; onDone?: () => voi
     <span onClick={(e) => e.stopPropagation()}>
     <Dialog open={open} onOpenChange={setOpen}>
       <Button size="sm" variant="outline" onClick={() => setOpen(true)}>{r.clock_out ? "Correct" : "Fix clock-out"}</Button>
-      <DialogContent title={`Correct ${r.name}'s attendance`} description="Times are IST. The original times are kept and the change is recorded with your reason.">
+      <DialogContent title={`Correct ${r.name}'s attendance`}>
         <form
           className="flex flex-col gap-3"
           onSubmit={async (e) => {

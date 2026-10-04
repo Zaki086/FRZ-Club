@@ -93,7 +93,7 @@ export function TabsList({ perms }: { perms: Perms }) {
           {r.carried_reason ? <span className="sm:col-span-2">Carried over{r.carried_by_name ? ` by ${r.carried_by_name}` : ""}: “{r.carried_reason}”</span> : null}
         </div>
       )}
-      empty={{ title: "No tabs match these filters", hint: "Open a tab from the tables screen." }}
+      empty={{ title: "No tabs match these filters" }}
     />
   );
 }

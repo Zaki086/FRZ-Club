@@ -30,9 +30,9 @@ export function DashboardView({ todo, today }: { todo: React.ReactNode; today: s
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+          <h1 className="text-2xl font-bold leading-tight sm:text-[1.75rem]">Dashboard</h1>
           <p className="text-sm text-muted-foreground">
-            {state.data ? `${SCOPE_LABEL[state.data.scope]} · ${state.data.period.label} (${fmtDate(state.data.period.from)} – ${fmtDate(state.data.period.to)}) vs ${fmtDate(state.data.period.prevFrom)} – ${fmtDate(state.data.period.prevTo)}` : "Every number is read from the ledger and clicks through to its records."}
+            {state.data ? `${SCOPE_LABEL[state.data.scope]} · ${state.data.period.label} (${fmtDate(state.data.period.from)} – ${fmtDate(state.data.period.to)}) vs ${fmtDate(state.data.period.prevFrom)} – ${fmtDate(state.data.period.prevTo)}` : null}
           </p>
         </div>
         {state.data?.scope !== "DESK" ? <PeriodPicker value={period} onChange={setPeriod} /> : null}
@@ -232,6 +232,8 @@ function OpsSection({ d, open }: { d: Dashboard; open: (metric: string, title: s
               <div className="grid grid-cols-2 gap-3">
                 <StatCard label="Low-stock items" value={<span className={o.shop.lowStock ? "text-warning-text" : ""}>{o.shop.lowStock}</span>} href="/app/shop/stock?filter=low" />
                 <StatCard label="Open online orders" value={o.shop.openOrders} href="/app/shop/orders" />
+                {/* v6 WI-6: walk-in counter sales, part of Shop revenue — opens Counter Sales filtered to "Walk-in". */}
+                {o.shop.walkInSales ? <StatCard label="Walk-in sales" value={<Money paise={o.shop.walkInSales.total} />} hint={`${o.shop.walkInSales.count} sale${o.shop.walkInSales.count === 1 ? "" : "s"}`} href="/app/shop/sales?customer=walkin" /> : null}
               </div>
               <div>
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Top 5 products</p>

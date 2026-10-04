@@ -48,7 +48,6 @@ export function TaxTab({ rows, onSaved }: { rows: SettingRow[]; onSaved: () => v
                 </Field>
               ))}
             </div>
-            <p className="text-xs text-muted-foreground">Prices are GST-inclusive; tax is extracted per line. Changes apply to new bills only.</p>
             <SaveBar
               onSave={async () => {
                 const v = Object.fromEntries(Object.keys(RATE_LABEL).map((k) => [k, toInt(f[k])]));
@@ -69,7 +68,6 @@ export function TaxTab({ rows, onSaved }: { rows: SettingRow[]; onSaved: () => v
                 </Field>
               ))}
             </div>
-            <p className="text-xs text-muted-foreground">Product HSN codes are set per product; menu items carry their own codes.</p>
             <SaveBar onSave={async () => { await putSetting("sac_codes", s); onSaved(); }} />
           </CardContent>
         </Card>

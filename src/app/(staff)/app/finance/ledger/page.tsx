@@ -9,7 +9,7 @@ export default async function LedgerPage() {
   if (!can(actor, "finance.reports")) forbidden();
   return (
     <div>
-      <PageHeader title="Ledger" subtitle="The single append-only ledger. Refunds are negative entries under their original source; expenses and payroll are OUT entries." />
+      <PageHeader title="Ledger" />
       <LedgerExplorer />
     </div>
   );

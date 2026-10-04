@@ -68,7 +68,7 @@ function ActivityForm({ leadId, onDone }: { leadId: string; onDone: () => void }
   );
 }
 
-function QuoteBuilder({ leadId, hasEmail, onDone }: { leadId: string; hasEmail: boolean; onDone: () => void }) {
+export function QuoteBuilder({ leadId, hasEmail, onDone }: { leadId: string; hasEmail: boolean; onDone: () => void }) {
   const plans = useApi<Plan[]>("/api/plans");
   const [lines, setLines] = useState<QLine[]>([{ kind: "PLAN", planCode: "SILVER", months: 1 }]);
   const [validDays, setValidDays] = useState("7");
@@ -76,14 +76,14 @@ function QuoteBuilder({ leadId, hasEmail, onDone }: { leadId: string; hasEmail: 
   const caps = useCapabilities();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
-  const [result, setResult] = useState<{ link: string; total: number; validUntil: string } | null>(null);
+  const [result, setResult] = useState<{ link: string; url: string; total: number; validUntil: string } | null>(null);
   const priceOf = (code: string, m: number) => {
     const p = plans.data?.find((x) => x.code === code);
     return p ? (m === 1 ? p.price1m : m === 3 ? p.price3m : p.price12m) : null;
   };
   const update = (i: number, l: QLine) => setLines(lines.map((x, j) => (j === i ? l : x)));
   if (result) {
-    const abs = `${window.location.origin}${result.link}`;
+    const abs = result.url; // URL-1: built on the server from APP_URL
     return (
       <div className="flex flex-col gap-2 rounded-md border border-success/40 bg-success/10 p-3 text-sm">
         <p className="font-semibold">Quote created for {formatINR(result.total)} · valid until {fmtDateTime(result.validUntil)}</p>
@@ -142,7 +142,6 @@ function QuoteBuilder({ leadId, hasEmail, onDone }: { leadId: string; hasEmail: 
           </Select>
         </Field>
       </div>
-      <p className="text-xs text-muted-foreground">The total is calculated by the server from the plan prices when you create the quote.</p>
       <RejectionBanner error={error} />
       <Button
         disabled={busy}

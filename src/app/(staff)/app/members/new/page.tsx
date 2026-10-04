@@ -10,7 +10,7 @@ export default async function NewMemberPage({ searchParams }: { searchParams: Pr
   const sp = await searchParams;
   return (
     <div className="mx-auto max-w-4xl">
-      <PageHeader title="New member" subtitle="Front-desk sign-up. A plan becomes active only once its bill is fully paid (MB-3)." />
+      <PageHeader title="New member" />
       <NewMemberForm prefill={{ name: sp.name ?? "", phone: sp.phone ?? "", email: sp.email ?? "", leadId: sp.leadId ?? "" }} />
     </div>
   );

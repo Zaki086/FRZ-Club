@@ -63,7 +63,7 @@ export function DeskSearch() {
       {scan ? <QrScanner onScan={openCard} onClose={() => setScan(false)} /> : null}
       {term.length >= 2 && !term.startsWith("CC1.") ? (
         <Card>
-          <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: `No member matches “${term}”`, hint: "Check the spelling, or sign them up as a new member." }}>
+          <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: `No member matches “${term}”` }}>
             {(rows) => (
               <div className="divide-y">
                 {rows.map((m) => (

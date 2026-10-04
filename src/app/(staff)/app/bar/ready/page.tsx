@@ -9,7 +9,7 @@ export default async function ReadyPage() {
   if (!can(actor, "bar.operate")) forbidden();
   return (
     <div>
-      <PageHeader title="Ready to serve" subtitle="Items the kitchen has marked ready. Refreshes every 4 seconds." />
+      <PageHeader title="Ready to serve" />
       <ReadyQueue />
     </div>
   );

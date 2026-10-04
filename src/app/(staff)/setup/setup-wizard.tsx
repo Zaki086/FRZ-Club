@@ -107,7 +107,6 @@ function Payments({ value, onSaved }: { value: { card_enabled: boolean; upi_vpa:
   });
   return (
     <div className="flex flex-col gap-3 text-sm">
-      <p className="text-muted-foreground">Cash is always accepted. Only switch on what the club really has.</p>
       <label className="flex items-center gap-2"><input type="checkbox" checked={card} onChange={(e) => setCard(e.target.checked)} /> We have a working card machine</label>
       <Field label="Club UPI ID (optional)" hint="e.g. clubname@okhdfcbank">
         <Input value={vpa} onChange={(e) => { setVpa(e.target.value.trim()); setConfirmed(false); }} />
@@ -165,7 +164,6 @@ function Plans() {
               <strong>{p.name}</strong>: <Money paise={p.price1m} /> / month · <Money paise={p.price3m} /> / 3 months · <Money paise={p.price12m} /> / year
             </p>
           ))}
-          <p className="text-xs text-muted-foreground">Change prices, fees and discounts any time in Settings → Plans & fees.</p>
         </div>
       )}
     </DataState>

@@ -172,7 +172,7 @@ export function IncomingOrders() {
         {!d ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : !count ? (
-          <p className="text-sm text-muted-foreground">No orders waiting. Orders members place from their phones appear here.</p>
+          <p className="text-sm text-muted-foreground">No orders waiting.</p>
         ) : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {d.orders.map((o) => <OrderCard key={o.id} o={o} tables={d.tables} onDone={() => void state.reload()} />)}
