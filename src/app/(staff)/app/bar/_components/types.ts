@@ -6,6 +6,8 @@ export type TabLine = {
   id: string; name: string; category: string; isAlcoholic: boolean; qty: number; unitPrice: number; discountPct: number;
   discountAmount: number; netAmount: number; note: string | null; status: "NEW" | "PREPARING" | "READY" | "SERVED" | "VOID";
   sent: boolean; voidReason: string | null; explanation: string;
+  /** v5 MO-10: ordered by the member in the app or entered by staff; app lines wait for the bar's Accept (MO-3). */
+  source?: "APP" | "STAFF"; awaitingAcceptance?: boolean;
 };
 export type TabView = {
   id: string; code: string; status: string; payer: string; memberId: string | null; guestId: string | null; tier: string;

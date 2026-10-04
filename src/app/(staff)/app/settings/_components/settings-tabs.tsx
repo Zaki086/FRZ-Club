@@ -11,6 +11,7 @@ import { UsersTab } from "./users-tab";
 import { PaymentsTab } from "./payments-tab";
 import { CashTab } from "./cash-tab";
 import { WhatsAppTab } from "./whatsapp-tab";
+import { MessageTemplatesTab } from "./message-templates-tab";
 import type { SettingRow } from "./shared";
 
 export function SettingsTabs({ selfUserId }: { selfUserId: string }) {
@@ -26,6 +27,7 @@ export function SettingsTabs({ selfUserId }: { selfUserId: string }) {
         <TabsTrigger value="payments">Payments & services</TabsTrigger>
         <TabsTrigger value="cash">Cash drawers</TabsTrigger>
         <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger>
+        <TabsTrigger value="message-templates">Message templates</TabsTrigger>
         <TabsTrigger value="courts">Courts</TabsTrigger>
         <TabsTrigger value="users">Users & roles</TabsTrigger>
       </TabsList>
@@ -47,6 +49,9 @@ export function SettingsTabs({ selfUserId }: { selfUserId: string }) {
         </TabsContent>
         <TabsContent value="whatsapp">
           <WhatsAppTab />
+        </TabsContent>
+        <TabsContent value="message-templates">
+          <MessageTemplatesTab />
         </TabsContent>
         <TabsContent value="cash">
           <DataState state={settings}>{(rows) => <CashTab rows={rows} onSaved={() => void settings.reload()} />}</DataState>

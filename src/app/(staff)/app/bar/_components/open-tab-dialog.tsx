@@ -6,6 +6,7 @@ import { api, newIdempotencyKey, useApi } from "@/components/api";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
+import { checkContactInputs, PhoneInput } from "@/components/contact-inputs";
 import { RejectionBanner } from "@/components/states";
 import { MemberStatusBadge, type MemberStatus } from "@/components/member-status";
 import { cn } from "@/components/ui/cn";
@@ -80,7 +81,7 @@ export function OpenTabDialog({ tables, defaultTableId, trigger }: { tables: Tab
           ) : (
             <div className="flex flex-col gap-2">
               <Field label="Guest name *"><Input autoFocus className="h-12 text-base" value={guestName} onChange={(e) => setGuestName(e.target.value)} /></Field>
-              <Field label="Phone (optional)"><Input inputMode="tel" value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} /></Field>
+              <Field label="Phone (optional)"><PhoneInput name="guestPhone" value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} /></Field>
               <label className={cn("flex cursor-pointer items-center gap-2 rounded-md border p-3 text-sm", idOk && "border-primary bg-accent")}>
                 <input type="checkbox" className="h-5 w-5" checked={idOk} onChange={(e) => setIdOk(e.target.checked)} />
                 ID verified 18+ (required before serving alcohol to a guest)
@@ -99,7 +100,8 @@ export function OpenTabDialog({ tables, defaultTableId, trigger }: { tables: Tab
           <Button
             size="xl"
             disabled={busy || (mode === "member" ? !member : guestName.trim().length < 2)}
-            onClick={async () => {
+            onClick={async (e) => {
+              if (!checkContactInputs(e.currentTarget.parentElement)) return;
               setBusy(true);
               setError(null);
               try {

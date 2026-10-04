@@ -15,6 +15,7 @@ import { formatINR } from "@/lib/money";
 import { Decide } from "../refunds-queue";
 import { PayOutLoader } from "../payout";
 import { Timeline } from "@/components/refund-timeline";
+import { SendMessageButton } from "@/components/message-composer";
 
 type Detail = {
   id: string; code: string; status: string; collectStatus: string | null; amount: number; reasonLabel: string; note: string; policy: string | null;
@@ -28,7 +29,7 @@ type Detail = {
 
 const IDENTITY: Record<string, string> = { REFUND_QR: "refund QR", MEMBER_CARD: "member card", SEARCH: "search + photo", GUEST_PHONE_CODE: "guest phone + original code" };
 
-export function RefundDetail({ id, me, canApprove, isOwner, managerLimit }: { id: string; me: string; canApprove: boolean; isOwner: boolean; managerLimit: number }) {
+export function RefundDetail({ id, me, canApprove, isOwner, managerLimit, canMessage = false }: { id: string; me: string; canApprove: boolean; isOwner: boolean; managerLimit: number; canMessage?: boolean }) {
   const state = useApi<Detail>(`/api/refunds/${id}`);
   const router = useRouter();
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
@@ -56,9 +57,12 @@ export function RefundDetail({ id, me, canApprove, isOwner, managerLimit }: { id
                     {r.status === "APPROVED" && r.collectStatus === "READY_TO_COLLECT" ? "Ready to collect" : r.collectStatus === "COLLECTED" ? "Collected" : r.status.toLowerCase().replace(/^./, (c) => c.toUpperCase())}
                   </Badge>
                 </CardTitle>
-                {r.status === "COMPLETED" ? (
-                  <Button asChild variant="outline"><Link href={`/print/refund/${r.id}`} target="_blank"><Printer className="h-4 w-4" /> Print receipt</Link></Button>
-                ) : null}
+                <span className="flex flex-wrap items-center gap-2">
+                  {canMessage ? <SendMessageButton context="REFUND" recordId={r.id} /> : null}
+                  {r.status === "COMPLETED" ? (
+                    <Button asChild variant="outline"><Link href={`/print/refund/${r.id}`} target="_blank"><Printer className="h-4 w-4" /> Print receipt</Link></Button>
+                  ) : null}
+                </span>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
                 <Timeline steps={steps} />

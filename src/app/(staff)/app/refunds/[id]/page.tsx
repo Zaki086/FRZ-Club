@@ -33,6 +33,7 @@ export default async function RefundPage({ params }: { params: Promise<{ id: str
         canApprove={can(actor, "refunds.approve")}
         isOwner={actor.role === "OWNER"}
         managerLimit={s.refund_manager_limit}
+        canMessage={can(actor, "messages.compose")}
       />
     </div>
   );

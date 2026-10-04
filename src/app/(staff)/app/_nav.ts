@@ -49,7 +49,8 @@ export const NAV_ITEMS = {
   kds: { href: "/app/bar/kds", label: "Kitchen display", icon: "ChefHat", any: ["bar.kds"] },
   barTabs: { href: "/app/bar/tabs", label: "All bar tabs", icon: "Receipt", any: ["bar.operate", "bar.report"] },
   barDay: { href: "/app/bar/day", label: "Bar day & close", icon: "Moon", any: ["bar.report"] },
-  barMenu: { href: "/app/bar/menu", label: "Menu & prices", icon: "UtensilsCrossed", any: ["bar.close_day"] },
+  // v5 §1.1: the menu builder (categories, items, photos, base prices, print, table QR cards).
+  barMenu: { href: "/app/bar/menu", label: "Menu", icon: "UtensilsCrossed", any: ["menu.manage"] },
 
   crm: { href: "/app/crm", label: "Leads board", icon: "Kanban", any: ["crm"] },
 
@@ -92,56 +93,48 @@ const ME: NavGroup = { label: "Me", items: [I.staffMe, I.account] };
 const as = (item: NavItem, label: string): NavItem => ({ ...item, label });
 
 /**
- * v4 §1.1: the Owner, Manager and Front desk menus are exactly these items, in this order, with these labels (the
- * group headings never change the order). RN-1: for the Manager and Front desk these are also the pages they may
+ * v4 §1.1: the Owner, Manager and Front desk menus are exactly these items, in this order, with these labels — one
+ * flat list without group headings (the owner asked for nothing else on these three menus). RN-1: for the Manager and Front desk these are also the pages they may
  * open (plus the detail pages in `server/rbac/page-access.ts`); RN-2: the Owner may still open any page by URL.
  */
 const OWNER_NAV: NavGroup[] = [
-  { label: "Club", items: [as(I.dashboard, "Dashboard"), as(I.people, "Employees"), as(I.courts, "Command Centre")] },
   {
-    label: "Finance",
+    label: "",
     items: [
-      as(I.invoices, "Invoices"), as(I.clients, "Business Clients"), as(I.expenses, "Expenses"), as(I.payroll, "Payroll"), as(I.gst, "GST Reports"),
-      as(I.ledger, "Ledgers"), as(I.cash, "Cash Reconciliation"), as(I.drawers, "Cash Drawers"),
-    ],
-  },
-  { label: "Staff", items: [as(I.account, "My Account"), as(I.employees, "Staff Directory"), as(I.attendance, "Attendance")] },
-  {
-    label: "Admin",
-    items: [
-      as(I.pricing, "Price Book"), as(I.reports, "Reports & Sharing"), as(I.settings, "Settings"), as(I.audit, "Audit Log"), as(I.messageLog, "Message Log"),
-      as(I.notificationLog, "Notification Log"), as(I.backups, "Backups"), as(I.privacy, "Data Requests"),
+      as(I.dashboard, "Dashboard"), as(I.people, "Employees"), as(I.courts, "Command Centre"), as(I.invoices, "Invoices"),
+      as(I.clients, "Business Clients"), as(I.expenses, "Expenses"), as(I.payroll, "Payroll"), as(I.gst, "GST Reports"),
+      as(I.ledger, "Ledgers"), as(I.cash, "Cash Reconciliation"), as(I.drawers, "Cash Drawers"), as(I.account, "My Account"),
+      as(I.employees, "Staff Directory"), as(I.attendance, "Attendance"), as(I.pricing, "Price Book"), as(I.reports, "Reports & Sharing"),
+      as(I.settings, "Settings"), as(I.audit, "Audit Log"), as(I.messageLog, "Message Log"), as(I.notificationLog, "Notification Log"),
+      as(I.backups, "Backups"), as(I.privacy, "Data Requests"),
     ],
   },
 ];
 
 const MANAGER_NAV: NavGroup[] = [
-  { label: "Club", items: [as(I.dashboard, "Dashboard"), as(I.members, "Members")] },
-  { label: "Courts", items: [as(I.courts, "Command Centre"), as(I.bookings, "Bookings"), as(I.social, "Social Play"), as(I.socialPlayers, "Social Players")] },
-  { label: "Shop & bar", items: [as(I.purchasing, "Purchase Orders"), as(I.stock, "Stock & Receipts"), as(I.sales, "Counter Sales"), as(I.barDay, "Bar Day & Close")] },
-  { label: "CRM", items: [as(I.crm, "Leads Board")] },
-  { label: "Finance", items: [as(I.invoices, "Invoices"), as(I.clients, "Business Clients"), as(I.expenses, "Expenses"), as(I.cash, "Cash Reconciliation")] },
   {
-    label: "Staff",
+    label: "",
     items: [
-      as(I.account, "My Account"), as(I.employees, "Staff Directory"), as(I.attendance, "Attendance"), as(I.roster, "Rosters"), as(I.leave, "Leave Approvals"),
+      as(I.dashboard, "Dashboard"), as(I.members, "Members"), as(I.courts, "Command Centre"), as(I.bookings, "Bookings"),
+      as(I.social, "Social Play"), as(I.socialPlayers, "Social Players"), as(I.purchasing, "Purchase Orders"), as(I.stock, "Stock & Receipts"),
+      as(I.sales, "Counter Sales"), as(I.barDay, "Bar Day & Close"), as(I.crm, "Leads Board"), as(I.invoices, "Invoices"),
+      as(I.clients, "Business Clients"), as(I.expenses, "Expenses"), as(I.cash, "Cash Reconciliation"), as(I.account, "My Account"),
+      as(I.employees, "Staff Directory"), as(I.attendance, "Attendance"), as(I.roster, "Rosters"), as(I.leave, "Leave Approvals"),
       as(I.activity, "Staff Activity"),
     ],
   },
 ];
 
 const FRONT_DESK_NAV: NavGroup[] = [
-  { label: "Today", items: [as(I.dashboard, "Dashboard"), as(I.drawer, "My Cash Drawer"), as(I.refunds, "Refunds")] },
   {
-    label: "Front desk",
+    label: "",
     items: [
-      as(I.desk, "Check-in & Search Members"), as(I.newMember, "New Members"), as(I.renewals, "Renewal & Dues"), as(I.messages, "Messages to Send"),
-      as(I.checkinRisk, "Check-in Risk"),
+      as(I.dashboard, "Dashboard"), as(I.drawer, "My Cash Drawer"), as(I.refunds, "Refunds"), as(I.desk, "Check-in & Search Members"),
+      as(I.newMember, "New Members"), as(I.renewals, "Renewal & Dues"), as(I.messages, "Messages to Send"), as(I.checkinRisk, "Check-in Risk"),
+      as(I.courts, "Command Centre"), as(I.bookings, "Bookings"), as(I.social, "Social Play"), as(I.socialPlayers, "Social Players"),
+      as(I.crm, "Leads Board"), as(I.staffMe, "My Shifts & Leave"), as(I.account, "My Account"), as(I.inbox, "Notifications"),
     ],
   },
-  { label: "Courts", items: [as(I.courts, "Command Centre"), as(I.bookings, "Bookings"), as(I.social, "Social Play"), as(I.socialPlayers, "Social Players")] },
-  { label: "CRM", items: [as(I.crm, "Leads Board")] },
-  { label: "Me", items: [as(I.staffMe, "My Shifts & Leave"), as(I.account, "My Account"), as(I.inbox, "Notifications")] },
 ];
 
 /**
@@ -157,7 +150,7 @@ export const ROLE_NAV: Record<StaffRole, NavGroup[]> = {
     ME,
   ],
   BAR_STAFF: [
-    { label: "Bar & cafeteria", items: [I.barTables, I.barReady, I.kds, I.barTabs, I.barDay, I.refunds, I.drawer] },
+    { label: "Bar & cafeteria", items: [I.barTables, I.barReady, I.kds, I.barTabs, I.barDay, I.barMenu, I.refunds, I.drawer] },
     ME,
   ],
   KITCHEN: [{ label: "Kitchen", items: [I.kds] }, ME],

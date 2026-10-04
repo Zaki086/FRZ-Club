@@ -7,7 +7,7 @@
 // 3. Pay from the open drawer (cash by default; the drawer must hold the cash — otherwise "Pay in cash first").
 // 4. Print the 80 mm refund receipt.
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Printer, QrCode, Search, ShieldCheck, UserRound } from "lucide-react";
 import { api, ApiError, useApi } from "@/components/api";
 import { Money } from "@/components/money";
@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/input";
+import { checkContactInputs, PhoneInput } from "@/components/contact-inputs";
 import { cn } from "@/components/ui/cn";
 import { DrawerOpener, emptyTender, MethodSelect, ProofFields, tenderProof, useTenderMethods, type TenderDraft } from "@/components/tender-fields";
 import { formatINR } from "@/lib/money";
@@ -48,6 +49,7 @@ export function PayOutForm({ refund, via = "SEARCH", onDone }: { refund: Collect
   const methods = useTenderMethods() ?? ["CASH"];
   const [t, setT] = useState<TenderDraft>(emptyTender("CASH"));
   const [checked, setChecked] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const [guestPhone, setGuestPhone] = useState("");
   const [originalCode, setOriginalCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -68,6 +70,7 @@ export function PayOutForm({ refund, via = "SEARCH", onDone }: { refund: Collect
   }
   const amount = refund.toCollect || refund.amount;
   const submit = async () => {
+    if (!checkContactInputs(rootRef.current)) return;
     setError(null);
     setBusy(true);
     try {
@@ -86,7 +89,7 @@ export function PayOutForm({ refund, via = "SEARCH", onDone }: { refund: Collect
     }
   };
   return (
-    <div className="flex flex-col gap-3" onClick={(e) => e.stopPropagation()} data-testid="refund-payout">
+    <div ref={rootRef} className="flex flex-col gap-3" onClick={(e) => e.stopPropagation()} data-testid="refund-payout">
       <div className="flex flex-wrap items-start gap-4">
         <Photo r={refund} />
         <div className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
@@ -106,7 +109,7 @@ export function PayOutForm({ refund, via = "SEARCH", onDone }: { refund: Collect
       {refund.guest ? (
         <div className="grid gap-2 sm:grid-cols-2">
           {refund.guest.needsPhone ? (
-            <Field label="Guest's phone number"><Input inputMode="tel" value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} placeholder="The number they booked with" /></Field>
+            <Field label="Guest's phone number"><PhoneInput name="guestPhone" value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} placeholder="The number they booked with" /></Field>
           ) : null}
           {refund.guest.needsCode ? (
             <Field label={`Original ${refund.guest.codeLabel}`}><Input value={originalCode} onChange={(e) => setOriginalCode(e.target.value)} placeholder="Ask the guest — e.g. BK-000123" /></Field>

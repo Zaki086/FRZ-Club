@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
 import { assertNumbers, fromRupeeText, putSetting, SaveBar, toInt, toNum, toRupeeText, type SettingRow } from "./shared";
+import { BarOrdersSettings } from "./bar-orders-settings";
 
 type Kind = "int" | "decimal" | "rupees";
 type Scalar = { key: string; label: string; kind: Kind; hint?: string };
@@ -80,6 +81,7 @@ export function PoliciesTab({ rows, onSaved }: { rows: SettingRow[]; onSaved: ()
         </Card>
       ))}
       <LeaveAllowance value={get("leave_allowance") as { CASUAL: number; SICK: number }} onSaved={onSaved} />
+      <BarOrdersSettings rows={rows} onSaved={onSaved} />
     </div>
   );
 }

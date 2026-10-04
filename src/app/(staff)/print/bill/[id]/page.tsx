@@ -6,6 +6,7 @@ import { prisma } from "@/server/db";
 import { formatINR } from "@/lib/money";
 import { fmtDateTime } from "@/lib/time";
 import { PrintNow } from "./print-now";
+import { formatPhone } from "@/lib/validation/contact";
 
 export const metadata: Metadata = { title: "Receipt" };
 export const dynamic = "force-dynamic";
@@ -32,7 +33,7 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
       <div className="text-center">
         <p className="text-[14px] font-bold">{s.club.name || "Club"}</p>
         {s.club.address ? <p>{s.club.address}</p> : null}
-        {s.club.phone ? <p>{s.club.phone}</p> : null}
+        {s.club.phone ? <p>{formatPhone(s.club.phone)}</p> : null}
         {s.gstEnabled ? <p>GSTIN {s.club.gstin}</p> : null}
         <p className="mt-1 font-bold">{s.gstEnabled ? "TAX INVOICE" : "RECEIPT"}</p>
       </div>

@@ -10,10 +10,11 @@ import { ConfirmButton } from "@/components/confirm";
 import { InvoiceDocument } from "@/components/invoice-document";
 import { PaymentPanel } from "@/components/payment-panel";
 import { WhatsAppButton } from "@/components/whatsapp-button";
+import { SendMessageButton } from "@/components/message-composer";
 
 type Data = { invoice: { id: string; status: string; kind: string; billId: string; number: string | null }; bill: { due: number } };
 
-export function InvoiceActions({ invoiceId }: { invoiceId: string }) {
+export function InvoiceActions({ invoiceId, canMessage = false }: { invoiceId: string; canMessage?: boolean }) {
   const state = useApi<Data>(`/api/invoices/${invoiceId}`);
   const [version, setVersion] = useState(0);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
@@ -35,6 +36,7 @@ export function InvoiceActions({ invoiceId }: { invoiceId: string }) {
             <RejectionBanner error={error} />
             <div className="flex flex-wrap gap-2">
               {d.invoice.status !== "DRAFT" && d.invoice.status !== "CANCELLED" ? <WhatsAppButton target={{ template: "INVOICE", invoiceId }} /> : null}
+              {canMessage && d.invoice.status !== "DRAFT" && d.invoice.status !== "CANCELLED" ? <SendMessageButton context="INVOICE" recordId={invoiceId} /> : null}
               {d.invoice.status === "DRAFT" ? (
                 <Button
                   disabled={busy}

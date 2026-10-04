@@ -7,5 +7,5 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const actor = await requireUser();
   if (!can(actor, "crm")) forbidden();
   const { id } = await params;
-  return <LeadDetailView leadId={id} canConvert={can(actor, "members.manage")} />;
+  return <LeadDetailView leadId={id} canConvert={can(actor, "members.manage")} canMessage={can(actor, "messages.compose")} />;
 }

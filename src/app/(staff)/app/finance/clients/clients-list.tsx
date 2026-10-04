@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/input";
+import { EmailInput, PhoneInput } from "@/components/contact-inputs";
 import { Money } from "@/components/money";
 
 function NewClient({ onDone }: { onDone: () => void }) {
@@ -58,8 +59,8 @@ function NewClient({ onDone }: { onDone: () => void }) {
           <div className="grid grid-cols-2 gap-3">
             <Field label="Contact person *"><Input value={f.contactName} onChange={set("contactName")} required /></Field>
             <Field label="Payment terms (days)"><Input inputMode="numeric" value={f.paymentTermsDays} onChange={set("paymentTermsDays")} /></Field>
-            <Field label="Contact email"><Input type="email" value={f.contactEmail} onChange={set("contactEmail")} /></Field>
-            <Field label="Contact phone"><Input value={f.contactPhone} onChange={set("contactPhone")} /></Field>
+            <Field label="Contact email"><EmailInput name="contactEmail" value={f.contactEmail} onChange={set("contactEmail")} /></Field>
+            <Field label="Contact phone"><PhoneInput kind="contact" name="contactPhone" value={f.contactPhone} onChange={set("contactPhone")} /></Field>
           </div>
           <RejectionBanner error={error} />
           <Button type="submit" disabled={busy}>{busy ? "Saving…" : "Save client"}</Button>

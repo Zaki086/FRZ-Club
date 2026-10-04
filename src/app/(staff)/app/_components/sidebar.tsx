@@ -26,8 +26,8 @@ export function Sidebar({ groups }: { groups: Group[] }) {
   const nav = (
     <nav className="flex flex-col gap-4 p-3">
       {groups.map((g) => (
-        <div key={g.label}>
-          <p className="eyebrow px-2 pb-1 text-[10px] text-sidebar-foreground/60">{g.label}</p>
+        <div key={g.label || "menu"}>
+          {g.label ? <p className="eyebrow px-2 pb-1 text-[10px] text-sidebar-foreground/60">{g.label}</p> : null}
           <div className="flex flex-col gap-0.5">
             {g.items.map((i) => (
               <Link

@@ -2,13 +2,14 @@
 // v4 §5.1 Settings → WhatsApp (Owner): is the Cloud API connected (env set, token valid, webhook verified, test
 // message sent), which WhatsApp Manager template each message uses, and Meta's status for each one. Without all of
 // it, messages go to the desk's "Messages to send" queue instead.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api, useApi } from "@/components/api";
 import { DataState } from "@/components/states";
 import { loadCapabilities } from "@/components/capabilities";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
+import { PhoneInput, requireContactInputs } from "@/components/contact-inputs";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { SaveBar } from "./shared";
 
@@ -131,6 +132,7 @@ function Mapping({ s, saved }: { s: Status; saved: () => void }) {
 export function WhatsAppTab() {
   const status = useApi<Status>("/api/whatsapp/status");
   const [to, setTo] = useState("");
+  const toRef = useRef<HTMLInputElement>(null);
   const [tpl, setTpl] = useState("hello_world");
   const [lang, setLang] = useState("en_US");
   const saved = () => {
@@ -176,12 +178,12 @@ export function WhatsAppTab() {
                 Sends one template message. Meta&apos;s sample template <code>hello_world</code> (en_US) exists in every account and has no variables. When it
                 arrives, automatic WhatsApp switches on (with a valid token). Meta charges per message.
               </p>
-              <Field label="Mobile number"><Input inputMode="tel" value={to} onChange={(e) => setTo(e.target.value)} placeholder="98765 43210" /></Field>
+              <Field label="Mobile number"><PhoneInput ref={toRef} name="to" value={to} onChange={(e) => setTo(e.target.value)} placeholder="98765 43210" /></Field>
               <div className="grid grid-cols-2 gap-2">
                 <Field label="Template"><Input value={tpl} onChange={(e) => setTpl(e.target.value.trim())} /></Field>
                 <Field label="Language"><Input value={lang} onChange={(e) => setLang(e.target.value.trim())} /></Field>
               </div>
-              <SaveBar label="Send test message" disabled={!s.envOk} onSave={async () => { await api("/api/whatsapp/test", { body: { to, template: tpl, language: lang } }); saved(); }} />
+              <SaveBar label="Send test message" disabled={!s.envOk} onSave={async () => { requireContactInputs(toRef.current); await api("/api/whatsapp/test", { body: { to, template: tpl, language: lang } }); saved(); }} />
             </CardContent>
           </Card>
           <div className="lg:col-span-2">

@@ -11,7 +11,9 @@ import { toRejection, type Rejection } from "../_components/err";
 
 type Ticket = {
   ticketId: string; sentAt: string; ageMinutes: number; table: number | null; tabCode: string; payer: string;
-  lines: Array<{ id: string; name: string; qty: number; note: string | null; status: "NEW" | "PREPARING" | "READY" }>;
+  lines: Array<{ id: string; name: string; qty: number; note: string | null; status: "NEW" | "PREPARING" | "READY"; prepMinutes?: number | null }>;
+  /** v5 MO-10: an accepted member app order ("via app") or lines sent by bar staff ("by staff"). */
+  source?: "APP" | "STAFF";
 };
 
 /** Completion pass §7 (kitchen): a short two-tone beep for every new ticket, when sound is on. */
@@ -105,6 +107,9 @@ export function KitchenDisplay() {
                   <p className="text-3xl font-black leading-none">{t.table ? `Table ${t.table}` : "Counter"}</p>
                   <p className="mt-1 text-xl font-semibold text-accent">{t.payer}</p>
                   <p className="font-mono text-xs text-muted-foreground">{t.tabCode} · sent {istTime(new Date(t.sentAt))}</p>
+                  <span className={cn("mt-1 inline-block rounded px-2 py-0.5 text-xs font-bold uppercase", t.source === "APP" ? "bg-junior text-white" : "bg-white/10")} data-testid="kds-source">
+                    {t.source === "APP" ? "via app" : "by staff"}
+                  </span>
                 </div>
                 <span className={cn("rounded-lg px-3 py-1 text-2xl font-black tabular", t.ageMinutes > 20 ? "bg-destructive text-destructive-foreground" : t.ageMinutes > 10 ? "bg-warning text-warning-foreground" : "bg-white/10")}>
                   {t.ageMinutes}′
@@ -118,6 +123,7 @@ export function KitchenDisplay() {
                         <span className="text-accent">{l.qty}×</span> {l.name}
                       </p>
                       {l.note ? <p className="text-base font-semibold text-warning">⚠ {l.note}</p> : null}
+                      {l.prepMinutes ? <p className="text-sm text-white/70">Prep about {l.prepMinutes} min</p> : null}
                     </div>
                     {l.status === "NEW" ? (
                       <Button size="lg" variant="secondary" disabled={busy === l.id} onClick={() => advance(l.id, "PREPARING")}>Start</Button>

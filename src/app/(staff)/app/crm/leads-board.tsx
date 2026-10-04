@@ -4,12 +4,15 @@ import { useState } from "react";
 import { Plus } from "lucide-react";
 import { api, ApiError } from "@/components/api";
 import { RejectionBanner } from "@/components/states";
-import { FilteredList } from "@/components/list/filtered-list";
+import { FilteredList, SelectBox } from "@/components/list/filtered-list";
+import { BulkSendButton } from "@/components/message-composer-bulk";
+import { bulkTarget } from "@/components/message-composer-logic";
 import { RelTime } from "@/components/rel-time";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
+import { EmailInput, PhoneInput } from "@/components/contact-inputs";
 import { cn } from "@/components/ui/cn";
 import { STATUSES, type LeadRow } from "./types";
 
@@ -46,8 +49,8 @@ function NewLeadDialog({ onCreated }: { onCreated: () => void }) {
         >
           <Field label="Name"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required autoFocus /></Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Mobile"><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} inputMode="tel" /></Field>
-            <Field label="Email"><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
+            <Field label="Mobile"><PhoneInput name="phone" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
+            <Field label="Email"><EmailInput name="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Source">
@@ -94,10 +97,12 @@ function Board({ rows }: { rows: ListLead[] }) {
             <p className="flex items-center justify-between px-1 text-sm font-bold">{COL_TITLE[s]} <span className="rounded-full bg-card px-2 text-xs tabular">{col.length}</span></p>
             {col.length === 0 ? <p className="px-1 py-4 text-center text-xs text-muted-foreground">No leads</p> : null}
             {col.map((l) => (
+              // v5 §3.4: while bulk selection is on, each card has its checkbox beside it (outside the link).
+              <div key={l.id} className="flex items-start gap-1.5">
+              <span className="pt-3 empty:hidden"><SelectBox id={l.id} label={l.name} /></span>
               <Link
-                key={l.id}
                 href={`/app/crm/${l.id}`}
-                className={cn("flex flex-col gap-1 rounded-xl border bg-card p-2.5 text-sm shadow-soft hover:border-primary", l.overdue && "border-destructive/50")}
+                className={cn("flex min-w-0 flex-1 flex-col gap-1 rounded-xl border bg-card p-2.5 text-sm shadow-soft hover:border-primary", l.overdue && "border-destructive/50")}
                 data-testid="lead-card"
               >
                 <span className="flex items-center justify-between gap-2">
@@ -109,6 +114,7 @@ function Board({ rows }: { rows: ListLead[] }) {
                 <span className="text-xs text-muted-foreground">{l.assignee ? `→ ${l.assignee}` : "Unassigned"}</span>
                 <FollowUp l={l} />
               </Link>
+              </div>
             ))}
           </div>
         );
@@ -117,7 +123,7 @@ function Board({ rows }: { rows: ListLead[] }) {
   );
 }
 
-export function LeadsBoard() {
+export function LeadsBoard({ canBulkSend = false, canEditText = false }: { canBulkSend?: boolean; canEditText?: boolean }) {
   const [layout, setLayout] = useState<"board" | "list">("board");
   return (
     <FilteredList<ListLead>
@@ -137,6 +143,7 @@ export function LeadsBoard() {
         </>
       }
       view={layout === "board" ? (rows) => <Board rows={rows} /> : undefined}
+      selection={canBulkSend ? { rowLabel: (l) => l.name, actions: (sel, clear) => <BulkSendButton list="leads" target={{ ...bulkTarget(sel), count: sel.total }} onDone={clear} canEditText={canEditText} /> } : undefined}
       columns={[
         { key: "name", header: "Lead", cell: (l) => (
           <span className="flex flex-col">

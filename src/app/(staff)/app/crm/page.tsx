@@ -10,7 +10,7 @@ export default async function CrmPage() {
   return (
     <div>
       <PageHeader title="Leads" subtitle="Every enquiry, trial and walk-in until it is won or lost. Overdue follow-ups are red." />
-      <LeadsBoard />
+      <LeadsBoard canBulkSend={can(actor, "messages.bulk")} canEditText={can(actor, "messages.templates.view")} />
     </div>
   );
 }

@@ -1,11 +1,12 @@
 "use client";
 // Completion pass §1: what the club can really do, and the switches behind it. A capability that is off is not
 // offered anywhere in the app; the reason column says exactly what is missing.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api, useApi } from "@/components/api";
 import { DataState } from "@/components/states";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
+import { EmailInput, requireContactInputs } from "@/components/contact-inputs";
 import { Badge } from "@/components/ui/badge";
 import { loadCapabilities } from "@/components/capabilities";
 import { fromRupeeText, putSetting, SaveBar, toRupeeText, type SettingRow } from "./shared";
@@ -49,6 +50,7 @@ export function PaymentsTab({ rows, onSaved }: { rows: SettingRow[]; onSaved: ()
   const [pins, setPins] = useState(dl.pincodes.join(", "));
   const [fee, setFee] = useState(toRupeeText(dl.fee));
   const [testTo, setTestTo] = useState("");
+  const testToRef = useRef<HTMLInputElement>(null);
   const saved = () => {
     void loadCapabilities(true);
     void status.reload();
@@ -97,8 +99,8 @@ export function PaymentsTab({ rows, onSaved }: { rows: SettingRow[]; onSaved: ()
             <p className="text-muted-foreground">
               Email needs SMTP_HOST and SMTP_FROM in the server&apos;s .env. Send a test email: once it arrives, the app starts emailing receipts, reminders and quotes.
             </p>
-            <Field label="Send the test to"><Input type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="your email" /></Field>
-            <SaveBar label="Send test email" onSave={async () => { await api("/api/messages/test-email", { body: { to: testTo || undefined } }); saved(); }} />
+            <Field label="Send the test to"><EmailInput ref={testToRef} name="testTo" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="your email" /></Field>
+            <SaveBar label="Send test email" onSave={async () => { requireContactInputs(testToRef.current); await api("/api/messages/test-email", { body: { to: testTo || undefined } }); saved(); }} />
           </CardContent>
         </Card>
         <WhatsAppCard />

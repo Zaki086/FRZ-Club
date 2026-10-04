@@ -559,3 +559,192 @@ On a snapshot, against the separate test club (`champions_e2e`, 127.0.0.1:3201) 
   Payments & services; until then nothing is promised by email.
 - **On a phone:** scan a member card with the camera and turn on push alerts at
   https://champions.38-49-215-124.sslip.io:3443 (not verifiable without a person and a phone).
+
+## v5 — Bar menu builder + member ordering, contact validation, ready-made messages
+
+Only what v5 lists changed; the club still runs cash only (bar orders go on the member's tab and are settled in cash
+at the bar). Decisions D-110…D-133. Migrations (additive): `0018_v5_contacts`, `0019_v5_menu`,
+`0020_v5_member_orders`, `0021_v5_message_templates`. New rule IDs: CV-1…CV-10 (contact validation), MN-1…MN-6
+(menu), MO-1…MO-10 (member orders), MT-1…MT-18 (message templates). Staff navigation additions: Bar staff "Menu" only;
+member portal: "Bar & Café" only. The Owner, Manager and Front desk sidebars keep their v4 items, labels and order, now
+as flat lists without group headings (owner request, D-131).
+
+### Definition of done (§5)
+
+| # | Item | Phase / section | Main tests |
+|---|---|---|---|
+| 1 | Bar staff build a complete menu from an empty database; members at the club order from "Bar & Café"; orders flow through acceptance → kitchen → tab → cash settle | 2, 3 · §1 | `v5-menu` MN-CRUD (build from an empty database); `v5-member-orders` MO-1/MO-2, MO-3 ×3, MO-7/MO-9; e2e `v5-menu` 1, `v5-order` 1 (category + item with photo → table QR → order → accept → KDS → READY → cash settle → drawer +₹108) |
+| 2 | Every phone and email input uses the shared validators on client and server; the inventory is below; the normalisation report is produced | 1 · §2 | unit `v5-contact-validation`; `v5-contact-api` (one case per inventoried endpoint); e2e `v5-valid` 1–2; the CV-10 audit in `npm test` and `audit:dummy`; `contacts-report.md` |
+| 3 | Staff send any of the 18 ready-made templates by WhatsApp (manual, or automatic when configured), email or push, individually or in bulk; every send is logged | 4 · §3 | `v5-message-templates` MT-6, MT-8, MT-11…MT-17; unit `v5-message-render` MT-17; unit `v5-msgui`; e2e `v5-msgui` 1–4, `v5-msgcore` 1–2 |
+| 4 | All tests pass, `verify:integrity` clean, `audit:dummy` clean, the v4 Owner/Manager/Front desk sidebars unchanged | 5 | Phase 5 below; `v4-role-nav` §1.1 exact lists; e2e `v4-nav` 4 |
+
+### Phase 1 — Phone and email validation (§2)
+
+**Inventory (§2.2.1)** — every phone or email input, made before anything was changed (field → form → server schema
+or service → API route → validator). "n/a" rows are listed because the spec names them; they take no phone or email.
+
+| # | Area | Field(s) | Form (client) | Server schema / service | API route | Validator |
+|---|---|---|---|---|---|---|
+| 1 | Login | identifier | `(public)/login/login-form.tsx`, `components/session-guard.tsx` (re-login) | `loginIdentifierField` (`auth/account.ts`) in the route schema; `findUserByIdentifier` (`auth/sessions.ts`) | POST /api/auth/login | loginIdentifier + member code |
+| 2 | Forgot password | identifier | `(public)/forgot-password/forgot-form.tsx` | `forgotSchema` (`auth/account.ts`) | POST /api/auth/forgot | loginIdentifier + member code |
+| 3 | Set password | — (token + password; no phone/email input) | `(public)/set-password/[token]` | — | POST /api/auth/set-password | n/a |
+| 4 | Front-desk new member | phone, email | `(staff)/app/members/new/new-member-form.tsx` | `createMemberSchema` + CV-6 (`membership.ts`) | POST /api/members | mobilePhone, email |
+| 5 | Guardian | guardianPhone | new-member form (under 18) | `createMemberSchema` | POST /api/members | mobilePhone |
+| 6 | Emergency contact | emergencyContactPhone | new-member form; `components/account-panel.tsx` | `createMemberSchema`; `profileSchema` (`auth/account.ts`); `updateMemberSchema` | POST /api/members; PUT /api/account; PATCH /api/members/[id] | mobilePhone |
+| 7 | Member profile edit (staff) | email, emergencyContactPhone | no UI form (API only) | `updateMemberSchema` + duplicate check (edit) | PATCH /api/members/[id] | email, mobilePhone |
+| 8 | Own profile (members and staff) | email, emergencyContactPhone | `components/account-panel.tsx` | `profileSchema` / `updateProfile` + duplicate check (edit) | PUT /api/account | email, mobilePhone |
+| 9 | Guest / walk-in player (courts) | guest phone, email | `(staff)/app/courts/_components/player-picker.tsx` | `playerInputSchema` guest (`booking.ts`) | POST /api/bookings | mobilePhone, email |
+| 10 | Social play guest | guest phone, email | (player input; API) | `playerInputSchema` via `joinSchema` (`social.ts`) | POST /api/social/[id]/join | mobilePhone, email |
+| 11 | Bar guest tab | guest phone | `(staff)/app/bar/_components/open-tab-dialog.tsx` | `openTabSchema` (`bar.ts`) | POST /api/bar/tabs | mobilePhone |
+| 12 | Shop walk-in (POS) | customerPhone | `(staff)/app/shop/_components/pos.tsx` | `counterSaleSchema` (`shop.ts`) | POST /api/shop/counter-sale | mobilePhone |
+| 13 | Trial | phone, email | `(public)/trial/trial-form.tsx` | `trialSchema` (`crm.ts`) | POST /api/trial | mobilePhone, email |
+| 14 | Enquiry | phone, email | `(public)/enquire/enquiry-form.tsx` | `leadSchema` + `publicFormSchema` (`crm.ts`) | POST /api/enquiry | mobilePhone, email |
+| 15 | Lead create | phone, email | `(staff)/app/crm/leads-board.tsx` | `leadSchema` (`crm.ts`) | POST /api/crm/leads | mobilePhone, email |
+| 16 | Lead edit | — no lead edit form or endpoint exists (activity / assign / lost / quote only) | `(staff)/app/crm/[id]/lead-detail.tsx` | — | — | n/a |
+| 17 | Quote recipient | — emailed to the lead's stored email (validated at lead create); the form only picks LINK / EMAIL | `lead-detail.tsx` QuoteBuilder | `quoteSchema` (`crm.ts`) | POST /api/crm/leads/[id]/quote | n/a |
+| 18 | Business client contact | contactPhone, contactEmail | `(staff)/app/finance/clients/clients-list.tsx` | `clientSchema` (`invoices.ts`) | POST /api/clients | contactPhone, email |
+| 19 | Employee / user create | phone, email | `(staff)/app/employees/employees-admin.tsx`, `(staff)/app/settings/_components/users-tab.tsx` | `createStaffSchema` + CV-6 (`users.ts`) | POST /api/users | mobilePhone, email |
+| 20 | Employee / user edit | — role, salary, join date, active only (no phone/email edit) | employees-admin / users-tab | `updateStaffSchema` | PATCH /api/users/[id](/employment) | n/a |
+| 21 | Club settings contact | club.phone, club.email | `(staff)/app/settings/_components/club-tab.tsx`, `(staff)/setup/setup-wizard.tsx` | `settings.ts` `normaliseClubContacts` in `updateSetting` / `writeSettingTx` | PUT /api/settings/club | contactPhone, email (blank allowed) |
+| 22 | WhatsApp test number | to | `(staff)/app/settings/_components/whatsapp-tab.tsx` | `whatsappTestMessageSchema` (`whatsapp/setup.ts`); `whatsappTestSchema` (`channels.ts`) | POST /api/whatsapp/test; POST /api/messages/test-whatsapp | mobilePhone |
+| 23 | SMTP test email | to | `(staff)/app/settings/_components/payments-tab.tsx` | `testEmailSchema` (`messages.ts`) | POST /api/messages/test-email | email |
+| 24 | Manual WhatsApp (custom) | phone | (API; composer contexts use stored numbers) | `whatsappSchema` CUSTOM (`messages.ts`) | POST /api/messages/whatsapp | mobilePhone |
+| 25 | Delivery address phone | — the delivery step has address + PIN; the contact number is the checkout mobile (#26) | `(public)/shop/cart/cart-checkout.tsx` | `checkoutSchema` | POST /api/shop/checkout | (see 26) |
+| 26 | Checkout contact | guest.phone, guest.email | `(public)/shop/cart/cart-checkout.tsx` | `checkoutSchema` (`shop.ts`) | POST /api/shop/checkout | mobilePhone, email |
+| 27 | Data requests | — export / erase by member; no phone/email input (erasure writes `erased-CC-…` on purpose; skipped by the normaliser) | portal privacy / Settings → Privacy | `privacy.ts` | /api/privacy/* | n/a |
+| 28 | Refund guest identification | guestPhone | `(staff)/app/refunds/payout.tsx` | `payOutSchema` (`refunds.ts`) | POST /api/refunds/[id]/pay-out | mobilePhone |
+| 29 | WhatsApp opt-in | — consent booleans only (portal toggle, trial/enquiry/sign-up ticks); the number is the stored mobile | `components/whatsapp-opt-in.tsx`, `whatsapp-consent-card.tsx` | `whatsappOptInSchema` (`whatsapp/opt-in.ts`) | POST /api/whatsapp/opt-in | n/a |
+| 30 | Search boxes (excluded, §2.2.3) | name/phone/code searches | desk search, FilteredList searches, open-tab member search, player-picker member search, POS member search, invoice member search, refunds search, portal partner lookup | `memberPhone` lookup (`booking.ts`, answers PLAYERS_INVALID when not found — unchanged) | — | excluded |
+| 31 | Numbers the system receives (not inputs) | WhatsApp inbound `from_phone`, Meta display phone, delivery recipients | — | `whatsapp/webhook.ts` | — | n/a |
+
+**Normalisation report (§2.2.4)** — `contacts-report.md`, written by `npm run contacts:normalise` (dry run, read-only):
+- `champions_e2e` (the sample club used by the gate): 0 to normalise, 0 invalid, 0 duplicates.
+- `champions` (live club, read-only dry run, nothing written): 2 to normalise (an emergency contact number with a
+  leading 0; a guest email in capitals), 1 invalid (an emergency contact number starting with 5 — left for staff to
+  correct), 0 duplicates. No clashing user emails, so migration 0018 creates `users_email_lower_key` on deploy.
+- `--apply` has not been run on the live club (see "Needs the owner").
+
+| Item | Files | Tests |
+|---|---|---|
+| §2.1 shared validators CV-1…CV-5, CV-7 allowlist (D-110, D-111) | `src/lib/validation/contact.ts` | unit `v5-contact-validation` (19–24 valid and 16–24 invalid cases per validator, allowlist, wrappers, formatting) |
+| §2.2.1 inventory | the table above | — |
+| §2.2.2 server validators in every schema; 422 naming the field (union fields too) | services `membership.ts`, `crm.ts`, `users.ts`, `shop.ts`, `invoices.ts`, `bar.ts`, `booking.ts`, `refunds.ts`, `messages.ts`, `channels.ts`, `whatsapp/setup.ts`, `settings.ts`, `closures.ts`; `server/auth/account.ts`, `server/auth/sessions.ts`, `server/http.ts`, `app/api/auth/login/route.ts` | `v5-contact-api` (one case per inventoried endpoint, 21) |
+| §2.2.2 shared inputs in every form, CV-8 (D-113) | `src/components/contact-inputs.tsx` + the forms in the inventory | e2e `v5-valid` 1–2 (new member, trial: error on blur, clears when fixed, submit blocked, 422 from the API); unit audit test |
+| Club phone/email checked on write, shown formatted (D-114) | `settings.ts`; `(public)/layout.tsx`, `(public)/page.tsx`, `(public)/enquire/page.tsx`, `(public)/quote/[token]/quote-view.tsx`, `(staff)/print/bill/[id]/page.tsx`, `components/refund-receipt.tsx` | `v5-contact-api` "PUT /api/settings/club" |
+| §2.2.4 `contacts:normalise` + case-insensitive email index (D-115) | `scripts/contacts-normalise.ts`, `contacts-report.md`, `prisma/migrations/0018_v5_contacts/migration.sql`, `package.json` | `v5-contact-api` "migration 0018"; run on `champions_e2e` and (read-only) `champions` |
+| §2.2.5 duplicates, CV-6 (D-112) | `src/server/services/contacts.ts`, `src/server/errors.ts` (`PHONE_ALREADY_REGISTERED`, `EMAIL_ALREADY_REGISTERED`) | `v5-contact-api` CV-6 ×5 |
+| §2.3 `audit:dummy` wiring check, CV-10 | `scripts/audit-dummy.ts`, `tests/audit/contact-inputs.ts`, `tests/audit/crawl.spec.ts` | unit "every phone / mobile / email input in src/ uses the shared inputs"; the audit itself |
+
+### Phase 2 — Menu builder, table QR and printable menu (§1.1)
+
+| Item | Files | Tests |
+|---|---|---|
+| Menu categories (drag order, active) (D-116) | `src/server/services/menu.ts`, `src/app/api/bar/menu/categories/**`, `src/app/(staff)/app/bar/menu/{page,menu-manager}.tsx` | `v5-menu` MN-CRUD |
+| Menu items: fields, rules, uniqueness, archive; existing menu migrated (D-116, D-118) | `services/menu.ts`, `src/lib/menu.ts`, `src/app/api/bar/menu/**`, `prisma/migrations/0019_v5_menu/migration.sql`, `prisma/schema.prisma` | `v5-menu` MN-CRUD ×4; migration checked on a copy of the live 25-item menu |
+| Item photo (product pipeline) | `services/products.ts` (`validatePhoto`, `storePhoto`), `services/menu.ts`, `api/bar/menu/[id]/photo` | `v5-menu` photo |
+| Menu FilterBar (category, status, food type, alcoholic, available, has photo) | `services/filters/menu.ts`, `filters/index.ts` | `v5-menu` grid test, `v3-phase2-lists` |
+| MN-1 base prices by Bar staff / Manager / Owner (D-117) | `src/server/rbac/permissions.ts` (`menu.manage`, `menu.price`), `services/price-book.ts`, `services/menu.ts` | `v5-menu` MN-1 ×2 |
+| MN-2 audit + price history (item editor; Price Book "Price history" tab) | `services/menu.ts`, `services/price-book.ts`, `pricing/price-book.tsx` | `v5-menu` MN-2/MN-3 |
+| MN-3 snapshots | pricing engine, `bar.ts` (unchanged) | `v5-menu` MN-2/MN-3, MN-CRUD archive |
+| MN-4 Preview as member, shared MenuView | `src/components/menu-view.tsx`, `src/app/(staff)/app/bar/menu/preview/*`, `services/menu.ts` (`memberMenuView`, `previewMenu`) | `v5-menu` MN-4 |
+| MN-5 A4 print | `src/app/(staff)/print/menu/page.tsx`, `services/menu.ts` (`printableMenu`) | `v5-menu` MN-5; e2e `v5-menu` 1 |
+| MN-6 table QR cards, signed `TBL1` token | `src/server/services/table-token.ts`, `src/app/(staff)/print/menu/tables/page.tsx`, `services/menu.ts` (`tableQrCards`) | `v5-menu` MN-6 ×2 |
+| Bar grid shows ACTIVE + available items of active categories only | `services/bar.ts` (`listMenu`, `addLines`) | `v5-menu` grid test |
+| Prep time on the KDS | `services/bar.ts` (`kitchenQueue`), `bar/kds/kitchen-display.tsx` | `v5-menu` prep time |
+| Nav: Bar staff "Menu"; Manager by direct link (D-119) | `src/app/(staff)/app/_nav.ts`, `src/server/rbac/page-access.ts` | `v4-role-nav` (updated), e2e `v4-nav` (updated), e2e `v5-menu` 2 |
+| Sample club food types | `prisma/seed/catalogue.ts` (`MENU_FOOD_TYPES`) | `seed:demo` |
+
+### Phase 3 — Member "Bar & Café" ordering (§1.2–§1.3)
+
+| Item | Files | Tests |
+|---|---|---|
+| §1.2 menu by category with search, photo/icon, food type, allergens, prep time, member's price + explanation | `src/app/(member)/portal/bar/bar-cafe.tsx` (shared `MenuView`), `src/server/services/member-orders.ts` (`memberMenu` → `memberMenuView`) | `v5-member-orders` MO-6 |
+| Alcohol hidden for Juniors / under 18 / guardian ordering for a Junior (D-124) | `member-orders.ts` (`alcoholHidden`, `orderFor`) | MO-6 |
+| Cart (localStorage per member, note per line, server re-quotes) | `src/app/(member)/portal/bar/bar-cart.ts`, `bar-cafe.tsx`, `POST /api/portal/bar/orders` (Idempotency-Key) | MO-1/MO-2 |
+| "My tab": line statuses, running total, past tabs with receipts | `myBar` (`GET /api/portal/bar`), `bar-cafe.tsx` | MO-9, MO-7, MO-10 |
+| Table QR page `/t/<token>` (login with returnTo; scan stored on the session; tampered → error page) | `src/app/(public)/t/[token]/page.tsx`, `recordTableScan`, migration `0020_v5_member_orders` (`sessions.table_*`) | MO-1 (scan, tampered); e2e `v5-order` 1 |
+| MO-1 `NOT_AT_CLUB` (D-120) | `member-orders.ts` (`presenceOf`, `placeMemberOrder`), `errors.ts` | MO-1 ×4 |
+| MO-2 order onto the member's OPEN tab (D-121) | `openMemberTabTx`, `placeMemberOrder`, `bar.ts` `addLines(…, { memberOrderId })`, `member_orders` table | MO-1/MO-2, MO-10 |
+| MO-3 Incoming orders (badge, sound, waiting time, red after the setting), Accept → kitchen ticket, Reject with reason (D-121) | `src/app/(staff)/app/bar/incoming-orders.tsx`, `bar/page.tsx`, `incomingOrders`, `acceptMemberOrder`, `rejectMemberOrder`, `GET /api/bar/incoming`, `POST /api/bar/incoming/[id]/accept\|reject`, `bar.ts` `sendToKitchen` | MO-3 ×3; e2e `v5-order` 1 |
+| MO-4 auto-accept for table-scan orders | `placeMemberOrder` → `acceptTx` (system actor `auto-accept`) | MO-4 |
+| MO-5 tab limit incl. carried tabs (D-122) | `owedAtBar`, `placeMemberOrder`, `errors.ts` (`TAB_LIMIT_REACHED`) | MO-5 |
+| MO-6 member discount; alcohol refused on the server (BR-5) | `member-orders.ts`, `bar.ts` `addLines` | MO-6 |
+| MO-7 "Settle at the bar before you leave"; existing check-out and bar-close guards | `myBar.openTab.settleNote`, `bar-cafe.tsx`; `checkin.ts` unchanged | MO-1 check-in path, MO-7/MO-9; e2e `v5-order` 1 (cash settle → drawer up by the due) |
+| MO-8 member cancels a NEW line only (D-122) | `cancelMemberLine`, `POST /api/portal/bar/lines/[id]/cancel` | MO-8 |
+| MO-9 accepted / rejected / ready / settled receipt, in-app + push (D-123) | `channels.ts` (4 events), `tellMember`, `notifyOrderReadyTx` (from `setLineStatus`), `notifyTabSettledTx` (from `settleTab` / `closeTab`) | MO-3, MO-4, MO-6, MO-9, MO-7/MO-9; e2e `v5-order` 1 |
+| MO-10 "via app" / "by staff" on the tab screen and the KDS | `tab_lines.member_order_id`; `bar.ts` (`getTab`, `kitchenQueue`, `readyQueue` `source`), `bar/tabs/[id]/tab-screen.tsx`, `bar/kds/kitchen-display.tsx`, `bar/_components/types.ts` | MO-10, MO-3 |
+| Settings card "Bar & Café member orders" (Owner) | `src/app/(staff)/app/settings/_components/bar-orders-settings.tsx`, `policies-tab.tsx`, `settings.ts` | MO-3 (accept minutes), MO-4, MO-5 |
+| Portal nav "Bar & Café" | `src/app/(member)/portal/portal-nav.tsx` | e2e `v5-order` 1 |
+| `member_orders` in the delete guard | `src/server/services/integrity.ts` (check #10) | every `expectIntegrity()` |
+
+### Phase 4 — Message templates, composer and bulk sending (§3)
+
+| Item | Files | Tests |
+|---|---|---|
+| §3.1 template library, variables per context, versions, archive (MT-1, MT-3; D-125) | `src/server/services/messages/{templates,variables,schemas,contract}.ts`, `src/app/api/messages/templates/**`, `api/messages/variables`, migration `0021_v5_message_templates` | `v5-message-templates` MT-1, MT-3; unit `v5-message-render` MT-1 |
+| §3.1 live preview with a real record (MT-2) | `messages/send.ts` (`previewMessage`), `messages/records.ts`, `api/messages/{preview,records}` | MT-2 ×3; unit MT-2 |
+| §3.1 the 18 ready-made templates (MT-17; D-129) | `messages/ready-made.ts`, migration 0021, `prisma/seed/base.ts` (`ensureReadyMadeTemplates`) | MT-17; unit MT-17 ×4 |
+| Settings → Message templates tab (Owner) | `src/app/(staff)/app/settings/_components/message-templates-tab.tsx`, `settings-tabs.tsx` | e2e `v5-msgcore` 1 |
+| §3.2 email layout, plain text, escaping (MT-9) | `messages/render.ts`, `messages/delivery.ts` | MT-9; unit MT-9 ×3 |
+| §3.2 announcement unsubscribe (MT-10; D-127) | `messages/unsubscribe.ts`, `src/app/(public)/unsubscribe/[token]/{page,resubscribe}.tsx`, `api/messages/unsubscribe`, `members/leads.email_announcements_opt_out` | MT-10; unit MT-10; e2e `v5-msgcore` 2 |
+| §3.3 send: channels (MT-7), wa.me (MT-8), roles (MT-4/MT-5), log (MT-6), duplicates (MT-15), automatic WhatsApp (MT-16), fill-ins (MT-18) (D-126…D-128) | `messages/send.ts`, `delivery.ts`, `records.ts`, `api/messages/send`, `filters/notifications.ts`, `src/server/rbac/permissions.ts` (6 capabilities), `errors.ts` (3 codes) | MT-4/5, MT-6, MT-7, MT-8, MT-15, MT-16; unit MT-6, MT-8, MT-18 |
+| §3.3 composer + "Send message" in Member 360, booking, refund, online order, bar tab, lead, invoice, Renewal & Dues rows, Check-in Risk rows (D-130) | `src/components/message-composer.tsx`, `message-composer-logic.ts`; `members/[id]/member-360.tsx`, `courts/_components/booking-detail.tsx`, `command-centre.tsx`, `courts/bookings/*`, `refunds/[id]/*`, `shop/orders/*`, `bar/tabs/[id]/*`, `crm/[id]/*`, `finance/invoices/[id]/*`, `desk/expiring/*`, `desk/risk/*`; `checkin-risk.ts` (`memberId`) | unit `v5-msgui`; integration `v5-msgui`; e2e `v5-msgui` 1–2 |
+| §3.4 bulk: selection / all matching (≤ 500), preview of 3, consent, ≤ 1/s worker, Messages to Send tasks (MT-11…MT-14) | `messages/bulk.ts`, `api/messages/bulk/**`, `src/server/jobs/worker.ts` (template messages, every minute), `src/components/message-composer-bulk.tsx`, `list/filtered-list.tsx` (selection mode), Members / Renewal & Dues / Check-in Risk / Leads Board lists | MT-11 ×2, MT-12, MT-13, MT-14; unit `v5-msgui` (bulk target, progress, summary); e2e `v5-msgui` 3 |
+| Messages to Send "Send next" | `src/components/message-composer-send-next.tsx`, `messages/messages-list.tsx` | unit `v5-msgui` (queue order); e2e `v5-msgui` 4 |
+| Message Log: template name + version, masked recipient, "Message template" facet | `filters/notifications.ts` | MT-6 |
+| New tables in the delete guard | `src/server/services/integrity.ts` (check #10) | every `expectIntegrity()` |
+
+### Lead items
+
+| Item | Files | Tests |
+|---|---|---|
+| Owner, Manager and Front desk sidebars as flat lists without group headings (owner request, D-131) | `src/app/(staff)/app/_nav.ts`, `src/app/(staff)/app/_components/sidebar.tsx` | `v4-role-nav` §1.1, e2e `v4-nav` 4 (unchanged) |
+| Live club from the release folder `/root/Zaki/Hacka-live` (D-132) | PM2 `champions-web`, `champions-worker` (cwd `Hacka-live`); `.env`, `uploads`, `backups` symlinked; README → "Releasing to the live club" | — |
+| Playwright project `v5` after `v4` (D-133) | `playwright.config.ts` | the five `v5-*.spec.ts` files |
+
+### New tests
+
+| File | Tests | Covers |
+|---|---|---|
+| `tests/unit/v5-contact-validation.test.ts` | 19 | CV-1…CV-5, CV-7, wrappers, formatting, CV-10 audit |
+| `tests/unit/v5-message-render.test.ts` | 14 | MT-1, MT-2, MT-6, MT-8, MT-9, MT-10, MT-17, MT-18 |
+| `tests/unit/v5-msgui.test.ts` | 14 | composer logic, overrides, email body extraction, bulk target/progress/summary, Send next order |
+| `tests/integration/v5-contact-api.test.ts` | 27 | one case per inventoried endpoint (21), CV-6 duplicates, migration 0018 index |
+| `tests/integration/v5-menu.test.ts` | 16 | MN-CRUD, MN-1…MN-6, photo, prep time, grid, alcohol tax |
+| `tests/integration/v5-member-orders.test.ts` | 14 | MO-1…MO-10 |
+| `tests/integration/v5-message-templates.test.ts` | 19 | MT-1…MT-18 |
+| `tests/integration/v5-msgui.test.ts` | 1 | Check-in Risk rows carry `memberId` |
+| `tests/e2e/v5-valid.spec.ts` | 2 | CV-8 inline errors on the new-member and trial forms |
+| `tests/e2e/v5-menu.spec.ts` | 2 | bar staff build a category + item with photo → preview, print, QR cards; the Manager by direct link |
+| `tests/e2e/v5-order.spec.ts` | 1 | §1.4: table QR → order → accept → KDS → READY → cash settle → drawer |
+| `tests/e2e/v5-msgcore.spec.ts` | 2 | Settings → Message templates; unsubscribe page |
+| `tests/e2e/v5-msgui.spec.ts` | 4 | desk Dues reminder by WhatsApp; no announcements for the desk; Manager bulk; Send next |
+
+Also `tests/audit/contact-inputs.ts` (the CV-10 scan shared by the unit test and `audit:dummy`). The e2e files run in
+the Playwright project `v5`, after `v4`.
+
+### Existing tests changed (the requirement changed; no assertion weakened)
+
+| File | Change | Decision |
+|---|---|---|
+| `tests/unit/v4-role-nav.test.ts` | Bar staff menu gains "Menu"; `/app/bar/menu` leaves the Manager's "removed pages" list, plus a positive check that the Manager opens the Menu, preview and print pages and the Front desk still gets 403 | D-119 |
+| `tests/e2e/v4-nav.spec.ts` | the Bar staff sidebar list gains "Menu" | D-119 |
+
+No other existing test changed: contact validation kept every fixture valid through the test-only allowlist (D-111)
+and the pre-v5 codes on edits (D-112); ordering, templates and the composer are additive.
+
+### Phase 5 — full regression
+
+(gate results: pending)
+
+### Needs the owner
+
+- **Contacts:** review the live section of `contacts-report.md`, then run `npm run contacts:normalise -- --apply` on
+  the live club (in `/root/Zaki/Hacka-live`). It fixes the 2 values that only need reformatting; the 1 invalid
+  emergency contact number must be corrected by hand on that member.
+- **Menu:** the existing food items were moved into 3 categories ("Food", "Drinks", "Alcoholic drinks") without a food
+  type. On the Menu screen filter "Food type: not set" and give each food item its veg / non-veg / egg symbol.
+- **WhatsApp:** still pending from v4 — the six `WHATSAPP_*` values in `.env`, the webhook, and the templates in
+  `docs/whatsapp-templates.md` approved by Meta. Until then the composer offers manual WhatsApp only.
+- **Email:** template emails and bulk email need the email capability: SMTP in `.env` and a test email sent by the
+  Owner from Settings → Payments & services.

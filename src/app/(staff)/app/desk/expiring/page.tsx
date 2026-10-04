@@ -14,7 +14,11 @@ export default async function ExpiringPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title="Renewals & dues" subtitle="Members to renew or with money due: who was told, how, and when. Send the WhatsApp in one click or renew now." />
-      <RenewalsList canSend={can(actor, "messages.send")} canRenew={can(actor, "members.manage")} />
+      <RenewalsList
+        canSend={can(actor, "messages.send")}
+        canRenew={can(actor, "members.manage")}
+        messaging={{ compose: can(actor, "messages.compose"), bulk: can(actor, "messages.bulk"), editText: can(actor, "messages.templates.view") }}
+      />
       <details className="rounded-2xl border bg-card p-4">
         <summary className="cursor-pointer font-semibold">All unpaid bills, including walk-in guests</summary>
         <div className="mt-3"><ExpiringAndDues /></div>

@@ -9,6 +9,7 @@ import { DataState, RejectionBanner } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/input";
+import { checkContactInputs, EmailInput, PhoneInput } from "@/components/contact-inputs";
 import { Money } from "@/components/money";
 import { loadCapabilities } from "@/components/capabilities";
 import { isValidGstin } from "@/lib/codes";
@@ -60,14 +61,14 @@ function Identity({ club, onSaved }: { club: Club; onSaved: () => void }) {
             ))}
           </Select>
         </Field>
-        <Field label="Phone"><Input inputMode="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
-        <Field label="Email"><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
+        <Field label="Phone" hint="Mobile or landline with STD code"><PhoneInput kind="contact" name="phone" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
+        <Field label="Email"><EmailInput name="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
         <Field label="GSTIN" hint={gstinOk ? "Leave empty if the club is not GST-registered — then no GST is charged" : "This GSTIN is not valid (format or check digit)"}>
           <Input value={f.gstin} onChange={(e) => setF({ ...f, gstin: e.target.value.trim().toUpperCase() })} />
         </Field>
       </div>
       <RejectionBanner error={error} />
-      <Button className="self-start" disabled={busy || !gstinOk} onClick={() => run(() => api("/api/settings/club", { method: "PUT", body: { value: f } }))}>
+      <Button className="self-start" disabled={busy || !gstinOk} onClick={(e) => checkContactInputs(e.currentTarget.parentElement) && run(() => api("/api/settings/club", { method: "PUT", body: { value: f } }))}>
         Save club details
       </Button>
     </div>

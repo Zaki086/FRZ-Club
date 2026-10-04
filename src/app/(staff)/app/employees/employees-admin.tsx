@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
+import { EmailInput, PhoneInput } from "@/components/contact-inputs";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmButton } from "@/components/confirm";
 import { Money } from "@/components/money";
@@ -142,8 +143,8 @@ function AddEmployee({ onAdded }: { onAdded: () => void }) {
           }}
         >
           <Field label="Name"><Input value={f.name} onChange={set("name")} /></Field>
-          <Field label="Mobile" hint="10-digit Indian mobile (their login)"><Input inputMode="tel" value={f.phone} onChange={set("phone")} /></Field>
-          <Field label="Email (optional)"><Input type="email" value={f.email} onChange={set("email")} /></Field>
+          <Field label="Mobile" hint="10-digit Indian mobile (their login)"><PhoneInput name="phone" value={f.phone} onChange={set("phone")} /></Field>
+          <Field label="Email (optional)"><EmailInput name="email" value={f.email} onChange={set("email")} /></Field>
           <Field label="Role">
             <Select aria-label="New employee role" value={f.role} onChange={set("role")}>{ROLES.map((x) => <option key={x} value={x}>{ROLE_LABEL[x]}</option>)}</Select>
           </Field>
