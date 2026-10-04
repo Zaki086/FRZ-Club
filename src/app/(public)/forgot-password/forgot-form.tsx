@@ -5,7 +5,8 @@ import { api, ApiError } from "@/components/api";
 import { RejectionBanner } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Field, Input } from "@/components/ui/input";
+import { Field } from "@/components/ui/input";
+import { LoginIdentifierInput } from "@/components/contact-inputs";
 
 export function ForgotForm() {
   const [identifier, setIdentifier] = useState("");
@@ -34,7 +35,7 @@ export function ForgotForm() {
               }
             }}
           >
-            <Field label="Mobile number or email"><Input value={identifier} onChange={(e) => setIdentifier(e.target.value)} required autoComplete="username" /></Field>
+            <Field label="Mobile number or email"><LoginIdentifierInput name="identifier" value={identifier} onChange={(e) => setIdentifier(e.target.value)} required /></Field>
             <RejectionBanner error={error} />
             <Button type="submit" disabled={busy}>{busy ? "Sending…" : "Get a reset link"}</Button>
           </form>

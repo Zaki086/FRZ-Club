@@ -14,6 +14,7 @@ import { formatINR } from "@/lib/money";
 import { ConsentFields } from "@/components/consent-fields";
 import { WhatsAppOptIn } from "@/components/whatsapp-opt-in";
 import { useCapabilities } from "@/components/capabilities";
+import { EmailInput, PhoneInput } from "@/components/contact-inputs";
 
 type Slot = { time: string; bookable: boolean };
 type Court = { courtId: string; name: string; sport: string; slots: Slot[] };
@@ -120,8 +121,8 @@ export function TrialForm() {
                 <p className="font-semibold">2. About you</p>
                 <Field label="Full name"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required autoComplete="name" /></Field>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Mobile" hint="10-digit Indian mobile — one trial per number"><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} required inputMode="tel" autoComplete="tel" /></Field>
-                  <Field label="Email (optional)"><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} autoComplete="email" /></Field>
+                  <Field label="Mobile" hint="10-digit Indian mobile — one trial per number"><PhoneInput name="phone" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} required /></Field>
+                  <Field label="Email (optional)"><EmailInput name="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
                 </div>
                 <ConsentFields consent={consent} onConsent={setConsent} website={website} onWebsite={setWebsite} clubName={caps?.clubName} />
                 <WhatsAppOptIn checked={whatsappOptIn} onChange={setWhatsappOptIn} />

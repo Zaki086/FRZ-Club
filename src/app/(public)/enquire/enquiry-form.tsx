@@ -7,6 +7,7 @@ import { RejectionBanner } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
+import { EmailInput, PhoneInput } from "@/components/contact-inputs";
 import { ConsentFields } from "@/components/consent-fields";
 import { WhatsAppOptIn } from "@/components/whatsapp-opt-in";
 import { useCapabilities } from "@/components/capabilities";
@@ -58,8 +59,8 @@ export function EnquiryForm() {
         >
           <Field label="Full name"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required autoComplete="name" /></Field>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Mobile"><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} inputMode="tel" autoComplete="tel" /></Field>
-            <Field label="Email"><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} autoComplete="email" /></Field>
+            <Field label="Mobile"><PhoneInput name="phone" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
+            <Field label="Email"><EmailInput name="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
           </div>
           <p className="-mt-1 text-xs text-muted-foreground">Give us a phone number or an email so we can reply.</p>
           <Field label="I'm interested in">

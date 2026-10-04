@@ -8,6 +8,7 @@ import { Empty, RejectionBanner } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
+import { checkContactInputs, EmailInput, PhoneInput } from "@/components/contact-inputs";
 import { useCapabilities } from "@/components/capabilities";
 import { cn } from "@/components/ui/cn";
 import { QuoteLines, useShopQuote } from "@/components/shop-quote";
@@ -96,8 +97,8 @@ export function CartCheckout() {
           {!isMember ? (
             <div className="flex flex-col gap-2">
               <Field label="Your name"><Input value={guest.name} onChange={(e) => setGuest({ ...guest, name: e.target.value })} autoComplete="name" /></Field>
-              <Field label="Mobile" hint="10-digit Indian mobile"><Input inputMode="tel" value={guest.phone} onChange={(e) => setGuest({ ...guest, phone: e.target.value })} autoComplete="tel" /></Field>
-              <Field label="Email" hint="For order updates (optional)"><Input type="email" value={guest.email} onChange={(e) => setGuest({ ...guest, email: e.target.value })} autoComplete="email" /></Field>
+              <Field label="Mobile" hint="10-digit Indian mobile"><PhoneInput name="phone" value={guest.phone} onChange={(e) => setGuest({ ...guest, phone: e.target.value })} /></Field>
+              <Field label="Email" hint="For order updates (optional)"><EmailInput name="email" value={guest.email} onChange={(e) => setGuest({ ...guest, email: e.target.value })} /></Field>
             </div>
           ) : null}
           {isMember && fulfilment === "PICKUP" && online ? (
@@ -118,7 +119,8 @@ export function CartCheckout() {
             size="lg"
             disabled={busy || !quote || isStaff}
             data-testid="checkout-submit"
-            onClick={async () => {
+            onClick={async (e) => {
+              if (!checkContactInputs(e.currentTarget.parentElement)) return;
               setBusy(true);
               setError(null);
               try {
