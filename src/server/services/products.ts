@@ -68,10 +68,8 @@ async function writeImage(buf: Buffer) {
   return `/api/uploads/product/${name}`;
 }
 
-/** Add a photo (PNG/JPEG/WebP ≤ 2 MB): stored as a 1200 px image and a 400 px thumbnail, never larger than sent. */
-export async function addProductPhoto(actor: Actor, productId: string, data: Buffer) {
-  assertCan(actor, "shop.stock");
-  await assertCapability("photos.upload");
+/** The photo pipeline's check (shared with v5 menu items): a PNG/JPEG/WebP image of at most 2 MB. */
+export async function validatePhoto(data: Buffer) {
   if (!data.length) throw new DomainError("VALIDATION_FAILED", "The file is empty.");
   if (data.length > MAX_UPLOAD_BYTES) throw new DomainError("VALIDATION_FAILED", `The file is ${(data.length / 1_048_576).toFixed(1)} MB; the limit is 2 MB.`);
   let meta: Awaited<ReturnType<ReturnType<typeof sharp>["metadata"]>>;
@@ -81,11 +79,24 @@ export async function addProductPhoto(actor: Actor, productId: string, data: Buf
     throw new DomainError("VALIDATION_FAILED", "Upload a PNG, JPEG or WebP image.");
   }
   if (!["png", "jpeg", "webp"].includes(meta.format ?? "")) throw new DomainError("VALIDATION_FAILED", "Upload a PNG, JPEG or WebP image.");
-  const count = await prisma.productImage.count({ where: { productId } });
-  if (count >= MAX_PRODUCT_PHOTOS) throw new DomainError("VALIDATION_FAILED", `A product has at most ${MAX_PRODUCT_PHOTOS} photos. Remove one first.`);
+  return meta;
+}
+
+/** The photo pipeline's output (shared with v5 menu items): a 1200 px image and a 400 px thumbnail, never larger than sent. */
+export async function storePhoto(data: Buffer) {
   const large = await sharp(data).rotate().resize({ width: 1200, height: 1200, fit: "inside", withoutEnlargement: true }).webp({ quality: 82 }).toBuffer();
   const thumb = await sharp(data).rotate().resize({ width: 400, height: 400, fit: "inside", withoutEnlargement: true }).webp({ quality: 78 }).toBuffer();
-  const [url, thumbUrl] = [await writeImage(large), await writeImage(thumb)];
+  return { url: await writeImage(large), thumbUrl: await writeImage(thumb) };
+}
+
+/** Add a photo (PNG/JPEG/WebP ≤ 2 MB): stored as a 1200 px image and a 400 px thumbnail, never larger than sent. */
+export async function addProductPhoto(actor: Actor, productId: string, data: Buffer) {
+  assertCan(actor, "shop.stock");
+  await assertCapability("photos.upload");
+  const meta = await validatePhoto(data);
+  const count = await prisma.productImage.count({ where: { productId } });
+  if (count >= MAX_PRODUCT_PHOTOS) throw new DomainError("VALIDATION_FAILED", `A product has at most ${MAX_PRODUCT_PHOTOS} photos. Remove one first.`);
+  const { url, thumbUrl } = await storePhoto(data);
   return withTx(async (tx) => {
     await lockProduct(tx, productId);
     const n = await tx.productImage.count({ where: { productId } });

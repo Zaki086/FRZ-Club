@@ -38,6 +38,8 @@ cron.schedule("*/5 * * * *", () => void guarded("every-5-minutes", runFrequentJo
 // Member messages (email, push, WhatsApp API) go out within a minute, independent of the other jobs: a failing job in
 // the 5-minute batch can't hold them back. Rows are claimed before sending, so overlapping runs never send twice.
 cron.schedule("* * * * *", () => void quiet("deliveries", flushDeliveries), { timezone: "Asia/Kolkata" });
+// v5 §3.4 (MSGCORE): template messages — bulk email, push and automatic WhatsApp — at most one per second (≈55 s a run).
+cron.schedule("* * * * *", () => void quiet("template messages", async () => (await import("../services/messages/bulk")).processMessageQueue({ budgetMs: 55_000 })), { timezone: "Asia/Kolkata" });
 // v4 §5.4: WhatsApp API messages are sent right after their transaction commits; this sweep (every 30 s) sends any
 // QUEUED row that is due (after a crash, a retry backoff or a rate-limit pause). Rows are claimed with SKIP LOCKED.
 cron.schedule("*/30 * * * * *", () => void quiet("whatsapp", async () => {

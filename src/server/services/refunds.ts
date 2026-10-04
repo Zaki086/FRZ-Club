@@ -11,6 +11,7 @@
 // liability in "What we owe" · RF-11 several (partial) refunds per bill, the remaining refundable amount shown.
 import type { Bill } from "@prisma/client";
 import { z } from "zod";
+import { clearableContact, mobilePhone } from "@/lib/validation/contact";
 import { clock } from "@/lib/clock";
 import { formatINR } from "@/lib/money";
 import { verifyMemberCardPayload } from "@/lib/qr";
@@ -219,7 +220,7 @@ export const payOutSchema = completeRefundSchema.extend({
   /** How the refund was found: refund QR, member card, or a search. */
   via: z.enum(IDENTITY_METHODS).optional(),
   /** Guests: the phone number they booked/ordered with and the original booking/order code. */
-  guestPhone: z.string().trim().max(20).optional().nullable(),
+  guestPhone: clearableContact(mobilePhone), // v5 CV-1: the shared mobile validator
   originalCode: z.string().trim().max(40).optional().nullable(),
 });
 export type PayOutInput = z.infer<typeof payOutSchema>;

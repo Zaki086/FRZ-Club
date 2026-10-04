@@ -3,7 +3,8 @@ import type { ActivityType, LeadSource, LeadStatus, Prisma } from "@prisma/clien
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { clock } from "@/lib/clock";
-import { CODE_SEQUENCE, formatCode, isIndianMobile, normalisePhone } from "@/lib/codes";
+import { CODE_SEQUENCE, formatCode } from "@/lib/codes";
+import { email as emailField, mobilePhone, optionalContact } from "@/lib/validation/contact";
 import { formatINR } from "@/lib/money";
 import { addDays, addMonths, DAY, fmtDate, fmtDateTime, HOUR, istDate, istDayRange } from "@/lib/time";
 import { nextSeq, prisma, withTx, type Tx } from "../db";
@@ -105,8 +106,9 @@ export async function markLeadWon(tx: Tx, actor: Actor, leadId: string, memberId
 
 export const leadSchema = z.object({
   name: z.string().trim().min(2, "name is required").max(100),
-  phone: z.string().optional().transform((p) => (p ? normalisePhone(p) : undefined)).refine((p) => !p || isIndianMobile(p), "must be a 10-digit Indian mobile number"),
-  email: z.string().trim().toLowerCase().email().optional().or(z.literal("").transform(() => undefined)),
+  // v5 CV-1/CV-4: shared contact validators.
+  phone: optionalContact(mobilePhone),
+  email: optionalContact(emailField),
   source: z.enum(["WEBSITE_ENQUIRY", "TRIAL_BOOKING", "WALK_IN", "PHONE", "REFERRAL"]).default("WEBSITE_ENQUIRY"),
   interest: z.string().trim().max(100).default(""),
   message: z.string().trim().max(2000).default(""),
@@ -372,8 +374,8 @@ export async function flagOverdueLeads(outer?: Tx) {
 
 export const trialSchema = publicFormSchema.extend({
   name: z.string().trim().min(2).max(100),
-  phone: z.string().transform(normalisePhone).refine(isIndianMobile, "must be a 10-digit Indian mobile number"),
-  email: z.string().trim().toLowerCase().email().optional().or(z.literal("").transform(() => undefined)),
+  phone: mobilePhone,
+  email: optionalContact(emailField),
   courtId: z.string().min(1),
   date: z.string(),
   startTime: z.string(),

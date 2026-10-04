@@ -31,6 +31,8 @@ const EVENT_OPTIONS = [
   { value: "LEAVE_DECIDED", label: "Staff: leave decided" },
   // v4 §5.4 step 6: an inbound WhatsApp message (other than STOP) waiting for the front desk to answer.
   { value: "WHATSAPP_REPLY", label: "Member replied on WhatsApp" },
+  // v5 §3.3 MT-6 (MSGCORE): a message sent by staff from a template (composer or bulk).
+  { value: "TEMPLATE_MESSAGE", label: "Message from a template" },
 ];
 
 export const notificationsList: ListDef = {
@@ -41,20 +43,25 @@ export const notificationsList: ListDef = {
   base: () => Prisma.sql`
     SELECT d.id, d.event, d.channel, d.status, d.created_at, d.sent_at, d.delivered_at, d.opened_at, d.title, d.body, d.error,
       -- v4 §5.4: automatic WhatsApp recipients are shown masked; the desk needs the full number only for manual ones.
-      CASE WHEN d.channel = 'WHATSAPP_API' AND d.to_address IS NOT NULL THEN '+91 ••••••' || right(d.to_address, 4) ELSE d.to_address END AS to_address,
+      CASE WHEN d.template_id IS NOT NULL THEN COALESCE(d.to_masked, d.to_address)
+           WHEN d.channel = 'WHATSAPP_API' AND d.to_address IS NOT NULL THEN '+91 ••••••' || right(d.to_address, 4) ELSE d.to_address END AS to_address,
       d.wa_template, d.attempts, d.urgent, d.wa_status, d.wa_read_at,
       CASE WHEN d.status = 'QUEUED' THEN d.not_before END AS next_try_at,
       CASE WHEN d.status = 'FAILED' THEN COALESCE(d.wa_failed_at, d.updated_at) END AS failed_at,
-      d.member_id, m.name AS member_name, m.member_code, COALESCE(u.name, gu.name || ' (guest)') AS recipient, d.user_id,
+      d.member_id, m.name AS member_name, m.member_code, COALESCE(u.name, gu.name || ' (guest)', ld.name || ' (lead)') AS recipient, d.user_id,
       CASE WHEN d.triggered_by IS NULL OR d.triggered_by = 'system' THEN 'system' ELSE 'staff' END AS trigger,
-      tu.name AS triggered_by_name, hu.name AS handled_by_name
+      tu.name AS triggered_by_name, hu.name AS handled_by_name,
+      -- v5 MT-6: the template and version a message was sent from, and its bulk send.
+      d.template_id, mt.name AS template_name, d.template_version, d.bulk_id
     FROM notification_deliveries d
     LEFT JOIN users u ON u.id = d.user_id
     LEFT JOIN guests gu ON gu.id = d.guest_id
     LEFT JOIN members m ON m.id = d.member_id
     LEFT JOIN users tu ON tu.id = d.triggered_by
-    LEFT JOIN users hu ON hu.id = d.handled_by`,
-  search: ["b.recipient", "b.member_name", "b.member_code", "b.to_address", "b.title"],
+    LEFT JOIN users hu ON hu.id = d.handled_by
+    LEFT JOIN message_templates mt ON mt.id = d.template_id
+    LEFT JOIN leads ld ON ld.id = d.lead_id`,
+  search: ["b.recipient", "b.member_name", "b.member_code", "b.to_address", "b.title", "b.template_name"],
   dateColumn: { expr: "b.created_at", label: "Date", kind: "timestamp" },
   facets: [
     { key: "type", label: "Type", expr: "b.event", options: EVENT_OPTIONS },
@@ -63,6 +70,7 @@ export const notificationsList: ListDef = {
     { key: "template", label: "WhatsApp template", expr: "b.wa_template", options: WA_TEMPLATE_OPTIONS },
     { key: "member", label: "Member", expr: "b.member_id", labelsSql: "SELECT id AS value, name || ' · ' || member_code AS label FROM members" },
     { key: "trigger", label: "Triggered by", expr: "b.trigger", options: [{ value: "system", label: "System" }, { value: "staff", label: "Staff" }] },
+    { key: "message_template", label: "Message template", expr: "b.template_id", labelsSql: "SELECT id AS value, name AS label FROM message_templates" },
   ],
   sorts: {
     newest: { label: "Newest first", sql: "b.created_at DESC, b.channel" },
@@ -79,7 +87,7 @@ export const notificationsList: ListDef = {
     { key: "created_at", label: "When", format: "datetime" }, { key: "event", label: "Type" }, { key: "channel", label: "Channel" }, { key: "status", label: "Status" },
     { key: "recipient", label: "Recipient" }, { key: "member_code", label: "Member code" }, { key: "to_address", label: "To" }, { key: "title", label: "Title" },
     { key: "error", label: "Reason / error" }, { key: "trigger", label: "Triggered by" }, { key: "handled_by_name", label: "Sent by hand by" },
-    { key: "wa_template", label: "WhatsApp template" }, { key: "attempts", label: "Tries" }, { key: "sent_at", label: "Sent", format: "datetime" },
+    { key: "wa_template", label: "WhatsApp template" }, { key: "template_name", label: "Message template" }, { key: "template_version", label: "Template version" }, { key: "attempts", label: "Tries" }, { key: "sent_at", label: "Sent", format: "datetime" },
     { key: "delivered_at", label: "Delivered", format: "datetime" }, { key: "wa_read_at", label: "Read", format: "datetime" }, { key: "failed_at", label: "Failed", format: "datetime" },
   ],
   defaults: () => ({ range: "LAST_7" }),

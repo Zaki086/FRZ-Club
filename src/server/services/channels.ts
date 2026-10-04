@@ -17,6 +17,8 @@ import { createHash } from "node:crypto";
 import { Prisma, type NotificationDelivery } from "@prisma/client";
 import webpush from "web-push";
 import { z } from "zod";
+import { formatPhone, mobilePhone } from "@/lib/validation/contact"; // v5 CV-1 (WhatsApp test number), CV-3 display
+import { parseOrValidation } from "./contacts";
 import { clock } from "@/lib/clock";
 import { addDays, HOUR, istDate, istParts, istToUtc } from "@/lib/time";
 import { afterCommit, prisma, withTx, type Tx } from "../db";
@@ -63,6 +65,11 @@ export const MEMBER_EVENTS = {
   CANCELLATION_CHOICE_REMINDER: "Club-cancelled session: reschedule or refund still to choose (day 3 and day 6)",
   ORDER_READY: "Shop order ready to collect",
   RESTRING_READY: "Restrung racket ready to collect",
+  // v5 §1.3 MO-9 (ORDER): member bar orders from "Bar & Café" (in-app + push).
+  BAR_ORDER_ACCEPTED: "Bar order accepted and sent to the kitchen",
+  BAR_ORDER_REJECTED: "Bar order not accepted (with the reason)",
+  BAR_ORDER_READY: "Bar order ready (\"Your order is ready\")",
+  BAR_TAB_SETTLED: "Bar tab settled — receipt",
 } as const;
 export type MemberEvent = keyof typeof MEMBER_EVENTS;
 /** Staff-facing events (in-app + push only, v4 §4.1). */
@@ -139,6 +146,12 @@ export const EVENT_CATALOGUE: Record<NotifyEvent, CatalogueRow> = {
   REFUND_APPROVAL_NEEDED: { channels: PUSH_ONLY, whatsapp: null, urgency: "normal", dedupe: "refund-approval:<refundId>:<userId>" },
   DRAWER_VARIANCE: { channels: PUSH_ONLY, whatsapp: null, urgency: "normal", dedupe: "drawer-variance:<sessionId>:<userId>" },
   LEAVE_DECIDED: { channels: PUSH_ONLY, whatsapp: null, urgency: "normal", dedupe: "leave-decided:<leaveId>" },
+  // v5 MO-9 (ORDER): the member is at the club, so these pushes are sent with `urgent: true` (never held for the
+  // quiet hours) while the catalogue urgency header stays normal.
+  BAR_ORDER_ACCEPTED: { channels: PUSH_ONLY, whatsapp: null, urgency: "normal", dedupe: "bar-order-accepted:<memberOrderId>:<userId>" },
+  BAR_ORDER_REJECTED: { channels: PUSH_ONLY, whatsapp: null, urgency: "normal", dedupe: "bar-order-rejected:<memberOrderId>:<userId>" },
+  BAR_ORDER_READY: { channels: PUSH_ONLY, whatsapp: null, urgency: "normal", dedupe: "bar-order-ready:<memberOrderId>:<userId>" },
+  BAR_TAB_SETTLED: { channels: PUSH_ONLY, whatsapp: null, urgency: "normal", dedupe: "bar-tab-settled:<tabId>:<userId>" },
 };
 
 // ───────── v4 §4.2 quiet hours (NT-7) ─────────
@@ -442,7 +455,7 @@ async function emailText(d: { body: string; link: string | null; userId: string 
     first ? `Hi ${first},` : "Hello,",
     d.body,
     link ? `${who?.role === "MEMBER" ? "Open in the member portal" : "Details"}: ${link}` : "",
-    [club.name || "The club", club.phone].filter(Boolean).join(" · "),
+    [club.name || "The club", formatPhone(club.phone)].filter(Boolean).join(" · "),
     who?.role === "MEMBER" && appUrl() ? `To change how the club reaches you: ${appUrl()}/portal/notifications` : "",
   ].filter(Boolean).join("\n\n");
 }
@@ -662,12 +675,12 @@ export async function sweepWhatsApp() {
 // ───────── WhatsApp Cloud API: test message (Settings) ─────────
 // The delivery webhook (statuses, STOP, replies) is whatsapp/webhook.ts; a failure it reports calls `whatsappFallback`.
 
-export const whatsappTestSchema = z.object({ to: z.string().trim().min(10).max(15), template: z.string().trim().min(1).max(100).default("hello_world"), language: z.string().trim().min(2).max(10).default("en_US") });
+export const whatsappTestSchema = z.object({ to: mobilePhone, template: z.string().trim().min(1).max(100).default("hello_world"), language: z.string().trim().min(2).max(10).default("en_US") });
 
 /** Settings: send one template message to the Owner's phone; success records the verification. */
 export async function sendWhatsappTest(actor: Actor, raw: z.input<typeof whatsappTestSchema>) {
   assertCan(actor, "settings");
-  const input = whatsappTestSchema.parse(raw);
+  const input = parseOrValidation(whatsappTestSchema, raw);
   const cfg = whatsappConfigured();
   if (!cfg.ok) throw new DomainError("CAPABILITY_DISABLED", `WhatsApp API is not configured: ${cfg.reason}.`);
   const to = toWhatsAppNumber(input.to);

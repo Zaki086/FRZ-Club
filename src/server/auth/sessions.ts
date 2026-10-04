@@ -44,11 +44,21 @@ export const ROLE_HOME: Record<Role, string> = {
 export const MAX_FAILED_LOGINS = 5;
 export const LOCK_MINUTES = 15;
 
+/** v3 WK-2: a member code (CC-000123) as a login. */
+export const MEMBER_CODE_RE = /^[A-Za-z]{2,4}-?\d{3,}$/;
+
 export async function findUserByIdentifier(identifier: string) {
   const id = identifier.trim();
-  if (id.includes("@")) return prisma.user.findUnique({ where: { email: id.toLowerCase() } });
+  // v5 CV-4: emails are unique case-insensitively (stored lower-case; older mixed-case rows still match).
+  if (id.includes("@")) {
+    const email = id.toLowerCase();
+    const exact = await prisma.user.findUnique({ where: { email } });
+    if (exact) return exact;
+    const legacy = await prisma.$queryRaw<Array<{ id: string }>>`SELECT id FROM users WHERE lower(email) = ${email} ORDER BY created_at LIMIT 1`;
+    return legacy[0] ? prisma.user.findUnique({ where: { id: legacy[0].id } }) : null;
+  }
   // v3 WK-2: a member may also log in with their member code (CC-000123).
-  if (/^[A-Za-z]{2,4}-?\d{3,}$/.test(id)) {
+  if (MEMBER_CODE_RE.test(id)) {
     const m = await prisma.member.findFirst({ where: { memberCode: { equals: id.toUpperCase().replace(/^([A-Z]+)-?/, "$1-"), mode: "insensitive" } }, select: { userId: true } });
     return m?.userId ? prisma.user.findUnique({ where: { id: m.userId } }) : null;
   }

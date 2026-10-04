@@ -11,6 +11,22 @@ import { assertCan } from "../rbac/permissions";
 import { DomainError } from "../errors";
 import { audit } from "./audit";
 import { WA_TEMPLATE_NAMES } from "./whatsapp/templates";
+import { contactPhone, email as emailField, optionalContact } from "@/lib/validation/contact";
+
+/**
+ * v5 CV-3/CV-4 (VALID): the club's phone and email are checked when they are written (blank allowed until set up) and
+ * stored normalised — the phone as its 10 digits, shown with formatPhone(). Reading never rejects a stored value.
+ */
+const clubContactsSchema = z.object({
+  phone: optionalContact(contactPhone).transform((v) => v ?? ""),
+  email: optionalContact(emailField).transform((v) => v ?? ""),
+});
+function normaliseClubContacts(key: string, value: unknown) {
+  if (key !== "club" || !value || typeof value !== "object") return;
+  const v = value as { phone: string; email: string };
+  const c = clubContactsSchema.parse({ phone: v.phone.trim(), email: v.email.trim() });
+  Object.assign(v, c);
+}
 
 const sportFees = z.object({
   TENNIS: z.number().int().min(0),
@@ -132,6 +148,11 @@ export const SETTINGS_SCHEMA = {
   blind_close: z.boolean(),
   drawer_variance_tolerance: z.number().int().min(0).max(10_000_000),
   dev_clock_offset_ms: z.number().int(),
+  // v5 §1.3 (ORDER): MO-4 member orders with a valid table scan skip the bar's Accept; MO-5 the most a member's open
+  // tab may owe (paise) before app orders stop; MO-3 an incoming order turns red after this many minutes.
+  auto_accept_member_orders: z.boolean(),
+  member_tab_limit: z.number().int().min(0).max(10_000_000),
+  member_order_accept_minutes: z.number().int().min(1).max(120),
 } as const;
 
 export type SettingKey = keyof typeof SETTINGS_SCHEMA;
@@ -214,6 +235,10 @@ export const DEFAULT_SETTINGS: StoredSettings = {
   blind_close: true,
   drawer_variance_tolerance: R(50),
   dev_clock_offset_ms: 0,
+  // v5 §1.3 (ORDER): auto-accept off, ₹3,000 tab limit, red after 5 minutes.
+  auto_accept_member_orders: false,
+  member_tab_limit: R(3000),
+  member_order_accept_minutes: 5,
 };
 
 const UNVERIFIED_BY_DEFAULT: SettingKey[] = ["tax_rates"];
@@ -267,6 +292,7 @@ export async function updateSetting(actor: Actor, key: string, value: unknown, o
       issues: parsed.error.issues,
     });
   }
+  normaliseClubContacts(k, parsed.data);
   return withTx(async (tx) => {
     const before = await tx.setting.findUnique({ where: { key } });
     const row = await tx.setting.upsert({
@@ -308,6 +334,7 @@ export async function verifySetting(actor: Actor, key: string) {
 export async function writeSettingTx(tx: Tx, actor: Actor, key: SettingKey, value: unknown, verified = true) {
   const parsed = SETTINGS_SCHEMA[key].safeParse(value);
   if (!parsed.success) throw new DomainError("VALIDATION_FAILED", `Invalid value for ${key}: ${parsed.error.issues[0]?.message ?? "invalid"}`);
+  normaliseClubContacts(key, parsed.data);
   const before = await tx.setting.findUnique({ where: { key } });
   await tx.setting.upsert({
     where: { key },

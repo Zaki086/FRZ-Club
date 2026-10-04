@@ -13,6 +13,10 @@ const TRANSACTIONAL_TABLES = [
   "cash_drawer_sessions", "data_requests", "refund_requests", "notification_deliveries", "purchase_orders", "purchase_order_lines", "stock_takes", "stock_take_lines",
   // v4 §2 (drawer_movements and safe_movements are append-only, like the ledger).
   "cash_drawers", "bank_deposits",
+  // v5 §1.3 (ORDER): member bar orders.
+  "member_orders",
+  // v5 §3 (MSGCORE): message templates are archived, never deleted (their versions are append-only); bulk sends.
+  "message_templates", "message_bulk_sends",
 ];
 
 type Row = Record<string, unknown>;

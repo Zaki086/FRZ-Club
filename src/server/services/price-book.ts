@@ -11,6 +11,7 @@ import type { Sport } from "@prisma/client";
 import { z } from "zod";
 import { clock } from "@/lib/clock";
 import { formatINR } from "@/lib/money";
+import { MENU_PRICE_MAX, MENU_PRICE_MIN } from "@/lib/menu";
 import { dbDate, fromDbDate, isValidDateStr, istDate, timeToMinutes } from "@/lib/time";
 import { prisma, withTx, type Tx } from "../db";
 import { DomainError } from "../errors";
@@ -59,9 +60,12 @@ async function assertTarget(tx: Tx, actor: Actor, target: string) {
     // D-79: shop staff price shop products (and only those).
     if (!can(actor, "shop.pricing")) throw new DomainError("FORBIDDEN", "Not allowed: you can't change shop prices.", { capability: "shop.pricing" });
     if (!(await tx.productVariant.findUnique({ where: { id } }))) throw new DomainError("NOT_FOUND", "Product was not found.");
+  } else if (kind === "MENU") {
+    // v5 MN-1: menu item base prices are Bar staff, Manager and Owner (`menu.price`) — an explicit exception to v4 RN-3.
+    if (!can(actor, "menu.price")) throw new DomainError("FORBIDDEN", "Not allowed: you can't change menu prices.", { capability: "menu.price" });
+    if (!(await tx.menuItem.findUnique({ where: { id } }))) throw new DomainError("NOT_FOUND", "Menu item was not found.");
   } else {
     assertCan(actor, "pricing.manage");
-    if (kind === "MENU" && !(await tx.menuItem.findUnique({ where: { id } }))) throw new DomainError("NOT_FOUND", "Menu item was not found.");
   }
 }
 
@@ -69,6 +73,9 @@ async function assertTarget(tx: Tx, actor: Actor, target: string) {
 export async function setBasePriceTx(tx: Tx, actor: Actor, raw: z.input<typeof basePriceSchema>) {
   const input = basePriceSchema.parse(raw);
   await assertTarget(tx, actor, input.target);
+  if (input.target.startsWith("MENU:") && (input.price < MENU_PRICE_MIN || input.price > MENU_PRICE_MAX)) {
+    throw new DomainError("VALIDATION_FAILED", "A menu price is between ₹1 and ₹50,000.", { field: "price" });
+  }
   const now = clock.now();
   const at = input.effectiveAt ? new Date(input.effectiveAt) : now;
   if (at.getTime() < now.getTime() - 60_000) throw new DomainError("VALIDATION_FAILED", "A price change can't start in the past.");
@@ -318,8 +325,34 @@ export async function priceBook(actor: Actor) {
     menu: menu.map((m) => ({ id: m.id, target: `MENU:${m.id}`, name: m.name, category: m.category, price: current(`MENU:${m.id}`)?.price ?? m.price, scheduled: scheduled(`MENU:${m.id}`) })),
     rules: rules.map((r) => ({ ...r, dateFrom: r.dateFrom ? fromDbDate(r.dateFrom) : null, dateTo: r.dateTo ? fromDbDate(r.dateTo) : null, window: ruleWindow(r), state: ruleState(r), createdByName: who(r.createdBy), approvedByName: who(r.approvedBy) })),
     courts,
-    history: changes.filter((c) => c.createdBy).slice(0, 100),
+    history: await historyRows(changes, variants, menu),
   };
+}
+
+/**
+ * v5 MN-2: the price book history — every change made by someone (newest first), with what it replaced (old → new),
+ * who and when. The previous price is the change in effect just before it for the same target.
+ */
+async function historyRows(
+  changes: Array<{ id: string; target: string; price: number; effectiveAt: Date; createdAt: Date; createdBy: string | null; note: string | null; cancelledAt: Date | null }>,
+  variants: Array<{ id: string; label: string; product: { name: string } }>,
+  menu: Array<{ id: string; name: string }>,
+) {
+  const made = changes.filter((c) => c.createdBy).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, 100);
+  const users = await prisma.user.findMany({ where: { id: { in: [...new Set(made.map((c) => c.createdBy!))] } }, select: { id: true, name: true } });
+  const missingMenu = made.map((c) => c.target.split(":")).filter(([k, id]) => k === "MENU" && !menu.some((m) => m.id === id)).map(([, id]) => id);
+  const archived = missingMenu.length ? await prisma.menuItem.findMany({ where: { id: { in: missingMenu } }, select: { id: true, name: true } }) : [];
+  const label = (target: string) => {
+    const [kind, a, b] = target.split(":");
+    if (kind === "MENU") return [...menu, ...archived].find((m) => m.id === a)?.name ?? "Menu item";
+    if (kind === "VARIANT") { const v = variants.find((x) => x.id === a); return v ? `${v.product.name} ${v.label}` : "Product"; }
+    const tier = a.charAt(0) + a.slice(1).toLowerCase().replace("_in", "-in");
+    return kind === "COURT_FEE" ? `${tier} · ${b.charAt(0)}${b.slice(1).toLowerCase()} court fee` : `${tier} · social play fee`;
+  };
+  return made.map((c) => {
+    const before = changes.find((x) => x.target === c.target && x.id !== c.id && (x.effectiveAt < c.effectiveAt || (x.effectiveAt.getTime() === c.effectiveAt.getTime() && x.createdAt < c.createdAt)));
+    return { ...c, kind: c.target.split(":")[0], label: label(c.target), oldPrice: before?.price ?? null, byName: users.find((u) => u.id === c.createdBy)?.name ?? null };
+  });
 }
 
 // ───────── PR-13 simulator (the real engine) ─────────

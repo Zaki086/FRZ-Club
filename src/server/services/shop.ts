@@ -4,7 +4,8 @@ import type { OrderStatus, Prisma, ProductCategory, TicketStatus } from "@prisma
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { clock } from "@/lib/clock";
-import { CODE_SEQUENCE, formatCode, isIndianMobile, normalisePhone } from "@/lib/codes";
+import { CODE_SEQUENCE, formatCode } from "@/lib/codes";
+import { email as emailField, mobilePhone, optionalContact } from "@/lib/validation/contact";
 import { formatINR } from "@/lib/money";
 import { DAY, fmtDateTime, HOUR, istDate, MINUTE } from "@/lib/time";
 import { nextSeq, pgErrorCode, prisma, withTx, type Tx } from "../db";
@@ -97,7 +98,8 @@ export async function quoteCart(actor: Actor, raw: { memberId?: string | null; i
 export const counterSaleSchema = z.object({
   memberId: z.string().optional(),
   customerName: z.string().trim().max(100).optional(),
-  customerPhone: z.string().optional(),
+  // v5 CV-1: a walk-in's mobile (optional) — the shared validator.
+  customerPhone: optionalContact(mobilePhone),
   items: z.array(itemSchema).min(1).max(40),
   payments: z.array(z.object({
     method: z.enum(["CASH", "CARD", "UPI"]),
@@ -125,9 +127,7 @@ export async function counterSaleTx(tx: Tx, actor: Actor, raw: z.input<typeof co
     memberId = m.id;
     customerName = m.name;
   } else if (input.customerPhone) {
-    const phone = normalisePhone(input.customerPhone);
-    if (!isIndianMobile(phone)) throw new DomainError("VALIDATION_FAILED", "Customer phone must be a 10-digit Indian mobile number.");
-    const g = await findOrCreateGuest(tx, { name: customerName, phone });
+    const g = await findOrCreateGuest(tx, { name: customerName, phone: input.customerPhone });
     guestId = g.id;
   }
   const items = await loadItems(tx, input.items);
@@ -190,8 +190,8 @@ export const checkoutSchema = z.object({
   paymentOption: z.enum(["ONLINE", "PAY_AT_PICKUP", "PAY_ON_DELIVERY"]),
   guest: z.object({
     name: z.string().trim().min(2).max(100),
-    phone: z.string().transform(normalisePhone).refine(isIndianMobile, "must be a 10-digit Indian mobile number"),
-    email: z.string().trim().email().optional().or(z.literal("").transform(() => undefined)),
+    phone: mobilePhone,
+    email: optionalContact(emailField),
   }).optional(),
   returnUrl: z.string().max(300).optional(),
 });

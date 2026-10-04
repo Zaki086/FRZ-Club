@@ -4,8 +4,10 @@ import { z } from "zod";
 import { body, route } from "@/server/http";
 import { clientIp, rateLimit } from "@/server/rate-limit";
 import { SESSION_COOKIE, login } from "@/server/auth/sessions";
+import { loginIdentifierField } from "@/server/auth/account";
 
-const schema = z.object({ identifier: z.string().trim().min(3), password: z.string().min(1) });
+// v5 CV-5: a valid mobile or email (or a member code, v3 WK-2); anything else → 422 naming `identifier`.
+const schema = z.object({ identifier: loginIdentifierField, password: z.string().min(1) });
 
 export const POST = route(
   async ({ req }) => {

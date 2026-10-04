@@ -2,6 +2,8 @@
 // message that switches the `whatsapp.api` capability on. Values of env variables never leave the server: the page
 // sees only whether each one is set.
 import { z } from "zod";
+import { mobilePhone } from "@/lib/validation/contact";
+import { parseOrValidation } from "../contacts";
 import { clock } from "@/lib/clock";
 import { withTx } from "../../db";
 import { DomainError } from "../../errors";
@@ -158,7 +160,7 @@ export async function fetchWhatsappTemplates(actor: Actor) {
 }
 
 export const whatsappTestMessageSchema = z.object({
-  to: z.string().trim().min(10).max(20),
+  to: mobilePhone, // v5 CV-1
   template: z.string().trim().regex(/^[a-z0-9_]{1,512}$/).default("hello_world"),
   language: z.string().trim().regex(/^[A-Za-z]{2,3}(_[A-Za-z]{2,4})?$/).default("en_US"),
 });
@@ -169,7 +171,7 @@ export const whatsappTestMessageSchema = z.object({
  */
 export async function sendWhatsappTestMessage(actor: Actor, raw: z.input<typeof whatsappTestMessageSchema>) {
   assertCan(actor, "settings");
-  const input = whatsappTestMessageSchema.parse(raw);
+  const input = parseOrValidation(whatsappTestMessageSchema, raw);
   requireEnv(WHATSAPP_ENV);
   const to = toWhatsAppNumber(input.to);
   if (!to) throw new DomainError("VALIDATION_FAILED", "Enter a 10-digit Indian mobile number.");

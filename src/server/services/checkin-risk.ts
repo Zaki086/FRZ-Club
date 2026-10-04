@@ -26,7 +26,11 @@ export const RISK_LABEL: Record<RiskKind, string> = {
 export const RISK_SOON_HOURS = 2;
 export const EXPIRING_DAYS = 7;
 
-export type CheckinRisk = { kind: RiskKind; who: string; problem: string; amountPaise: number | null; fix: { label: string; href: string } };
+export type CheckinRisk = {
+  kind: RiskKind; who: string; problem: string; amountPaise: number | null; fix: { label: string; href: string };
+  /** v5 §3.3: the member this problem is about (the composer's "Send message" target); null for a booking's unpaid bill or a guest. */
+  memberId: string | null;
+};
 export type RiskArrival = {
   key: string;
   type: "BOOKING" | "SOCIAL";
@@ -48,7 +52,7 @@ const memberHref = (id: string) => `/app/members/${id}`;
 
 /** Per member: what would stop or trouble their check-in, independent of which arrival it is. */
 async function memberProblems(actor: Actor, memberIds: string[], today: string) {
-  const out = new Map<string, Array<Omit<CheckinRisk, "who">>>();
+  const out = new Map<string, Array<Omit<CheckinRisk, "who" | "memberId">>>();
   const [memberships, bills, tabs, pending] = await Promise.all([
     prisma.membership.findMany({ where: { memberId: { in: memberIds } }, select: { memberId: true, status: true, startDate: true, endDate: true } }),
     prisma.bill.findMany({ where: { memberId: { in: memberIds }, closedAt: null }, select: { id: true, memberId: true, total: true, amountPaid: true, amountRefunded: true, closedAt: true } }),
@@ -61,7 +65,7 @@ async function memberProblems(actor: Actor, memberIds: string[], today: string) 
        WHERE cc.status = 'PENDING_CHOICE' AND x.member_id = ANY(${memberIds}::text[])`,
   ]);
   const tabBills = await prisma.bill.findMany({ where: { id: { in: tabs.map((t) => t.billId) } }, select: { id: true, total: true, amountPaid: true, amountRefunded: true, closedAt: true } });
-  const add = (id: string, r: Omit<CheckinRisk, "who">) => out.set(id, [...(out.get(id) ?? []), r]);
+  const add = (id: string, r: Omit<CheckinRisk, "who" | "memberId">) => out.set(id, [...(out.get(id) ?? []), r]);
   for (const id of memberIds) {
     const mine = memberships.filter((m) => m.memberId === id);
     const day = (d: Date) => fromDbDate(d);
@@ -162,13 +166,13 @@ export async function checkinRisks(actor: Actor) {
     const due = bill ? billDue(bill) : 0;
     if (due > 0) {
       const href = a.type === "BOOKING" ? bookingHref(a.code!) : `/app/courts/social/players?q=${encodeURIComponent(a.people[0].name)}&when=upcoming`;
-      risks.push({ kind: "UNPAID", who: a.people.map((p) => p.name).join(", "), problem: `${formatINR(due)} unpaid — check-in needs it paid first`, amountPaise: due, fix: { label: `Collect ${formatINR(due)}`, href } });
+      risks.push({ kind: "UNPAID", who: a.people.map((p) => p.name).join(", "), problem: `${formatINR(due)} unpaid — check-in needs it paid first`, amountPaise: due, fix: { label: `Collect ${formatINR(due)}`, href }, memberId: a.type === "SOCIAL" ? a.people[0].memberId : null });
     }
     const seen = new Set<string>();
     for (const p of a.people) {
       if (!p.memberId || seen.has(p.memberId)) continue;
       seen.add(p.memberId);
-      for (const r of problemsOf(p.memberId, a.billId ? [a.billId] : [])) risks.push({ ...r, who: p.name });
+      for (const r of problemsOf(p.memberId, a.billId ? [a.billId] : [])) risks.push({ ...r, who: p.name, memberId: p.memberId });
     }
     if (risks.length) rows.push({ key: a.key, type: a.type, code: a.code, title: a.title, startAt: a.startAt, endAt: a.endAt, soon: a.soon, players: a.people.map((p) => p.name), risks });
   }

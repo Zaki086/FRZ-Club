@@ -43,6 +43,9 @@ export const PAGE_ALLOWLIST: Record<MenuBoundRole, PagePattern[]> = {
     { path: "/app/refunds", why: "\"← All refunds\" on a refund's page" },
     { path: "/app/finance/drawers", why: "drawer session detail from the approvals panel (variances) and Cash Reconciliation" },
     { path: "/app/finance/drawers/*", why: "drawer session detail from the approvals panel (variances) and Cash Reconciliation" },
+    // v5 §1.1: the menu builder is the Bar staff's menu item; the Manager opens it by direct link (not on the menu).
+    { path: "/app/bar/menu", why: "v5 §1.1 the bar & café menu builder (categories, items, base prices) — by direct link" },
+    { path: "/app/bar/menu/preview", why: "v5 MN-4 \"Preview as member\" on the Menu screen (its A4 print and table QR cards are /print/menu/**)" },
   ],
   FRONT_DESK: [
     ...EVERY_PAGE,
