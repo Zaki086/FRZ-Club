@@ -19,6 +19,7 @@ import { PlayerPicker } from "./player-picker";
 import { useNow } from "./use-now";
 import { errorOf, type BookingView, type PickedPlayer } from "./types";
 import { WhatsAppButton } from "@/components/whatsapp-button";
+import { SendMessageButton } from "@/components/message-composer";
 
 function CheckIn({ id, onDone }: { id: string; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -102,12 +103,14 @@ function ChangePlayers({ booking, onDone }: { booking: BookingView; onDone: () =
   );
 }
 
-export function BookingDetailDialog({ bookingId, onClose, onChanged, canManage = true, canCheckin = true }: {
+export function BookingDetailDialog({ bookingId, onClose, onChanged, canManage = true, canCheckin = true, canMessage = false }: {
   bookingId: string;
   onClose: () => void;
   onChanged: () => void;
   canManage?: boolean;
   canCheckin?: boolean;
+  /** v5 §3.3: "Send message" (the composer) for those who may use it. */
+  canMessage?: boolean;
 }) {
   const state = useApi<BookingView>(`/api/bookings/${bookingId}`);
   const now = useNow();
@@ -161,6 +164,7 @@ export function BookingDetailDialog({ bookingId, onClose, onChanged, canManage =
                 {b.billId && b.due === 0 && b.total > 0 && !b.resolution ? <BillRefundRequest billId={b.billId} /> : null}
                 <div className="flex flex-wrap gap-2">
                   <WhatsAppButton target={{ template: "BOOKING", bookingId: b.id }} />
+                  {canMessage ? <SendMessageButton context="BOOKING" recordId={b.id} /> : null}
                 </div>
                 {canManage && upcoming ? (
                   <div className="flex flex-wrap gap-2">

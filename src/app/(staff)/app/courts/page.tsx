@@ -17,7 +17,7 @@ export default async function CourtsPage({ searchParams }: { searchParams: Promi
       <CommandCentre
         initialDate={sp.date && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : today}
         prefillMemberId={sp.member ?? null}
-        perms={{ book: can(actor, "bookings.any"), maintenance: can(actor, "maintenance.manage"), checkin: can(actor, "checkin") }}
+        perms={{ book: can(actor, "bookings.any"), maintenance: can(actor, "maintenance.manage"), checkin: can(actor, "checkin"), message: can(actor, "messages.compose") }}
       />
     </div>
   );

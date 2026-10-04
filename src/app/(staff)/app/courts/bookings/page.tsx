@@ -12,7 +12,7 @@ export default async function BookingsPage() {
   return (
     <div>
       <PageHeader title="Bookings" subtitle="Open a booking to check players in, take payment, change players or cancel." />
-      <BookingsList initialDate={istDate(clock.now())} perms={{ book: can(actor, "bookings.any"), checkin: can(actor, "checkin") }} />
+      <BookingsList initialDate={istDate(clock.now())} perms={{ book: can(actor, "bookings.any"), checkin: can(actor, "checkin"), message: can(actor, "messages.compose") }} />
     </div>
   );
 }

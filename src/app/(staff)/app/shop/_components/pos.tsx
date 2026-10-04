@@ -7,6 +7,7 @@ import { DataState, RejectionBanner } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { checkContactInputs, PhoneInput } from "@/components/contact-inputs";
 import { cn } from "@/components/ui/cn";
 import { MemberStatusBadge, type MemberStatus } from "@/components/member-status";
 import { Money } from "@/components/money";
@@ -47,6 +48,7 @@ export function CounterPos() {
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   const [result, setResult] = useState<SaleResult | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const walkInRef = useRef<HTMLDivElement>(null);
   const [scanning, setScanning] = useState(false);
 
   useEffect(() => {
@@ -111,6 +113,7 @@ export function CounterPos() {
   };
 
   const submit = async () => {
+    if (!member && !checkContactInputs(walkInRef.current)) return;
     setBusy(true);
     setError(null);
     try {
@@ -265,9 +268,9 @@ export function CounterPos() {
                     {memberHits.error ? <p className="p-2 text-sm text-destructive">{memberHits.error.message}</p> : null}
                   </div>
                 ) : null}
-                <div className="grid grid-cols-2 gap-2">
+                <div ref={walkInRef} className="grid grid-cols-2 items-start gap-2">
                   <Input placeholder="Walk-in name (optional)" value={walkName} onChange={(e) => setWalkName(e.target.value)} />
-                  <Input placeholder="Walk-in phone (optional)" inputMode="tel" value={walkPhone} onChange={(e) => setWalkPhone(e.target.value)} />
+                  <PhoneInput placeholder="Walk-in phone (optional)" aria-label="Walk-in phone" name="customerPhone" value={walkPhone} onChange={(e) => setWalkPhone(e.target.value)} />
                 </div>
               </>
             )}

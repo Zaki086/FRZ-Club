@@ -20,7 +20,7 @@ import { MaintenanceDialog } from "./maintenance-dialog";
 import { CloseCourtsDialog } from "./close-courts-dialog";
 import type { Availability, CourtRow, PickedPlayer, Slot } from "./types";
 
-type Perms = { book: boolean; maintenance: boolean; checkin: boolean };
+type Perms = { book: boolean; maintenance: boolean; checkin: boolean; message?: boolean };
 
 const STRIPES = "bg-[repeating-linear-gradient(45deg,#e2e8f0,#e2e8f0_6px,#cbd5e1_6px,#cbd5e1_12px)]";
 
@@ -184,7 +184,7 @@ export function CommandCentre({ initialDate, perms, prefillMemberId }: { initial
         </DataState>
       </Card>
       {target ? <BookingDialog key={`${target.courtId}-${target.date}-${target.time}`} target={target} prefill={prefill} onClose={() => setTarget(null)} onBooked={reload} /> : null}
-      {detailId ? <BookingDetailDialog bookingId={detailId} onClose={() => setDetailId(null)} onChanged={reload} canManage={perms.book} canCheckin={perms.checkin} /> : null}
+      {detailId ? <BookingDetailDialog bookingId={detailId} onClose={() => setDetailId(null)} onChanged={reload} canManage={perms.book} canCheckin={perms.checkin} canMessage={perms.message} /> : null}
       {maint ? (
         <Dialog open onOpenChange={(o) => { if (!o) setMaint(null); }}>
           <DialogContent title={`${maint.court} — maintenance`} description={`${maint.slot.label} · ${maint.slot.range ?? ""}`}>

@@ -10,7 +10,7 @@ export default async function ShopOrdersPage() {
   return (
     <div>
       <PageHeader title="Online orders" subtitle="Pickup and delivery orders from the website and member portal. Stock is reserved at checkout and leaves the shelf at handover." />
-      <OrdersBoard />
+      <OrdersBoard canMessage={can(actor, "messages.compose")} />
     </div>
   );
 }

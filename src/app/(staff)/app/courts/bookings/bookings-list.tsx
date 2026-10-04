@@ -27,7 +27,7 @@ function NextAction({ r, now }: { r: Row; now: number }) {
   return null;
 }
 
-export function BookingsList({ perms }: { initialDate?: string; perms: { book: boolean; checkin: boolean } }) {
+export function BookingsList({ perms }: { initialDate?: string; perms: { book: boolean; checkin: boolean; message?: boolean } }) {
   const [open, setOpen] = useState<string | null>(null);
   const [now] = useState(() => Date.now());
   return (
@@ -49,7 +49,7 @@ export function BookingsList({ perms }: { initialDate?: string; perms: { book: b
         ]}
         empty={{ title: "No bookings match", hint: "Change the day or remove a filter; new bookings are made from the command centre." }}
       />
-      {open ? <BookingDetailDialog bookingId={open} onClose={() => setOpen(null)} onChanged={() => undefined} canManage={perms.book} canCheckin={perms.checkin} /> : null}
+      {open ? <BookingDetailDialog bookingId={open} onClose={() => setOpen(null)} onChanged={() => undefined} canManage={perms.book} canCheckin={perms.checkin} canMessage={perms.message} /> : null}
     </>
   );
 }
