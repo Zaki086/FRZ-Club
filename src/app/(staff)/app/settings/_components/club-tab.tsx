@@ -11,7 +11,7 @@ const FIELDS: Array<{ key: string; label: string; hint?: string }> = [
   { key: "legal_name", label: "Legal name (on invoices)" },
   { key: "address", label: "Address" },
   { key: "state", label: "State" },
-  { key: "state_code", label: "State code", hint: "2 digits — decides CGST/SGST vs IGST (IN-3)" },
+  { key: "state_code", label: "State code", hint: "2 digits" },
   { key: "gstin", label: "GSTIN", hint: "Leave empty if the club is not GST-registered — then no GST is charged" },
   { key: "phone", label: "Phone", hint: "Mobile or landline with STD code" },
   { key: "email", label: "Email" },

@@ -4,7 +4,7 @@ import { FilteredList } from "@/components/list/filtered-list";
 import { RelTime } from "@/components/rel-time";
 import { Badge } from "@/components/ui/badge";
 
-type Row = { id: string; channel: string; recipient: string; subject: string; body: string; status: string; error: string | null; entity: string | null; at: string; actor_name: string | null };
+type Row = { id: string; channel: string; recipient: string; subject: string; body: string; status: string; error: string | null; entity: string | null; at: string; actor_name: string | null; job_id: string | null };
 
 export function MessageLogView() {
   return (
@@ -13,7 +13,7 @@ export function MessageLogView() {
       searchPlaceholder="Search recipient or text"
       columns={[
         { key: "at", header: "When", cell: (r) => <RelTime when={r.at} className="whitespace-nowrap text-xs" /> },
-        { key: "channel", header: "Channel", cell: (r) => (r.channel === "WHATSAPP" ? "WhatsApp" : "Email") },
+        { key: "channel", header: "Channel", cell: (r) => (r.channel === "WHATSAPP" ? "WhatsApp" : r.channel === "PUSH" ? "Push" : "Email") },
         { key: "to", header: "To", cell: (r) => <span className="font-mono text-xs">{r.recipient}</span> },
         {
           key: "message", header: "Message", className: "max-w-md", cell: (r) => (
@@ -26,6 +26,8 @@ export function MessageLogView() {
         },
         { key: "status", header: "Status", cell: (r) => <Badge tone={r.status === "SENT" ? "green" : r.status === "FAILED" ? "red" : "neutral"}>{r.status.toLowerCase()}</Badge> },
         { key: "by", header: "By", cell: (r) => <span className="text-xs">{r.actor_name ?? "system"}</span> },
+        // v6 SA-11: messages sent by a "Send all" job carry its id.
+        { key: "job", header: "Job", cell: (r) => (r.job_id ? <span className="font-mono text-[11px]" data-testid="message-log-job">{r.job_id}</span> : null) },
       ]}
       rowExtra={(r) => (
         <div className="flex flex-col gap-1 text-sm">
@@ -35,7 +37,7 @@ export function MessageLogView() {
           {r.entity ? <p className="text-[11px] text-muted-foreground">About: {r.entity.replace(/_/g, " ")}</p> : null}
         </div>
       )}
-      empty={{ title: "No messages for these filters", hint: "Widen the dates or remove a filter." }}
+      empty={{ title: "No messages for these filters" }}
     />
   );
 }

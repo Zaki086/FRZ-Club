@@ -9,7 +9,7 @@ export default async function PayrollPage() {
   if (!can(actor, "payroll")) forbidden();
   return (
     <div>
-      <PageHeader title="Payroll" subtitle="Monthly runs: draft → approved by the owner → paid. Unpaid leave days are deducted at salary ÷ days in month." />
+      <PageHeader title="Payroll" />
       <PayrollRuns />
     </div>
   );

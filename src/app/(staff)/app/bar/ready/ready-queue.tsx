@@ -16,7 +16,7 @@ export function ReadyQueue() {
   return (
     <div className="flex flex-col gap-3">
       <RejectionBanner error={error} />
-      <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: "Nothing waiting", hint: "Ready items appear here as soon as the kitchen marks them." }}>
+      <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: "Nothing waiting" }}>
         {(rows) => (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {rows.map((r) => (

@@ -172,7 +172,7 @@ export function ExpensesList({ canManage }: { canManage: boolean }) {
         { key: "status", header: "Status", cell: (r) => <span className="flex gap-1"><StatusBadge status={r.status} />{r.overdue ? <StatusBadge status="OVERDUE" /> : null}</span> },
         ...(canManage ? [{ key: "actions", header: "", cell: (r: Row) => <RowActions e={toExpense(r)} /> }] : []),
       ]}
-      empty={{ title: "No expense bills match these filters", hint: "Supplier bills from goods receipts appear here too." }}
+      empty={{ title: "No expense bills match these filters" }}
     />
   );
 }

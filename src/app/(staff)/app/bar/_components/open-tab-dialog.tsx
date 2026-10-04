@@ -45,7 +45,7 @@ export function OpenTabDialog({ tables, defaultTableId, trigger }: { tables: Tab
       <DialogTrigger asChild>
         {trigger ?? <Button size="lg"><Plus className="h-5 w-5" /> Open tab</Button>}
       </DialogTrigger>
-      <DialogContent title="Open a tab" description="One open tab per member. The payer's bar discount is applied automatically.">
+      <DialogContent title="Open a tab">
         <div className="flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-2">
             <Button variant={mode === "member" ? "default" : "outline"} size="lg" onClick={() => setMode("member")}>Member</Button>

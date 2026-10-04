@@ -80,7 +80,7 @@ export function UsersTab({ selfUserId }: { selfUserId: string }) {
               { key: "login", header: "Last login", cell: (u) => (u.last_login_at ? <RelTime when={u.last_login_at} className="text-xs" /> : <span className="text-xs">never</span>) },
               { key: "actions", header: "", className: "text-right", cell: (u) => <span onClick={(e) => e.stopPropagation()}><UserActions u={u} selfUserId={selfUserId} /></span> },
             ]}
-            empty={{ title: "No staff users for these filters", hint: "Remove a filter to see everyone." }}
+            empty={{ title: "No staff users for these filters" }}
           />
         </CardContent>
       </Card>

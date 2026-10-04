@@ -100,7 +100,7 @@ export function LeaveApprovals() {
             </p>
           </div>
         )}
-        empty={{ title: "No leave requests for these filters", hint: "Pending requests show here first. Remove a filter to see decided ones." }}
+        empty={{ title: "No leave requests for these filters" }}
       />
     </div>
   );

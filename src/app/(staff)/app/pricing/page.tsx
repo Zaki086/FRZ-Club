@@ -12,7 +12,7 @@ export default async function PricingPage() {
   if (!can(actor, "pricing.manage")) forbidden();
   return (
     <div>
-      <PageHeader title="Price book" subtitle="Base prices, time bands, special dates and promotions. Every change starts now or at a time you choose, is kept in the history, and never changes a bill already made." />
+      <PageHeader title="Price book" />
       <PriceBook />
     </div>
   );

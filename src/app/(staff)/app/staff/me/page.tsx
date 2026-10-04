@@ -9,7 +9,7 @@ export default async function MyStaffPage() {
   if (!can(actor, "staff.self")) forbidden();
   return (
     <div className="mx-auto max-w-5xl">
-      <PageHeader title="My shifts & leave" subtitle="Clock in and out, count your cash drawer, see your roster and request leave." />
+      <PageHeader title="My shifts & leave" />
       <MySelfService />
     </div>
   );

@@ -27,7 +27,7 @@ export type Dashboard = {
     clubCancellationsPending?: number;
     utilization?: { pct: number; bookedHours: number; openHours: number; heatmap: { hours: number[]; courts: Array<{ court: string; cells: number[] }> } };
     members?: { activeByTier: Record<string, number>; activeTotal: number; newMembers: number; expiringSoon: number };
-    shop?: { topProducts: Array<{ name: string; qty: number; revenue: number }>; lowStock: number; openOrders: number };
+    shop?: { topProducts: Array<{ name: string; qty: number; revenue: number }>; lowStock: number; openOrders: number; walkInSales?: { count: number; total: number; anonymous: number } };
     bar?: { revenue: Kpi; averageTab: number; settledTabs: number; openTabs: number };
     leads?: { newLeads: number; overdue: number; won: number; conversionRate: number };
   };

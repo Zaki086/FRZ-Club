@@ -30,7 +30,7 @@ export function PayrollRunView({ runId, isOwner }: { runId: string; isOwner: boo
       <DataState state={state}>
         {(r) => (
           <>
-            <PageHeader title={`Payroll ${r.month}`} subtitle={<span className="inline-flex items-center gap-2">Status <StatusBadge status={r.status} />{r.method ? ` · paid by ${r.method.toLowerCase()}` : ""}</span>} />
+            <PageHeader title={`Payroll ${r.month}`} meta={<span className="inline-flex items-center gap-2">Status <StatusBadge status={r.status} />{r.method ? ` · paid by ${r.method.toLowerCase()}` : ""}</span>} />
             <RejectionBanner error={error} />
             <div className="flex flex-wrap items-end gap-2">
               {r.status === "DRAFT" ? (

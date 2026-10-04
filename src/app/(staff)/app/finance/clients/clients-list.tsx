@@ -24,7 +24,7 @@ function NewClient({ onDone }: { onDone: () => void }) {
       <DialogTrigger asChild>
         <Button><Building2 className="h-4 w-4" /> New client</Button>
       </DialogTrigger>
-      <DialogContent title="New business client" description="The server validates the GSTIN; its first two digits become the state code.">
+      <DialogContent title="New business client">
         <form
           className="flex flex-col gap-3"
           onSubmit={async (e) => {
@@ -114,7 +114,7 @@ export function ClientsList() {
           ),
         },
       ]}
-      empty={{ title: "No business clients match these filters", hint: "Add a corporate client to invoice court packages and events." }}
+      empty={{ title: "No business clients match these filters" }}
     />
   );
 }

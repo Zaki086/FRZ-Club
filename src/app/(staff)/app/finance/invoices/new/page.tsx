@@ -10,7 +10,7 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: P
   const sp = await searchParams;
   return (
     <div className="mx-auto max-w-4xl">
-      <PageHeader title="New invoice" subtitle="Creates a draft. Taxes, totals and the CGST/SGST/IGST split are computed by the server." />
+      <PageHeader title="New invoice" />
       <NewInvoiceForm initialClientId={sp.clientId ?? ""} />
     </div>
   );

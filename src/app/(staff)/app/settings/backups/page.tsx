@@ -12,7 +12,7 @@ export default async function BackupsPage() {
   if (!can(actor, "settings")) forbidden();
   return (
     <div className="mx-auto max-w-3xl">
-      <PageHeader title="Backups" subtitle="A full database backup runs every night at 02:30 and is kept for 14 days. Download one now and then and keep it somewhere else too." />
+      <PageHeader title="Backups" />
       <BackupsView />
     </div>
   );

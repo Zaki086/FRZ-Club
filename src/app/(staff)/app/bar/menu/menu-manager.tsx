@@ -127,7 +127,7 @@ function CategoryDialog({ category, trigger, onDone }: { category: Category | nu
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent title={category ? `Edit “${category.name}”` : "New category"} description="Members see categories in this order, each with its items.">
+      <DialogContent title={category ? `Edit “${category.name}”` : "New category"}>
         {open ? <CategoryForm category={category} onDone={() => { setOpen(false); onDone(); }} /> : null}
       </DialogContent>
     </Dialog>
@@ -190,9 +190,8 @@ function Categories({ categories, onChange }: { categories: Category[]; onChange
             ))}
           </ol>
         ) : (
-          <p className="text-sm text-muted-foreground">No categories yet. Add the first one (e.g. “Snacks” or “Coffee & tea”), then add items to it.</p>
+          <p className="text-sm text-muted-foreground">No categories yet.</p>
         )}
-        <p className="text-xs text-muted-foreground">Drag a category (or use the arrows) to change the order members see.</p>
         <RejectionBanner error={error} />
       </CardContent>
     </Card>
@@ -429,7 +428,7 @@ function ItemDialogs({ categories, canPrice, editing, setEditing }: { categories
         <DialogTrigger asChild>
           <Button data-testid="new-menu-item" disabled={!categories.length}><Plus className="h-4 w-4" /> New item</Button>
         </DialogTrigger>
-        <DialogContent title="New menu item" description="Members see it as soon as it is Active and available." wide>
+        <DialogContent title="New menu item" wide>
           {creating ? <ItemForm detail={null} categories={categories} canPrice={canPrice} onSaved={() => { setCreating(false); reload(); }} /> : null}
         </DialogContent>
       </Dialog>
@@ -506,7 +505,7 @@ export function MenuManager({ canPrice }: { canPrice: boolean }) {
                 },
                 { key: "actions", header: "", className: "text-right", cell: (r) => <AvailabilityToggle row={r} /> },
               ]}
-              empty={{ title: "No menu items match these filters", hint: cats.length ? "Add an item with “New item”, or clear a filter." : "Add a category first, then its items." }}
+              empty={{ title: "No menu items match these filters" }}
             />
           </>
         )}

@@ -32,8 +32,8 @@ export function DrillDownDialog({
   return (
     <Dialog open={!!metric} onOpenChange={(o) => (!o ? onClose() : undefined)}>
       {metric ? (
-        <DialogContent title={title} description="The records below add up exactly to the number on the dashboard." wide>
-          <DataState state={state} isEmpty={(d) => d.rows.length === 0} empty={{ title: "No records in this period", hint: "The KPI is zero because nothing was recorded." }}>
+        <DialogContent title={title}  wide>
+          <DataState state={state} isEmpty={(d) => d.rows.length === 0} empty={{ title: "No records in this period" }}>
             {(d) => {
               const sum = d.rows.reduce((a, r) => a + r.amount, 0);
               const ok = sum === d.total;

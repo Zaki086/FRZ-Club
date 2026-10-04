@@ -12,7 +12,7 @@ export default async function PrivacyPage() {
   if (!can(actor, "privacy.manage")) forbidden();
   return (
     <div className="mx-auto max-w-4xl">
-      <PageHeader title="Data requests" subtitle="Members' requests to erase their personal data (DPDP). Members download their own data from the portal; you can download it for them here." />
+      <PageHeader title="Data requests" />
       <DataRequests />
     </div>
   );

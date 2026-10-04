@@ -85,7 +85,7 @@ export function DataRequests() {
           {r.anonymised_at ? <p className="text-xs">Personal data erased <RelTime when={r.anonymised_at} />.</p> : null}
         </div>
       )}
-      empty={{ title: "No data requests for these filters", hint: "Erasure requests from members show here. Remove a filter to see downloads." }}
+      empty={{ title: "No data requests for these filters" }}
     />
   );
 }

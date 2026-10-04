@@ -13,7 +13,7 @@ export default async function EmployeesAdminPage() {
   if (!can(actor, "users.manage")) forbidden();
   return (
     <div className="mx-auto max-w-7xl">
-      <PageHeader title="Employees" subtitle="Create staff logins, set role, salary and join date, deactivate or reactivate, issue a password reset link or log someone out everywhere." />
+      <PageHeader title="Employees" />
       <EmployeesAdmin selfUserId={actor.userId} />
     </div>
   );

@@ -10,6 +10,7 @@ import { EmailInput, requireContactInputs } from "@/components/contact-inputs";
 import { Badge } from "@/components/ui/badge";
 import { loadCapabilities } from "@/components/capabilities";
 import { fromRupeeText, putSetting, SaveBar, toRupeeText, type SettingRow } from "./shared";
+import { PublicUrlStatus } from "./public-url-status";
 
 type Status = Record<string, { enabled: boolean; reason: string }>;
 
@@ -61,6 +62,7 @@ export function PaymentsTab({ rows, onSaved }: { rows: SettingRow[]; onSaved: ()
       <Card>
         <CardHeader><CardTitle>What the club can do right now</CardTitle></CardHeader>
         <CardContent>
+          <PublicUrlStatus />
           <DataState state={status}>
             {(s) => (
               <div className="divide-y text-sm" data-testid="capability-status">
@@ -109,7 +111,7 @@ export function PaymentsTab({ rows, onSaved }: { rows: SettingRow[]; onSaved: ()
           <CardContent className="flex flex-col gap-3 text-sm">
             <label className="flex items-center gap-2"><input type="checkbox" checked={delivery} onChange={(e) => setDelivery(e.target.checked)} /> The club delivers orders</label>
             <Field label="PIN codes served" hint="Comma-separated 6-digit PIN codes"><Input value={pins} onChange={(e) => setPins(e.target.value)} /></Field>
-            <Field label="Delivery fee (₹)" hint="Never discounted (PR-5)"><Input inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} /></Field>
+            <Field label="Delivery fee (₹)"><Input inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} /></Field>
             <SaveBar
               onSave={async () => {
                 const pincodes = pins.split(/[\s,]+/).map((p) => p.trim()).filter(Boolean);

@@ -14,7 +14,7 @@ export default async function RosterPage({ searchParams }: { searchParams: Promi
   const initialTab = sp.tab === "attendance" ? "attendance" : Object.keys(sp).some((k) => k !== "tab") ? "list" : "roster";
   return (
     <div>
-      <PageHeader title="Staff roster" subtitle="Shifts for every role. No overlapping shifts and none during approved leave — the database enforces it." />
+      <PageHeader title="Staff roster" />
       <RosterBoard initialFrom={weekStart(istDate(clock.now()))} initialTab={initialTab} />
     </div>
   );

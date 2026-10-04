@@ -60,7 +60,7 @@ export function WhatsAppLogView() {
           {r.manual_status && r.manual_status !== "SKIPPED" ? <p className="text-xs text-muted-foreground">Manual WhatsApp task: {MANUAL[r.manual_status] ?? r.manual_status.toLowerCase()}.</p> : null}
         </div>
       )}
-      empty={{ title: "No WhatsApp messages for these filters", hint: "Widen the dates or remove a filter." }}
+      empty={{ title: "No WhatsApp messages for these filters" }}
     />
   );
 }

@@ -40,7 +40,7 @@ function EditEmployee({ r, self }: { r: Row; self: boolean }) {
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); setError(null); }}>
       <DialogTrigger asChild><Button size="sm" variant="outline">Edit</Button></DialogTrigger>
-      <DialogContent title={`Edit ${r.name}`} description="Role changes take effect on their next click; salary changes apply to the next payroll run.">
+      <DialogContent title={`Edit ${r.name}`}>
         <form
           className="flex flex-col gap-3"
           onSubmit={async (e) => {
@@ -194,7 +194,7 @@ export function EmployeesAdmin({ selfUserId }: { selfUserId: string }) {
             { key: "login", header: "Last login", cell: (r) => (r.last_login_at ? <RelTime when={r.last_login_at} className="text-xs" /> : <span className="text-xs">never</span>) },
             { key: "actions", header: "", className: "text-right", cell: (r) => <Actions r={r} selfUserId={selfUserId} /> },
           ]}
-          empty={{ title: "No staff for these filters", hint: "Remove a filter to see everyone." }}
+          empty={{ title: "No staff for these filters" }}
         />
       </div>
       <AddEmployee onAdded={() => setVersion((v) => v + 1)} />

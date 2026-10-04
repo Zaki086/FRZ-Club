@@ -11,7 +11,7 @@ export default async function CashPage() {
   if (!can(actor, "cash.reconcile")) forbidden();
   return (
     <div>
-      <PageHeader title="Daily cash reconciliation" subtitle="Ledger cash against the drawers, drops and pay-ins against the safe, variances, handovers and bank deposits — then every drawer opened that day." />
+      <PageHeader title="Daily cash reconciliation" />
       {TODO_HOME[actor.role] === "finance" ? <TodoPanel /> : null}
       <CashReconciliation />
     </div>

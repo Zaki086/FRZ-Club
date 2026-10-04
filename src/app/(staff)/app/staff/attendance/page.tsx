@@ -13,7 +13,7 @@ export default async function AttendancePage() {
   if (!can(actor, "staff.directory")) forbidden();
   return (
     <div>
-      <PageHeader title="Attendance" subtitle="Every clock-in against the roster: late, early, overtime and missing clock-outs." />
+      <PageHeader title="Attendance" />
       <AttendanceTabs active="log" />
       <AttendanceLog canCorrect={can(actor, "attendance.correct")} selfEmployeeId={actor.employeeId} />
     </div>

@@ -12,7 +12,7 @@ export default async function EmployeesPage() {
   if (!can(actor, "staff.directory")) forbidden();
   return (
     <div>
-      <PageHeader title="Staff" subtitle="Who is here now, today's shifts, hours, late arrivals, leave and open cash drawers." />
+      <PageHeader title="Staff" />
       <EmployeesList />
     </div>
   );

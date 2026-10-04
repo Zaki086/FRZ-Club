@@ -13,6 +13,8 @@ export type TabView = {
   id: string; code: string; status: string; payer: string; memberId: string | null; guestId: string | null; tier: string;
   table: { id: string; number: number } | null; guestIdVerified: boolean; billId: string; total: number; paid: number; due: number;
   discountTotal: number; carriedReason: string | null; openedAt: string; barDate: string; lines: TabLine[];
+  /** v6 JR-1: a Junior's / under-18's tab — settled in one payment (no split). */
+  noSplit?: boolean;
 };
 export type StaffMe = {
   clockedIn: { id: string; since: string; openingFloat: number; cashExpected: number } | null;

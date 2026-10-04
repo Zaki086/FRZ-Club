@@ -13,6 +13,7 @@ import { Field, Input, Select } from "@/components/ui/input";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Money } from "@/components/money";
+import { InfoTip } from "@/components/info-tip";
 import { formatINR, parseRupees } from "@/lib/money";
 import { fmtDateTime } from "@/lib/time";
 
@@ -318,7 +319,10 @@ export function PriceBook() {
           </TabsList>
           <TabsContent value="rules" className="mt-3 flex flex-col gap-4">
             <Card><CardHeader><CardTitle>New rule</CardTitle></CardHeader><CardContent><RuleForm book={b} onDone={reload} /></CardContent></Card>
-            <Card><CardHeader><CardTitle>Rules</CardTitle></CardHeader><CardContent><Rules book={b} onDone={reload} /></CardContent></Card>
+            <Card><CardHeader className="flex-row items-center gap-1"><CardTitle>Rules</CardTitle>
+              <InfoTip place="price-book-precedence" label="Which rule wins">
+                A special date replaces any time band on that day. Then one discount applies — the plan&apos;s or the best promotion, never both. Among matching rules the higher priority wins, then the more specific one (a court beats a sport beats all).
+              </InfoTip></CardHeader><CardContent><Rules book={b} onDone={reload} /></CardContent></Card>
             <Card><CardHeader><CardTitle>Promotion limits</CardTitle></CardHeader><CardContent><Guardrails book={b} onDone={reload} /></CardContent></Card>
           </TabsContent>
           <TabsContent value="fees" className="mt-3">
@@ -334,7 +338,6 @@ export function PriceBook() {
                 ))}
               </TBody>
             </Table>
-            <p className="mt-2 text-xs text-muted-foreground">Membership prices and plan discounts are on the plans in Settings (Owner).</p>
           </TabsContent>
           <TabsContent value="menu" className="mt-3">
             <Table>

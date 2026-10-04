@@ -13,6 +13,7 @@ import { api, ApiError, useApi } from "@/components/api";
 import { Money } from "@/components/money";
 import { QrScanner } from "@/components/qr-scanner";
 import { RejectionBanner } from "@/components/states";
+import { InfoTip } from "@/components/info-tip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -23,12 +24,12 @@ import { DrawerOpener, emptyTender, MethodSelect, ProofFields, tenderProof, useT
 import { formatINR } from "@/lib/money";
 import { fmtDateTime } from "@/lib/time";
 
-export type IdentityMethod = "REFUND_QR" | "MEMBER_CARD" | "SEARCH" | "GUEST_PHONE_CODE";
+export type IdentityMethod = "REFUND_QR" | "MEMBER_CARD" | "SEARCH" | "GUEST_PHONE_CODE" | "RECEIPT_QR" | "RECEIPT_CODE";
 export type Collectable = {
   id: string; code: string; status: string; collectStatus: string | null; amount: number; toCollect: number; readyAt: string | null;
   what: string; billId: string; customer: string; reason: string;
   member: { id: string; name: string; memberCode: string; phone: string; photoUrl: string | null; guardianName: string | null } | null;
-  guest: { needsPhone: boolean; needsCode: boolean; codeLabel: string } | null;
+  guest: { needsPhone: boolean; needsCode: boolean; codeLabel: string; walkIn?: boolean } | null;
 };
 
 function Photo({ r }: { r: Collectable }) {
@@ -45,7 +46,9 @@ function Photo({ r }: { r: Collectable }) {
 }
 
 /** Steps 2–4 for one refund: who it is, the identity tick, the method, pay out, print. */
-export function PayOutForm({ refund, via = "SEARCH", onDone }: { refund: Collectable; via?: IdentityMethod; onDone?: () => void }) {
+export function PayOutForm({ refund, via = "SEARCH", receiptToken, onDone }: { refund: Collectable; via?: IdentityMethod; receiptToken?: string; onDone?: () => void }) {
+  // v6 WI-5: found by scanning the sale's receipt QR — the receipt itself is the proof (no code to type).
+  const scannedReceipt = via === "RECEIPT_QR" && !!receiptToken;
   const methods = useTenderMethods() ?? ["CASH"];
   const [t, setT] = useState<TenderDraft>(emptyTender("CASH"));
   const [checked, setChecked] = useState(false);
@@ -78,7 +81,8 @@ export function PayOutForm({ refund, via = "SEARCH", onDone }: { refund: Collect
       await api(`/api/refunds/${refund.id}/pay-out`, {
         body: {
           method: proof.method, reference: "reference" in proof ? proof.reference : undefined, approvalCode: "approvalCode" in proof ? proof.approvalCode : undefined,
-          identityChecked: checked, via, guestPhone: refund.guest ? guestPhone : undefined, originalCode: refund.guest ? originalCode : undefined,
+          identityChecked: checked, via, guestPhone: refund.guest ? guestPhone : undefined, originalCode: refund.guest && !scannedReceipt ? originalCode : undefined,
+          receiptToken: scannedReceipt ? receiptToken : undefined,
         },
       });
       setPaid({ amount });
@@ -97,7 +101,7 @@ export function PayOutForm({ refund, via = "SEARCH", onDone }: { refund: Collect
           {refund.member ? (
             <p className="text-muted-foreground"><span className="font-mono">{refund.member.memberCode}</span> · {refund.member.phone}</p>
           ) : (
-            <Badge tone="amber" className="self-start">Guest — check phone and original code</Badge>
+            <Badge tone="amber" className="self-start">{refund.guest?.walkIn ? "Walk-in — check the receipt" : "Guest — check phone and original code"}</Badge>
           )}
           {refund.member?.guardianName ? <p className="text-xs text-muted-foreground">Junior: may be collected by the guardian, {refund.member.guardianName}.</p> : null}
           <p className="mt-1">
@@ -111,18 +115,21 @@ export function PayOutForm({ refund, via = "SEARCH", onDone }: { refund: Collect
           {refund.guest.needsPhone ? (
             <Field label="Guest's phone number"><PhoneInput name="guestPhone" value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} placeholder="The number they booked with" /></Field>
           ) : null}
-          {refund.guest.needsCode ? (
-            <Field label={`Original ${refund.guest.codeLabel}`}><Input value={originalCode} onChange={(e) => setOriginalCode(e.target.value)} placeholder="Ask the guest — e.g. BK-000123" /></Field>
+          {refund.guest.needsCode && !scannedReceipt ? (
+            <Field label={`Original ${refund.guest.codeLabel}`}><Input value={originalCode} onChange={(e) => setOriginalCode(e.target.value)} placeholder={refund.guest.walkIn ? "From the receipt — e.g. CS-000123" : "Ask the guest — e.g. BK-000123"} /></Field>
           ) : null}
+          {scannedReceipt ? <p className="text-sm text-success-text">Receipt QR scanned — this is the sale&apos;s own receipt.</p> : null}
         </div>
       ) : null}
-      <label className={cn("flex cursor-pointer items-start gap-3 rounded-xl border p-3", checked ? "border-success bg-success/10" : "border-warning/60 bg-warning/10")}>
-        <input type="checkbox" className="mt-1 h-5 w-5" checked={checked} onChange={(e) => setChecked(e.target.checked)} aria-label="Identity checked" data-testid="identity-checked" />
-        <span className="text-sm">
-          <span className="flex items-center gap-1 font-semibold"><ShieldCheck className="h-4 w-4" /> Identity checked</span>
-          {refund.member ? "The person collecting matches the photo on screen (or is the Junior's guardian)." : "The guest gave the phone number and the original code above."}
-        </span>
-      </label>
+      <div className={cn("flex items-center gap-1 rounded-xl border pr-2", checked ? "border-success bg-success/10" : "border-warning/60 bg-warning/10")}>
+        <label className="flex flex-1 cursor-pointer items-center gap-3 p-3">
+          <input type="checkbox" className="h-5 w-5" checked={checked} onChange={(e) => setChecked(e.target.checked)} aria-label="Identity checked" data-testid="identity-checked" />
+          <span className="flex items-center gap-1 text-sm font-semibold"><ShieldCheck className="h-4 w-4" /> Identity checked</span>
+        </label>
+        <InfoTip place="refund-identity" label="About the identity check" align="end">
+          {refund.member ? "Tick only when the person collecting matches the photo on screen, or is the Junior's guardian. Cash handed to the wrong person can't be taken back." : refund.guest?.walkIn ? "Tick only when the customer has shown the receipt of this sale." : "Tick only when the guest has given the phone number and the original code above."}
+        </InfoTip>
+      </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
         <MethodSelect methods={methods.filter((m) => m !== "BANK_TRANSFER")} value={t.method} onChange={(m) => setT({ ...t, method: m })} />
         <ProofFields kind="refund" className="sm:col-span-2" value={t} onChange={(p) => setT({ ...t, ...p })} />
@@ -152,7 +159,7 @@ export function PayOutLoader({ id, onDone }: { id: string; onDone?: () => void }
 }
 
 /** Step 1: scan or search, then pick the refund to pay out. */
-export function FindRefund({ onPick, autoFocus = true }: { onPick: (r: Collectable, via: IdentityMethod) => void; autoFocus?: boolean }) {
+export function FindRefund({ onPick, autoFocus = true }: { onPick: (r: Collectable, via: IdentityMethod, scanned?: string) => void; autoFocus?: boolean }) {
   const [text, setText] = useState("");
   const [scan, setScan] = useState(false);
   const [result, setResult] = useState<{ via: IdentityMethod; refunds: Collectable[] } | null>(null);
@@ -167,7 +174,7 @@ export function FindRefund({ onPick, autoFocus = true }: { onPick: (r: Collectab
     }
   }, []);
   const term = text.trim();
-  const isCode = term.startsWith("RF1.") || term.startsWith("CC1.");
+  const isCode = term.startsWith("RF1.") || term.startsWith("CC1.") || term.startsWith("RC1.");
   useEffect(() => {
     if (isCode || term.length < 2) return;
     const h = setTimeout(() => void run(term), 300);
@@ -180,7 +187,7 @@ export function FindRefund({ onPick, autoFocus = true }: { onPick: (r: Collectab
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             className="h-12 pl-9 text-base"
-            placeholder="Name, phone, RF-000123, booking code — or scan the refund QR / member card"
+            placeholder="Name, phone, RF-000123, booking or receipt code — or scan the refund QR / member card / receipt"
             aria-label="Find a refund"
             value={text}
             autoFocus={autoFocus}
@@ -210,7 +217,7 @@ export function FindRefund({ onPick, autoFocus = true }: { onPick: (r: Collectab
       {result?.refunds.length ? (
         <div className="divide-y rounded-2xl border">
           {result.refunds.map((r) => (
-            <button key={r.id} type="button" className="flex w-full items-center gap-3 p-3 text-left hover:bg-secondary" onClick={() => onPick(r, result.via)} aria-label={`Pay out ${r.code}`}>
+            <button key={r.id} type="button" className="flex w-full items-center gap-3 p-3 text-left hover:bg-secondary" onClick={() => onPick(r, result.via, result.via === "RECEIPT_QR" ? term : undefined)} aria-label={`Pay out ${r.code}`}>
               {r.member?.photoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element -- member photo
                 <img src={r.member.photoUrl} alt="" className="h-12 w-12 rounded-full object-cover" />
@@ -218,7 +225,7 @@ export function FindRefund({ onPick, autoFocus = true }: { onPick: (r: Collectab
                 <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted font-bold">{(r.member?.name ?? r.customer).charAt(0)}</div>
               )}
               <span className="flex min-w-0 flex-1 flex-col">
-                <span className="font-semibold">{r.member?.name ?? r.customer} {r.member ? null : <Badge tone="amber">Guest</Badge>}</span>
+                <span className="font-semibold">{r.member?.name ?? r.customer} {r.member ? null : <Badge tone="amber">{r.guest?.walkIn ? "Walk-in" : "Guest"}</Badge>}</span>
                 <span className="truncate text-xs text-muted-foreground"><span className="font-mono">{r.code}</span> · {r.what}</span>
               </span>
               <Money paise={r.toCollect || r.amount} className="font-bold" />
@@ -233,7 +240,7 @@ export function FindRefund({ onPick, autoFocus = true }: { onPick: (r: Collectab
 /** The front desk's "Pay out a refund" dialog: find → check → pay → print. */
 export function PayOutDialog({ onChanged }: { onChanged?: () => void }) {
   const [open, setOpen] = useState(false);
-  const [picked, setPicked] = useState<{ r: Collectable; via: IdentityMethod } | null>(null);
+  const [picked, setPicked] = useState<{ r: Collectable; via: IdentityMethod; scanned?: string } | null>(null);
   const close = () => {
     setOpen(false);
     setPicked(null);
@@ -242,14 +249,14 @@ export function PayOutDialog({ onChanged }: { onChanged?: () => void }) {
   return (
     <Dialog open={open} onOpenChange={(o) => (o ? setOpen(true) : close())}>
       <Button onClick={() => setOpen(true)} data-testid="open-payout"><QrCode className="h-4 w-4" /> Pay out a refund</Button>
-      <DialogContent wide title="Pay out a refund" description="Scan the refund QR or member card, or search. Check the person, then pay from your drawer.">
+      <DialogContent wide title="Pay out a refund">
         {picked ? (
           <div className="flex flex-col gap-3">
             <Button variant="ghost" size="sm" className="self-start" onClick={() => setPicked(null)}>← Find another</Button>
-            <PayOutForm refund={picked.r} via={picked.via} onDone={close} />
+            <PayOutForm refund={picked.r} via={picked.via} receiptToken={picked.scanned} onDone={close} />
           </div>
         ) : (
-          <FindRefund onPick={(r, via) => setPicked({ r, via })} />
+          <FindRefund onPick={(r, via, scanned) => setPicked({ r, via, scanned })} />
         )}
       </DialogContent>
     </Dialog>

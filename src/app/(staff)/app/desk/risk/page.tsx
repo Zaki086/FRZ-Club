@@ -12,10 +12,7 @@ export default async function CheckinRiskPage() {
   if (!can(actor, "checkin")) forbidden();
   return (
     <div className="mx-auto max-w-5xl">
-      <PageHeader
-        title="Check-in risk"
-        subtitle="Arrivals today and in the next 2 hours that will hit a problem at the desk — fix each one before they arrive."
-      />
+      <PageHeader title="Check-in risk" />
       <RiskList messaging={{ compose: can(actor, "messages.compose"), bulk: can(actor, "messages.bulk"), editText: can(actor, "messages.templates.view") }} />
     </div>
   );

@@ -16,7 +16,7 @@ export default async function RefundsPage({ searchParams }: { searchParams: Prom
   const s = await getSettings();
   return (
     <div>
-      <PageHeader title="Refunds" subtitle="Every refund from request to pay-out. Approve what is waiting; pay out what members come to collect — check who they are first." />
+      <PageHeader title="Refunds" />
       <RefundsQueue
         userId={actor.userId}
         canApprove={can(actor, "refunds.approve")}

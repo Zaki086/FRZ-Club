@@ -14,7 +14,7 @@ export default async function DrawerSessionPage({ params }: { params: Promise<{ 
   const { id } = await params;
   return (
     <div className="mx-auto max-w-5xl">
-      <PageHeader title="Drawer session" subtitle="Every cash movement with the running balance, the count at close and the variance." />
+      <PageHeader title="Drawer session" />
       <DrawerSession id={id} />
     </div>
   );

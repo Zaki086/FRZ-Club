@@ -146,7 +146,7 @@ function BarDaysList({ selected, onPick, canClose, onClosed }: { selected: strin
               return canClose ? <CloseDayButton date={r.id} onClosed={() => onClosed(r.id)} /> : <span className="text-xs text-muted-foreground">Ready to close</span>;
             } },
           ]}
-          empty={{ title: "No bar days match these filters", hint: "Remove a filter or widen the dates." }}
+          empty={{ title: "No bar days match these filters" }}
         />
       </CardContent>
     </Card>

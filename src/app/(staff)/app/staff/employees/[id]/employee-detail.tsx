@@ -42,7 +42,7 @@ export function EmployeeDetail({ id }: { id: string }) {
           <div className="flex flex-col gap-4">
             <PageHeader
               title={p.name}
-              subtitle={<>{ROLE_LABEL[p.role] ?? p.role} · {p.phone}{p.email ? ` · ${p.email}` : ""} · joined {fmtDate(p.joinDate)}{p.lastLoginAt ? <> · last login <RelTime when={p.lastLoginAt} /></> : null}</>}
+              meta={<>{ROLE_LABEL[p.role] ?? p.role} · {p.phone}{p.email ? ` · ${p.email}` : ""} · joined {fmtDate(p.joinDate)}{p.lastLoginAt ? <> · last login <RelTime when={p.lastLoginAt} /></> : null}</>}
               actions={<Link className="text-sm font-semibold text-primary underline" href="/app/staff/employees">All staff</Link>}
             />
             {!p.active ? <Badge tone="neutral" className="self-start">Inactive</Badge> : null}

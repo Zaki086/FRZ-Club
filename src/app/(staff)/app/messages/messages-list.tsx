@@ -3,6 +3,7 @@
 // (wa.me with the text ready) and marked sent by the person who sent them — the app never claims it delivered them.
 import { useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { api, ApiError } from "@/components/api";
 import { FilteredList, useListReload } from "@/components/list/filtered-list";
 import { RelTime } from "@/components/rel-time";
@@ -10,6 +11,7 @@ import { RejectionBanner } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SendNextPanel } from "@/components/message-composer-send-next";
+import { SendAllButton, sendAllFilter } from "@/components/send-all";
 
 type Row = {
   id: string; event: string; channel: string; status: string; created_at: string; title: string; body: string; error: string | null;
@@ -46,7 +48,16 @@ const STATUS: Record<string, { label: string; tone: "green" | "amber" | "red" | 
   SENT: { label: "Sent", tone: "green" }, DELIVERED: { label: "Delivered", tone: "green" }, QUEUED: { label: "To send", tone: "amber" },
   RETRYING: { label: "Retrying", tone: "amber" },
   LINK_OPENED: { label: "WhatsApp opened", tone: "blue" }, FAILED: { label: "Failed", tone: "red" }, SKIPPED: { label: "Not available", tone: "neutral" },
+  // v6 §2 (SENDALL)
+  SENT_AUTOMATICALLY: { label: "Sent automatically", tone: "green" }, SKIPPED_NOT_RELEVANT: { label: "No longer needed", tone: "neutral" },
+  SKIPPED_DUPLICATE: { label: "Duplicate", tone: "neutral" }, EXPIRED: { label: "Expired", tone: "amber" },
 };
+
+/** v6 SA-5: "Send all" applies to the list's current filter (the URL the FilterBar keeps). */
+function SendAllToolbar() {
+  const qs = useSearchParams().toString();
+  return <SendAllButton filter={sendAllFilter(qs)} />;
+}
 
 function ManualActions({ r }: { r: Row }) {
   const reload = useListReload();
@@ -68,24 +79,29 @@ function ManualActions({ r }: { r: Row }) {
     <span className="flex flex-col gap-1" onClick={(e) => e.stopPropagation()}>
       <span className="flex flex-wrap gap-1">
         <Button size="sm" variant="outline" disabled={busy} onClick={() => run(async () => {
-          const res = await api<{ url: string }>(`/api/messages/manual/${r.id}/open`, { body: {} });
+          // v6 SA-3: an expired message is sent by hand only after a confirmation.
+          const expired = r.status === "EXPIRED";
+          if (expired && !window.confirm("This message is older than the age limit. Send it anyway?")) return;
+          const res = await api<{ url: string }>(`/api/messages/manual/${r.id}/open`, { body: expired ? { confirmExpired: true } : {} });
           window.open(res.url, "_blank", "noopener");
-        })}>Open WhatsApp</Button>
-        <Button size="sm" disabled={busy} onClick={() => run(async () => { await api(`/api/messages/manual/${r.id}/sent`, { body: {} }); })}>Mark sent</Button>
+        })}>{r.status === "EXPIRED" ? "Send anyway…" : "Open WhatsApp"}</Button>
+        {r.status === "EXPIRED" ? null : (
+          <Button size="sm" disabled={busy} onClick={() => run(async () => { await api(`/api/messages/manual/${r.id}/sent`, { body: {} }); })}>Mark sent</Button>
+        )}
       </span>
       <RejectionBanner error={error} />
     </span>
   );
 }
 
-export function MessagesList({ canSend }: { canSend: boolean }) {
+export function MessagesList({ canSend, canSendAll = false }: { canSend: boolean; canSendAll?: boolean }) {
   return (
     <FilteredList<Row>
       list="notifications"
       searchPlaceholder="Name, member code, number or title"
       pollMs={30_000}
       // v5 §3.4: step through the WhatsApp messages to send by hand — open the next, send, mark sent, next.
-      toolbar={canSend ? <SendNextPanel /> : undefined}
+      toolbar={canSend || canSendAll ? <>{canSendAll ? <SendAllToolbar /> : null}{canSend ? <SendNextPanel /> : null}</> : undefined}
       columns={[
         { key: "when", header: "When", cell: (r) => <RelTime when={r.created_at} className="text-sm" /> },
         { key: "who", header: "To", cell: (r) => (
@@ -101,7 +117,7 @@ export function MessagesList({ canSend }: { canSend: boolean }) {
           const st = r.status === "QUEUED" && r.error && r.channel !== "WHATSAPP_MANUAL" ? "RETRYING" : r.status;
           return <Badge tone={STATUS[st]?.tone ?? "neutral"} title={r.error ?? undefined}>{STATUS[st]?.label ?? r.status}</Badge>;
         } },
-        { key: "next", header: "", cell: (r) => (canSend && r.channel === "WHATSAPP_MANUAL" && ["QUEUED", "LINK_OPENED"].includes(r.status) ? <ManualActions r={r} /> : null) },
+        { key: "next", header: "", cell: (r) => (canSend && r.channel === "WHATSAPP_MANUAL" && ["QUEUED", "LINK_OPENED", "EXPIRED"].includes(r.status) ? <ManualActions r={r} /> : null) },
       ]}
       rowExtra={(r) => (
         <div className="flex flex-col gap-1 text-sm">

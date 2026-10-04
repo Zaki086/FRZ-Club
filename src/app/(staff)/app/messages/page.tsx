@@ -12,8 +12,8 @@ export default async function MessagesPage() {
   if (!can(actor, "notifications.log")) forbidden();
   return (
     <div>
-      <PageHeader title="Messages" subtitle="Every notification to members, per channel. WhatsApp messages to send by hand are at the top: open, send from the club phone, mark sent." />
-      <MessagesList canSend={can(actor, "messages.send")} />
+      <PageHeader title="Messages" />
+      <MessagesList canSend={can(actor, "messages.send")} canSendAll={can(actor, "messages.send_all")} />
     </div>
   );
 }

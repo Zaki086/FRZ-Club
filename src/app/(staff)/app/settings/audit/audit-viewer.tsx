@@ -57,7 +57,7 @@ export function AuditViewer() {
           <Snapshots row={r} />
         </div>
       )}
-      empty={{ title: "No audit entries match", hint: "Try a different filter or widen the dates." }}
+      empty={{ title: "No audit entries match" }}
     />
   );
 }

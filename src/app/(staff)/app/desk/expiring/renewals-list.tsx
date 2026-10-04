@@ -88,7 +88,7 @@ export function RenewalsList({ canSend, canRenew, messaging }: { canSend: boolea
           </span>
         ) },
       ]}
-      empty={{ title: "Nobody to renew or chase", hint: "Members expiring within 7 days, expired in the last 60 days or with money due appear here." }}
+      empty={{ title: "Nobody to renew or chase" }}
     />
   );
 }

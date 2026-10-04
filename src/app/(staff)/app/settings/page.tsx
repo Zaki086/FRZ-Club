@@ -12,7 +12,7 @@ export default async function SettingsPage() {
   if (!can(actor, "settings")) forbidden();
   return (
     <div className="mx-auto max-w-6xl">
-      <PageHeader title="Settings" subtitle="Every business number lives here or in the plans — edits are validated and audited, and never change existing bills." />
+      <PageHeader title="Settings" />
       <SettingsTabs selfUserId={actor.userId} />
     </div>
   );

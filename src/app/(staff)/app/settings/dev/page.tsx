@@ -13,7 +13,7 @@ export default async function DevToolsPage() {
   if (!can(actor, "dev_tools")) forbidden();
   return (
     <div className="mx-auto max-w-3xl">
-      <PageHeader title="Dev tools" subtitle="Time travel and scheduled jobs on demand (E-25), so expiry reminders, no-shows and holds can be shown live." />
+      <PageHeader title="Dev tools" />
       <DevTools />
     </div>
   );

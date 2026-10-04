@@ -9,7 +9,7 @@ export default async function LeavePage() {
   if (!can(actor, "leave.approve")) forbidden();
   return (
     <div>
-      <PageHeader title="Leave approvals" subtitle="Approving leave automatically unassigns that person's shifts — they become open shifts to refill." />
+      <PageHeader title="Leave approvals" />
       <LeaveApprovals />
     </div>
   );

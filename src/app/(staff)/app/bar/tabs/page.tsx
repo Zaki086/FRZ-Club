@@ -16,7 +16,6 @@ export default async function BarTabsPage() {
     <div>
       <PageHeader
         title="Bar tabs"
-        subtitle="Every tab — open, carried over, settled or void — with its table, payer, bar day and what is still to pay."
         actions={<Button asChild variant="outline"><Link href="/app/bar">Tables</Link></Button>}
       />
       <TabsList perms={{ operate: can(actor, "bar.operate"), carry: can(actor, "bar.close_day") }} />

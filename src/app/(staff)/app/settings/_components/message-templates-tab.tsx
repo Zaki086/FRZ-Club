@@ -49,14 +49,7 @@ export function MessageTemplatesTab() {
         return (
           <Card data-testid="message-templates">
             <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
-              <div>
-                <CardTitle>Message templates</CardTitle>
-                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                  Ready-made WhatsApp, email and push messages staff send from a member, booking, refund, order, tab, lead or invoice — and in bulk from
-                  Members, Renewal &amp; Dues, Check-in Risk and the Leads Board. The front desk sends transactional templates; announcements are for the
-                  Manager and you. Editing the text keeps the old version for the message log.
-                </p>
-              </div>
+              <CardTitle>Message templates</CardTitle>
               {d.canManage ? <Button size="sm" onClick={() => setEditing("new")} data-testid="mt-new">New template</Button> : null}
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
@@ -200,12 +193,12 @@ function Editor({ template, canManage, autoTemplates, variables, onClose, onSave
   return (
     <Dialog open onOpenChange={(o) => (!o ? onClose() : null)}>
       <DialogContent wide title={template ? (readOnly ? template.name : `Edit: ${template.name}`) : "New message template"}
-        description={archivedAt ? "Archived — restore it to edit or send it." : "Use the variables of the context; staff can still edit the text for one send."}>
+        description={archivedAt ? "Archived — restore it to edit or send it." : undefined}>
         <div className="grid gap-4 lg:grid-cols-[1fr_20rem]" data-testid="mt-editor">
           <div className="flex flex-col gap-3 text-sm">
             <Field label="Name"><Input value={draft.name} onChange={(e) => set("name", e.target.value)} readOnly={readOnly} maxLength={80} /></Field>
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Context" hint="Where staff send it from — decides the variables.">
+              <Field label="Context">
                 <Select aria-label="Context" value={draft.context} disabled={readOnly} onChange={(e) => {
                   const c = e.target.value as TemplateContext;
                   setDraft((d) => ({ ...d, context: c, waTemplate: null, channels: c === "LEAD" ? d.channels.filter((x) => x !== "PUSH") : d.channels }));
@@ -213,7 +206,7 @@ function Editor({ template, canManage, autoTemplates, variables, onClose, onSave
                   {TEMPLATE_CONTEXTS.map((c) => <option key={c} value={c}>{CONTEXT_LABEL[c]}</option>)}
                 </Select>
               </Field>
-              <Field label="Category" hint="Announcements: Manager and Owner only; they honour email unsubscribes.">
+              <Field label="Category">
                 <Select aria-label="Category" value={draft.category} disabled={readOnly} onChange={(e) => set("category", e.target.value as TemplateCategory)}>
                   {TEMPLATE_CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>)}
                 </Select>
@@ -239,7 +232,7 @@ function Editor({ template, canManage, autoTemplates, variables, onClose, onSave
             {has("EMAIL") ? (
               <>
                 <Field label="Email subject"><Input value={draft.emailSubject} onChange={(e) => set("emailSubject", e.target.value)} data-field="emailSubject" onFocus={rememberField} readOnly={readOnly} maxLength={150} /></Field>
-                <Field label="Email text" hint="Goes into the club's email layout (logo, button to the record's link, address and phone). Blank line = new paragraph.">
+                <Field label="Email text" hint="Blank line = new paragraph.">
                   <Textarea rows={8} value={draft.emailBody} onChange={(e) => set("emailBody", e.target.value)} data-field="emailBody" onFocus={rememberField} readOnly={readOnly} />
                 </Field>
               </>
@@ -251,7 +244,7 @@ function Editor({ template, canManage, autoTemplates, variables, onClose, onSave
               </div>
             ) : null}
             {has("WHATSAPP") && autoForContext.length ? (
-              <Field label="Send automatically on WhatsApp with" hint="Offered in the composer only when the WhatsApp API is on, this Meta template is approved and the person opted in.">
+              <Field label="Send automatically on WhatsApp with">
                 <Select aria-label="Automatic WhatsApp template" value={draft.waTemplate ?? ""} disabled={readOnly} onChange={(e) => set("waTemplate", e.target.value || null)}>
                   <option value="">By hand only (wa.me link)</option>
                   {autoForContext.map((a) => <option key={a.name} value={a.name}>{a.label}</option>)}

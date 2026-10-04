@@ -33,7 +33,7 @@ export default async function DashboardPage() {
   if (actor.role === "MANAGER") {
     return (
       <div className="flex flex-col gap-4">
-        <PageHeader title="Dashboard" subtitle="What waits for your decision, then today at the club. Every number opens the list behind it." />
+        <PageHeader title="Dashboard" />
         <ApprovalsPanel />
         <TodoPanel />
         <ManagerToday />
@@ -43,7 +43,7 @@ export default async function DashboardPage() {
   if (actor.role === "FRONT_DESK") {
     return (
       <div className="flex flex-col gap-4">
-        <PageHeader title="Dashboard" subtitle="Your drawer, who is arriving and what needs sorting before they do. Every number opens its list." />
+        <PageHeader title="Dashboard" />
         <FrontDeskDashboard />
       </div>
     );

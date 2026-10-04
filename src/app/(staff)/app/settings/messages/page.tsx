@@ -12,7 +12,6 @@ export default async function MessagesPage() {
     <div>
       <PageHeader
         title="Message log"
-        subtitle="Every email the app delivered (or failed to) and every WhatsApp message sent automatically, failed or opened by staff. A WhatsApp opened by staff shows “opened”: the app can't see whether it was sent."
         actions={<Link className="text-sm font-semibold text-primary hover:underline" href="/app/settings/messages/whatsapp">WhatsApp messages: template, status timeline, tries →</Link>}
       />
       <MessageLogView />

@@ -9,7 +9,7 @@ export default async function ExpensesPage() {
   if (!can(actor, "expenses.view")) forbidden();
   return (
     <div>
-      <PageHeader title="Expenses & payables" subtitle="Supplier bills and running costs. Paying one writes an EXPENSE entry to the ledger." />
+      <PageHeader title="Expenses & payables" />
       <ExpensesList canManage={can(actor, "expenses.manage")} />
     </div>
   );

@@ -13,7 +13,7 @@ export default async function AttendanceSummaryPage() {
   if (!can(actor, "staff.directory")) forbidden();
   return (
     <div>
-      <PageHeader title="Attendance" subtitle="Totals per employee for a period, for payroll review. Export as CSV." />
+      <PageHeader title="Attendance" />
       <AttendanceTabs active="summary" />
       <AttendanceSummary />
     </div>

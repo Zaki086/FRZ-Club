@@ -4,17 +4,16 @@ import { useState } from "react";
 import { Plus } from "lucide-react";
 import { api, ApiError } from "@/components/api";
 import { RejectionBanner } from "@/components/states";
-import { FilteredList, SelectBox } from "@/components/list/filtered-list";
+import { FilteredList } from "@/components/list/filtered-list";
 import { BulkSendButton } from "@/components/message-composer-bulk";
 import { bulkTarget } from "@/components/message-composer-logic";
-import { RelTime } from "@/components/rel-time";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { EmailInput, PhoneInput } from "@/components/contact-inputs";
 import { cn } from "@/components/ui/cn";
-import { STATUSES, type LeadRow } from "./types";
+import { FollowUp, LeadsDndBoard, type BoardLead } from "./board-dnd";
 
 const COL_TITLE: Record<string, string> = { NEW: "New", CONTACTED: "Contacted", QUOTED: "Quoted", WON: "Won", LOST: "Lost" };
 
@@ -28,7 +27,7 @@ function NewLeadDialog({ onCreated }: { onCreated: () => void }) {
       <DialogTrigger asChild>
         <Button><Plus className="h-4 w-4" /> New lead</Button>
       </DialogTrigger>
-      <DialogContent title="New lead" description="Walk-ins, phone calls and referrals. Website enquiries and trials arrive automatically.">
+      <DialogContent title="New lead">
         <form
           className="flex flex-col gap-3"
           onSubmit={async (e) => {
@@ -71,59 +70,9 @@ function NewLeadDialog({ onCreated }: { onCreated: () => void }) {
   );
 }
 
-type ListLead = {
-  id: string; code: string; name: string; phone: string | null; status: LeadRow["status"]; source: string; interest: string;
-  assignee: string | null; next_follow_up_at: string; overdue: boolean; lost_reason: string | null;
-};
+type ListLead = BoardLead;
 
-/** "Follow up — overdue 2 days" / "Follow up tomorrow". */
-function FollowUp({ l }: { l: ListLead }) {
-  if (l.status === "WON" || l.status === "LOST") return l.status === "LOST" && l.lost_reason ? <span className="text-xs text-muted-foreground">{l.lost_reason}</span> : null;
-  return (
-    <span className={cn("text-xs font-semibold", l.overdue ? "text-destructive" : "text-muted-foreground")}>
-      Follow up{l.overdue ? " — overdue " : " "}
-      <RelTime when={l.next_follow_up_at} />
-    </span>
-  );
-}
-
-function Board({ rows }: { rows: ListLead[] }) {
-  return (
-    <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
-      {STATUSES.map((s) => {
-        const col = rows.filter((r) => r.status === s);
-        return (
-          <div key={s} className="flex flex-col gap-2 rounded-2xl bg-secondary/70 p-2">
-            <p className="flex items-center justify-between px-1 text-sm font-bold">{COL_TITLE[s]} <span className="rounded-full bg-card px-2 text-xs tabular">{col.length}</span></p>
-            {col.length === 0 ? <p className="px-1 py-4 text-center text-xs text-muted-foreground">No leads</p> : null}
-            {col.map((l) => (
-              // v5 §3.4: while bulk selection is on, each card has its checkbox beside it (outside the link).
-              <div key={l.id} className="flex items-start gap-1.5">
-              <span className="pt-3 empty:hidden"><SelectBox id={l.id} label={l.name} /></span>
-              <Link
-                href={`/app/crm/${l.id}`}
-                className={cn("flex min-w-0 flex-1 flex-col gap-1 rounded-xl border bg-card p-2.5 text-sm shadow-soft hover:border-primary", l.overdue && "border-destructive/50")}
-                data-testid="lead-card"
-              >
-                <span className="flex items-center justify-between gap-2">
-                  <span className="font-semibold">{l.name}</span>
-                  {l.overdue ? <Badge tone="red">Overdue</Badge> : null}
-                </span>
-                <span className="font-mono text-[11px] text-muted-foreground">{l.code} · {l.source.replace(/_/g, " ").toLowerCase()}</span>
-                {l.interest ? <span className="text-xs">{l.interest}</span> : null}
-                <span className="text-xs text-muted-foreground">{l.assignee ? `→ ${l.assignee}` : "Unassigned"}</span>
-                <FollowUp l={l} />
-              </Link>
-              </div>
-            ))}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-export function LeadsBoard({ canBulkSend = false, canEditText = false }: { canBulkSend?: boolean; canEditText?: boolean }) {
+export function LeadsBoard({ canBulkSend = false, canEditText = false, canReopen = false, canConvert = false }: { canBulkSend?: boolean; canEditText?: boolean; canReopen?: boolean; canConvert?: boolean }) {
   const [layout, setLayout] = useState<"board" | "list">("board");
   return (
     <FilteredList<ListLead>
@@ -142,7 +91,7 @@ export function LeadsBoard({ canBulkSend = false, canEditText = false }: { canBu
           <NewLeadDialog onCreated={() => window.location.reload()} />
         </>
       }
-      view={layout === "board" ? (rows) => <Board rows={rows} /> : undefined}
+      view={layout === "board" ? (rows) => <LeadsDndBoard rows={rows} canReopen={canReopen} canConvert={canConvert} /> : undefined}
       selection={canBulkSend ? { rowLabel: (l) => l.name, actions: (sel, clear) => <BulkSendButton list="leads" target={{ ...bulkTarget(sel), count: sel.total }} onDone={clear} canEditText={canEditText} /> } : undefined}
       columns={[
         { key: "name", header: "Lead", cell: (l) => (
@@ -157,7 +106,7 @@ export function LeadsBoard({ canBulkSend = false, canEditText = false }: { canBu
         { key: "assignee", header: "Assignee", cell: (l) => <span className="text-sm">{l.assignee ?? "Unassigned"}</span> },
         { key: "next", header: "Next", cell: (l) => <FollowUp l={l} /> },
       ]}
-      empty={{ title: "No leads match", hint: "Remove a filter to see more leads." }}
+      empty={{ title: "No leads match" }}
     />
   );
 }

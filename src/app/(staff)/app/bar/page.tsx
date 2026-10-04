@@ -13,7 +13,7 @@ export default async function BarPage() {
   if (!can(actor, "bar.operate")) forbidden();
   return (
     <div>
-      <PageHeader title="Bar & cafeteria" subtitle="Tables and open tabs. Tap a tab to order, send to the kitchen and settle." />
+      <PageHeader title="Bar & cafeteria" />
       <ClockInBanner />
       {TODO_HOME[actor.role] === "bar" ? <TodoPanel /> : null}
       <IncomingOrders />

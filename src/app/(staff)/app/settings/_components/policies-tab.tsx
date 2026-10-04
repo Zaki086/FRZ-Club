@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
 import { assertNumbers, fromRupeeText, putSetting, SaveBar, toInt, toNum, toRupeeText, type SettingRow } from "./shared";
 import { BarOrdersSettings } from "./bar-orders-settings";
+import { ManualMessagesSettings } from "./manual-messages-settings";
 
 type Kind = "int" | "decimal" | "rupees";
 type Scalar = { key: string; label: string; kind: Kind; hint?: string };
@@ -12,46 +13,46 @@ const GROUPS: Array<{ title: string; fields: Scalar[] }> = [
   {
     title: "Courts & booking",
     fields: [
-      { key: "max_plays_per_day", label: "Max plays per member per day", kind: "int", hint: "BK-4 — every member player counts" },
-      { key: "cancel_full_refund_hours", label: "Full refund if cancelled ≥ hours before", kind: "decimal", hint: "BK-7" },
-      { key: "staff_grace_minutes", label: "Staff grace for a just-started slot (min)", kind: "int", hint: "BK-2 IN_PAST" },
-      { key: "checkin_window_before_minutes", label: "Check-in opens before start (min)", kind: "int", hint: "CI-2" },
+      { key: "max_plays_per_day", label: "Max plays per member per day", kind: "int" },
+      { key: "cancel_full_refund_hours", label: "Full refund if cancelled ≥ hours before", kind: "decimal" },
+      { key: "staff_grace_minutes", label: "Staff grace for a just-started slot (min)", kind: "int" },
+      { key: "checkin_window_before_minutes", label: "Check-in opens before start (min)", kind: "int" },
       { key: "social_default_capacity", label: "Social play capacity per court", kind: "int" },
-      { key: "trial_fee", label: "Trial session fee (₹)", kind: "rupees", hint: "CR-8, paid at the desk" },
+      { key: "trial_fee", label: "Trial session fee (₹)", kind: "rupees" },
     ],
   },
   {
     title: "Shop",
     fields: [
-      { key: "online_hold_minutes", label: "Online payment hold (min)", kind: "int", hint: "SH-5" },
-      { key: "pickup_hold_hours", label: "Pay-at-pickup hold (hours)", kind: "int", hint: "SH-5" },
+      { key: "online_hold_minutes", label: "Online payment hold (min)", kind: "int" },
+      { key: "pickup_hold_hours", label: "Pay-at-pickup hold (hours)", kind: "int" },
       { key: "default_reorder_level", label: "Default reorder level", kind: "int" },
-      { key: "public_low_stock_threshold", label: "Show “Only N left” at or below", kind: "int", hint: "SH-8" },
-      { key: "restring_turnaround_hours", label: "Restring turnaround (hours)", kind: "int", hint: "SH-12" },
+      { key: "public_low_stock_threshold", label: "Show “Only N left” at or below", kind: "int" },
+      { key: "restring_turnaround_hours", label: "Restring turnaround (hours)", kind: "int" },
     ],
   },
   {
     title: "Staff attendance",
     fields: [
-      { key: "late_grace_minutes", label: "Late after scheduled start + (min)", kind: "int", hint: "AT-2" },
-      { key: "overtime_threshold_minutes", label: "Overtime counted beyond (min)", kind: "int", hint: "AT-3" },
-      { key: "missing_clockout_hours", label: "Flag missing clock-out after shift end (hours)", kind: "int", hint: "AT-4" },
+      { key: "late_grace_minutes", label: "Late after scheduled start + (min)", kind: "int" },
+      { key: "overtime_threshold_minutes", label: "Overtime counted beyond (min)", kind: "int" },
+      { key: "missing_clockout_hours", label: "Flag missing clock-out after shift end (hours)", kind: "int" },
     ],
   },
   {
     title: "Finance, CRM & reports",
     fields: [
       { key: "invoice_terms_days", label: "Default invoice payment terms (days)", kind: "int" },
-      { key: "refund_manager_limit", label: "Manager approves refunds up to (₹)", kind: "rupees", hint: "RF-3" },
-      { key: "credential_link_hours", label: "New member's login link works for (hours)", kind: "int", hint: "WK-2" },
-      { key: "dues_reminder_days", label: "First dues reminder after (days unpaid)", kind: "int", hint: "NT-2" },
-      { key: "lead_follow_up_hours", label: "Lead follow-up within (hours)", kind: "int", hint: "CR-3" },
-      { key: "lead_escalation_hours", label: "Escalate an overdue follow-up after (hours)", kind: "int", hint: "LA-8" },
-      { key: "reschedule_window_days", label: "Club-cancelled sessions can move up to (days ahead)", kind: "int", hint: "CC-4" },
-      { key: "resolution_deadline_days", label: "Refund automatically if no choice within (days)", kind: "int", hint: "CC-6" },
-      { key: "quote_valid_days", label: "Quotes valid for (days)", kind: "int", hint: "CR-6" },
-      { key: "share_link_days", label: "Share links expire after (days)", kind: "int", hint: "DB-5" },
-      { key: "expiring_soon_days", label: "“Expiring soon” window (days)", kind: "int", hint: "MB-11" },
+      { key: "refund_manager_limit", label: "Manager approves refunds up to (₹)", kind: "rupees" },
+      { key: "credential_link_hours", label: "New member's login link works for (hours)", kind: "int" },
+      { key: "dues_reminder_days", label: "First dues reminder after (days unpaid)", kind: "int" },
+      { key: "lead_follow_up_hours", label: "Lead follow-up within (hours)", kind: "int" },
+      { key: "lead_escalation_hours", label: "Escalate an overdue follow-up after (hours)", kind: "int" },
+      { key: "reschedule_window_days", label: "Club-cancelled sessions can move up to (days ahead)", kind: "int" },
+      { key: "resolution_deadline_days", label: "Refund automatically if no choice within (days)", kind: "int" },
+      { key: "quote_valid_days", label: "Quotes valid for (days)", kind: "int" },
+      { key: "share_link_days", label: "Share links expire after (days)", kind: "int" },
+      { key: "expiring_soon_days", label: "“Expiring soon” window (days)", kind: "int" },
     ],
   },
 ];
@@ -82,6 +83,7 @@ export function PoliciesTab({ rows, onSaved }: { rows: SettingRow[]; onSaved: ()
       ))}
       <LeaveAllowance value={get("leave_allowance") as { CASUAL: number; SICK: number }} onSaved={onSaved} />
       <BarOrdersSettings rows={rows} onSaved={onSaved} />
+      <ManualMessagesSettings rows={rows} onSaved={onSaved} />
     </div>
   );
 }
@@ -116,7 +118,6 @@ function OpeningHours({ value, onSaved }: { value: { open: string; close: string
           <Field label="Open"><Input type="time" step={1800} value={open} onChange={(e) => setOpen(e.target.value)} /></Field>
           <Field label="Close"><Input type="time" step={1800} value={close} onChange={(e) => setClose(e.target.value)} /></Field>
         </div>
-        <p className="text-xs text-muted-foreground">Sessions must start and end inside these hours (CT-2, CT-3).</p>
         <SaveBar onSave={async () => { await putSetting("opening_hours", { open, close }); onSaved(); }} />
       </CardContent>
     </Card>
@@ -179,7 +180,6 @@ function LeaveAllowance({ value, onSaved }: { value: { CASUAL: number; SICK: num
           <Field label="Casual days"><Input inputMode="numeric" value={casual} onChange={(e) => setCasual(e.target.value)} /></Field>
           <Field label="Sick days"><Input inputMode="numeric" value={sick} onChange={(e) => setSick(e.target.value)} /></Field>
         </div>
-        <p className="text-xs text-muted-foreground">Requests beyond the allowance must be unpaid (ST-5).</p>
         <SaveBar
           onSave={async () => {
             const v = { CASUAL: toInt(casual), SICK: toInt(sick) };

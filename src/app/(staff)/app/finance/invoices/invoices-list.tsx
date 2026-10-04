@@ -108,7 +108,7 @@ export function InvoicesList() {
         },
         { key: "next", header: "Next", cell: (r) => <NextAction r={r} /> },
       ]}
-      empty={{ title: "No invoices match these filters", hint: "Create a draft for a business client or a member, or remove a filter." }}
+      empty={{ title: "No invoices match these filters" }}
     />
   );
 }

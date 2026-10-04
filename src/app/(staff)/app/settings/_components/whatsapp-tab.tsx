@@ -70,7 +70,7 @@ function Mapping({ s, saved }: { s: Status; saved: () => void }) {
       <CardHeader><CardTitle>Message templates</CardTitle></CardHeader>
       <CardContent className="flex flex-col gap-3 text-sm">
         <p className="text-muted-foreground">
-          Create each template in WhatsApp Manager exactly as in <code>docs/whatsapp-templates.md</code> (category Utility, English), enter its name and
+          Create each template in WhatsApp Manager exactly as in the README (“WhatsApp message templates”) (category Utility, English), enter its name and
           language code here, then press “Fetch templates”. A message is sent automatically only when its template is mapped and APPROVED; otherwise it
           goes to “Messages to send”.{s.buttonBase ? ` Buttons open ${s.buttonBase}<suffix>.` : ""}
         </p>

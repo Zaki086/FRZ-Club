@@ -7,6 +7,8 @@ import { formatINR } from "@/lib/money";
 import { fmtDateTime } from "@/lib/time";
 import { PrintNow } from "./print-now";
 import { formatPhone } from "@/lib/validation/contact";
+import { qrDataUrl } from "@/lib/qr";
+import { receiptToken } from "@/server/services/receipt-qr";
 
 export const metadata: Metadata = { title: "Receipt" };
 export const dynamic = "force-dynamic";
@@ -27,6 +29,10 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
   const lines = bill.lines.filter((l) => !l.voidedAt);
   const paid = bill.payments.filter((p) => p.status === "SUCCEEDED");
   const change = paid.reduce((a, p) => a + (p.changeGiven ?? 0), 0);
+  // v6 WI-5: a counter sale's receipt carries its signed QR — how a walk-in (no person on the bill) is found again
+  // for a return or a refund. "Walk-in" marks every sale not to a member.
+  const walkIn = (bill.sourceType === "COUNTER_SALE" || bill.sourceType === "SERVICE_TICKET") && !bill.memberId;
+  const qr = bill.sourceType === "COUNTER_SALE" ? await qrDataUrl(receiptToken(bill.id)) : null;
   return (
     <div className="receipt mx-auto font-mono text-[12px] leading-snug text-black">
       <style>{`@page { size: 80mm auto; margin: 0 } .receipt { width: 72mm; padding: 4mm 0 } @media screen { .receipt { margin-top: 1rem; padding: 4mm; border: 1px dashed #999 } }`}</style>
@@ -39,6 +45,7 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
       </div>
       <p className="mt-2">{ref ?? bill.id.slice(-8).toUpperCase()} · {fmtDateTime(bill.createdAt)}</p>
       <p>{bill.customerName}</p>
+      {walkIn ? <p className="font-bold" data-testid="receipt-walk-in">WALK-IN</p> : null}
       <hr className="my-1 border-dashed border-black" />
       {lines.map((l) => (
         <div key={l.id}>
@@ -56,6 +63,13 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
       {change ? <p className="flex justify-between"><span>Change</span><span>{formatINR(change)}</span></p> : null}
       {bill.due > 0 ? <p className="flex justify-between font-bold"><span>DUE</span><span>{formatINR(bill.due)}</span></p> : null}
       <hr className="my-1 border-dashed border-black" />
+      {qr ? (
+        <div className="my-1 flex flex-col items-center" data-testid="receipt-qr">
+          {/* eslint-disable-next-line @next/next/no-img-element -- generated data URL */}
+          <img src={qr} alt={`Receipt QR ${ref ?? ""}`} width={112} height={112} />
+          <p>Keep this receipt for returns · {ref}</p>
+        </div>
+      ) : null}
       <p className="text-center">Thank you!</p>
       <PrintNow />
     </div>

@@ -11,7 +11,7 @@ export default async function BarDayPage() {
   if (!can(actor, "bar.report")) forbidden();
   return (
     <div>
-      <PageHeader title="Bar day" subtitle="What the bar earned, by method, category and staff. Close the day once every tab is settled or carried over." />
+      <PageHeader title="Bar day" />
       <BarDay today={istDate(clock.now())} perms={{ close: can(actor, "bar.close_day"), operate: can(actor, "bar.operate") }} />
     </div>
   );

@@ -260,7 +260,7 @@ export function TabScreen({ tabId, perms }: { tabId: string; perms: { manager: b
                   </div>
                   {t.status === "OPEN" || t.status === "CARRIED" ? (
                     <div className="flex flex-col gap-2">
-                      <SettleDialog tabId={t.id} tabCode={t.code} due={t.due} onDone={reload} />
+                      <SettleDialog tabId={t.id} tabCode={t.code} due={t.due} noSplit={!!t.noSplit} onDone={reload} />
                       <Button asChild variant="outline"><a href={`/print/bill/${t.billId}`} target="_blank" rel="noreferrer">Print bill</a></Button>
                       {t.due === 0 ? (
                         <Button size="lg" variant="outline" disabled={busy} onClick={() => run(() => api(`/api/bar/tabs/${t.id}/close`, { body: {} }))}>Close tab</Button>

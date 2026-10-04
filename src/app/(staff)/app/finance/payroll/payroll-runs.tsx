@@ -79,7 +79,7 @@ export function PayrollRuns() {
         { key: "paid", header: "Paid", cell: (r) => (r.paid_at ? <span className="text-sm"><RelTime when={r.paid_at} />{r.method ? ` · ${r.method.replace(/_/g, " ").toLowerCase()}` : ""}</span> : <span className="text-sm">—</span>) },
         { key: "next", header: "Next", cell: (r) => <NextStep r={r} /> },
       ]}
-      empty={{ title: "No payroll runs match these filters", hint: "Create the run for a month to calculate payslips." }}
+      empty={{ title: "No payroll runs match these filters" }}
     />
   );
 }

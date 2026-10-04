@@ -9,8 +9,13 @@ export default async function CrmPage() {
   if (!can(actor, "crm")) forbidden();
   return (
     <div>
-      <PageHeader title="Leads" subtitle="Every enquiry, trial and walk-in until it is won or lost. Overdue follow-ups are red." />
-      <LeadsBoard canBulkSend={can(actor, "messages.bulk")} canEditText={can(actor, "messages.templates.view")} />
+      <PageHeader title="Leads" />
+      <LeadsBoard
+        canBulkSend={can(actor, "messages.bulk")}
+        canEditText={can(actor, "messages.templates.view")}
+        canReopen={can(actor, "leads.reopen")}
+        canConvert={can(actor, "members.manage")}
+      />
     </div>
   );
 }

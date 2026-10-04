@@ -12,8 +12,8 @@ export default async function ExpiringPage() {
   const actor = await requireUser();
   if (!can(actor, "members.view")) forbidden();
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader title="Renewals & dues" subtitle="Members to renew or with money due: who was told, how, and when. Send the WhatsApp in one click or renew now." />
+    <div className="flex flex-col gap-4">
+      <PageHeader title="Renewals & dues" />
       <RenewalsList
         canSend={can(actor, "messages.send")}
         canRenew={can(actor, "members.manage")}
