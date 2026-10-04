@@ -8,6 +8,7 @@ import { RejectionBanner } from "@/components/states";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/input";
+import { checkContactInputs, EmailInput, PhoneInput } from "@/components/contact-inputs";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmButton } from "@/components/confirm";
 import { Money } from "@/components/money";
@@ -87,8 +88,8 @@ export function UsersTab({ selfUserId }: { selfUserId: string }) {
         <CardHeader><CardTitle>Add a staff user</CardTitle></CardHeader>
         <CardContent className="flex flex-col gap-3">
           <Field label="Name"><Input value={f.name} onChange={set("name")} /></Field>
-          <Field label="Mobile" hint="10-digit Indian mobile (login)"><Input inputMode="tel" value={f.phone} onChange={set("phone")} /></Field>
-          <Field label="Email (optional)"><Input type="email" value={f.email} onChange={set("email")} /></Field>
+          <Field label="Mobile" hint="10-digit Indian mobile (login)"><PhoneInput name="phone" value={f.phone} onChange={set("phone")} /></Field>
+          <Field label="Email (optional)"><EmailInput name="email" value={f.email} onChange={set("email")} /></Field>
           <Field label="Role">
             <Select value={f.role} onChange={set("role")}>{ROLES.map((r) => <option key={r} value={r}>{r.replace("_", " ")}</option>)}</Select>
           </Field>
@@ -100,7 +101,8 @@ export function UsersTab({ selfUserId }: { selfUserId: string }) {
           <RejectionBanner error={error} />
           <Button
             disabled={busy}
-            onClick={async () => {
+            onClick={async (e) => {
+              if (!checkContactInputs(e.currentTarget.parentElement)) return;
               setBusy(true);
               setError(null);
               try {

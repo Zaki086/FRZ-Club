@@ -11,6 +11,9 @@ import { RejectionBanner } from "@/components/states";
 import { TierBadge } from "@/components/badges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SendMessageButton } from "@/components/message-composer";
+import { BulkSendButton } from "@/components/message-composer-bulk";
+import { bulkTarget } from "@/components/message-composer-logic";
 
 type Row = {
   id: string; code: string; name: string; phone: string; tier: string; status: string; ends_on: string | null; last_end: string | null;
@@ -57,11 +60,14 @@ function SendWhatsApp({ id }: { id: string }) {
   );
 }
 
-export function RenewalsList({ canSend, canRenew }: { canSend: boolean; canRenew: boolean }) {
+/** v5 §3.3–3.4 `messaging`: "Send message" per row (compose), row selection + bulk send (bulk), bulk text edits (editText). */
+export function RenewalsList({ canSend, canRenew, messaging }: { canSend: boolean; canRenew: boolean; messaging?: { compose: boolean; bulk: boolean; editText: boolean } }) {
   return (
     <FilteredList<Row>
       list="renewals"
       searchPlaceholder="Name, mobile or member code"
+      // v5 §3.4: select rows (or all matching the filter) and send one message to them all.
+      selection={messaging?.bulk ? { rowLabel: (r) => r.name, actions: (sel, clear) => <BulkSendButton list="renewals" target={{ ...bulkTarget(sel), count: sel.total }} onDone={clear} canEditText={messaging.editText} /> } : undefined}
       columns={[
         { key: "name", header: "Member", cell: (r) => (
           <span className="flex flex-col">
@@ -76,6 +82,7 @@ export function RenewalsList({ canSend, canRenew }: { canSend: boolean; canRenew
         { key: "next", header: "Next", cell: (r) => (
           <span className="flex flex-wrap items-start gap-1">
             {canSend && r.manual_id ? <SendWhatsApp id={r.manual_id} /> : null}
+            {messaging?.compose ? <SendMessageButton context="MEMBER" recordId={r.id} /> : null}
             {canRenew && (r.status === "EXPIRING" || r.status === "EXPIRED") ? <Button size="sm" asChild><Link href={`/app/members/${r.id}`} onClick={(e) => e.stopPropagation()}>Renew now</Link></Button> : null}
             {r.dues > 0 && !(r.status === "EXPIRING" || r.status === "EXPIRED") ? <Button size="sm" variant="outline" asChild><Link href={`/app/members/${r.id}`} onClick={(e) => e.stopPropagation()}>Collect</Link></Button> : null}
           </span>

@@ -15,6 +15,7 @@ import { cn } from "@/components/ui/cn";
 import { DrawerOpener, emptyTender, ProofFields, tenderProof, UpiQr, useTenderMethods, type TenderDraft } from "@/components/tender-fields";
 import { METHOD_LABEL } from "@/components/capabilities";
 import { WhatsAppOptIn } from "@/components/whatsapp-opt-in";
+import { EmailInput, PhoneInput } from "@/components/contact-inputs";
 
 /** True when the date of birth makes the person under 18 today (the server checks again). */
 function underEighteen(dob: string): boolean {
@@ -122,28 +123,28 @@ export function NewMemberForm({ prefill }: { prefill: { name: string; phone: str
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Mobile *" hint="10-digit Indian mobile">
-              <Input name="phone" inputMode="tel" value={f.phone} onChange={set("phone")} required />
+              <PhoneInput name="phone" value={f.phone} onChange={set("phone")} required />
             </Field>
             <Field label="Date of birth *">
               <Input name="dob" type="date" value={f.dob} onChange={set("dob")} required />
             </Field>
           </div>
           <Field label="Email" hint="Optional — used for reminders and invoices">
-            <Input name="email" type="email" value={f.email} onChange={set("email")} />
+            <EmailInput name="email" value={f.email} onChange={set("email")} />
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Emergency contact">
               <Input name="emergencyContactName" value={f.emergencyContactName} onChange={set("emergencyContactName")} />
             </Field>
             <Field label="Emergency phone">
-              <Input name="emergencyContactPhone" value={f.emergencyContactPhone} onChange={set("emergencyContactPhone")} />
+              <PhoneInput name="emergencyContactPhone" value={f.emergencyContactPhone} onChange={set("emergencyContactPhone")} />
             </Field>
           </div>
           {underEighteen(f.dob) ? (
             <div className="grid grid-cols-2 gap-3 rounded-md border border-junior/30 bg-junior/10 p-2">
               <p className="col-span-2 text-xs text-junior">Under 18: a parent or guardian is required. If they are a member, they will see this member in their portal.</p>
               <Field label="Guardian's name *"><Input name="guardianName" value={f.guardianName} onChange={set("guardianName")} required /></Field>
-              <Field label="Guardian's mobile *"><Input name="guardianPhone" inputMode="tel" value={f.guardianPhone} onChange={set("guardianPhone")} required /></Field>
+              <Field label="Guardian's mobile *"><PhoneInput name="guardianPhone" value={f.guardianPhone} onChange={set("guardianPhone")} required /></Field>
             </div>
           ) : null}
         </CardContent>

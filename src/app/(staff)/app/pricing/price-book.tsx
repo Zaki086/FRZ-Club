@@ -30,6 +30,8 @@ type Book = {
   rules: Rule[];
   courts: Array<{ id: string; name: string; sport: string }>;
   products: Array<{ id: string }>;
+  // v5 MN-2: every change made by someone, newest first — what it replaced, who, when.
+  history: Array<{ id: string; target: string; kind: string; label: string; oldPrice: number | null; price: number; effectiveAt: string; createdAt: string; byName: string | null; note: string | null }>;
 };
 
 const TIERS = ["GOLD", "SILVER", "JUNIOR", "WALK_IN"];
@@ -312,6 +314,7 @@ export function PriceBook() {
             <TabsTrigger value="fees">Court & social fees</TabsTrigger>
             <TabsTrigger value="menu">Bar & café prices</TabsTrigger>
             <TabsTrigger value="simulate">Price simulator</TabsTrigger>
+            <TabsTrigger value="history">Price history</TabsTrigger>
           </TabsList>
           <TabsContent value="rules" className="mt-3 flex flex-col gap-4">
             <Card><CardHeader><CardTitle>New rule</CardTitle></CardHeader><CardContent><RuleForm book={b} onDone={reload} /></CardContent></Card>
@@ -344,6 +347,23 @@ export function PriceBook() {
             </Table>
           </TabsContent>
           <TabsContent value="simulate" className="mt-3"><Card><CardContent className="pt-5"><Simulator book={b} /></CardContent></Card></TabsContent>
+          <TabsContent value="history" className="mt-3">
+            {/* v5 MN-2: base price changes (menu prices are also set by bar staff and the Manager from the Menu screen, MN-1). */}
+            <Table data-testid="price-history">
+              <THead><TR><TH>Price</TH><TH>Change</TH><TH>By</TH><TH>When</TH></TR></THead>
+              <TBody>
+                {b.history.map((h) => (
+                  <TR key={h.id}>
+                    <TD><span className="font-semibold">{h.label}</span>{h.kind === "MENU" ? <span className="ml-1 text-xs text-muted-foreground">menu</span> : null}</TD>
+                    <TD className="tabular">{h.oldPrice === null ? "Opening price" : formatINR(h.oldPrice)} → <b>{formatINR(h.price)}</b></TD>
+                    <TD>{h.byName ?? "—"}</TD>
+                    <TD>{fmtDateTime(h.effectiveAt < h.createdAt ? h.createdAt : h.effectiveAt)}{h.effectiveAt > b.now ? " (scheduled)" : ""}</TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+            {!b.history.length ? <p className="mt-2 text-sm text-muted-foreground">No price changes yet.</p> : null}
+          </TabsContent>
         </Tabs>
       )}
     </DataState>

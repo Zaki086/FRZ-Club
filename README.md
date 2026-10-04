@@ -20,7 +20,8 @@ npm run dev                     # http://localhost:3200   — and in a second te
 ```
 
 `npm run worker` runs the scheduled jobs (every 30 seconds: queued WhatsApp messages; every minute: notification
-deliveries (push / email / WhatsApp API); every 5 minutes: no-shows/completions, order holds, overdue and escalated
+deliveries (push / email / WhatsApp API) and bulk template messages (email, push and automatic WhatsApp, at most one
+message a second — without the worker they stay queued); every 5 minutes: no-shows/completions, order holds, overdue and escalated
 leads, stale gateway payments, email outbox, missing clock-outs, scheduled price changes, session and social-play
 reminders 2 hours before, club-cancellation choice reminders (day 3 and day 6, daytime); daily 00:05 IST: membership
 expiry + reminders, dues reminders, overdue invoices, low-stock digest, expired leave requests, club-cancelled bookings
@@ -57,6 +58,20 @@ pm2 save                         # restored automatically after a reboot (pm2 st
 Set `APP_URL` in `.env` to the address people use; it is used in links sent to members. Postgres runs with
 `restart: unless-stopped`. Over plain HTTP the session cookie is not marked `Secure` (browsers would drop it); behind
 HTTPS it is. Dev tools (time travel) are disabled in production by design.
+
+### Releasing to the live club
+
+The live club does not run from the development folder. PM2's `champions-web` and `champions-worker` run from a
+release folder, `/root/Zaki/Hacka-live`, with its own `node_modules`, Prisma client and production build; its `.env`,
+`uploads/` and `backups/` are symlinks to the development folder's, so data and settings are shared. Editing code,
+`npm i` or a dev build in the development folder never changes what members see. To release:
+
+1. Gate a snapshot of the work: typecheck, lint, `npm test`, `npm run test:e2e`, `verify:integrity` and `audit:dummy`
+   all green, against the test club — never the live one.
+2. Copy the snapshot into the release folder without the live files:
+   `rsync -a --exclude .git --exclude .env --exclude uploads --exclude backups --exclude .certs <snapshot>/ /root/Zaki/Hacka-live/`
+3. In `/root/Zaki/Hacka-live`: `npx prisma migrate deploy` (additive migrations only).
+4. `pm2 restart champions-web champions-worker`.
 
 ### HTTPS
 
@@ -209,15 +224,90 @@ email, and WhatsApp (automatic for those who opted in, otherwise a task in Messa
 never as sent; the Owner's Message Log (`/app/settings/messages` → WhatsApp) shows each WhatsApp message's status
 timeline (sent → delivered → read, or the error).
 
+### Ready-made messages (WhatsApp, email, push)
+
+- **Templates** (Settings → Message templates, Owner; the Manager uses them): 18 ready-made templates — membership
+  expiring / expired / dues / welcome, booking reminder / cancelled / club-cancelled / rescheduled, refund ready /
+  collected, order ready, restring ready, settle your bar tab, trial and quote follow-ups, invoice due, Friday social
+  invitation and club notice — each with WhatsApp text, an email subject and body, and a push title and body. Edit the
+  text with the `{{variables}}` of the template's context (click to insert; an unknown one is refused) and check it
+  with a live preview on a real record. Every edit is a new version; templates are archived, never deleted. A `[[…]]`
+  part (the club notice's details) must be written by staff at send time.
+- **Sending one:** "Send message" on a member (Member 360), booking, refund, online order, bar tab, lead or invoice, and
+  on each Renewal & Dues and Check-in Risk row: the suggested template is pre-picked; only channels the club has and
+  the person can receive are offered; check or edit the text for this send only (the template stays as it is); Send.
+  WhatsApp opens with the text ready (`wa.me/91<mobile>`) — send it from the club phone, then press **Mark as sent**.
+  When WhatsApp automation is set up and the template has an approved Meta template, "Send automatically on
+  WhatsApp" is offered instead. Email and push go at once and show SENT or FAILED.
+- **Bulk:** tick rows, or "Select all N matching the filter" (up to 500), on Members (Manager, Owner), Renewal & Dues,
+  Check-in Risk or the Leads Board (front desk too) → Send message → template → channels → check the first 3 rendered
+  → Send. Email and push go out at one a second with progress and a summary of who was skipped and why; WhatsApp
+  becomes one task per person to step through with **Send next** (in the dialog, or on Messages to Send). Sending the
+  same template to the same person within 24 hours asks first.
+- **Who may send what:** the front desk sends everyday (transactional) templates, singly and in bulk; announcements
+  (Friday social, club notice) are for the Manager and the Owner. Announcements skip anyone who unsubscribed or opted
+  out; a WhatsApp STOP applies to every message.
+- **Email:** one layout with the club's logo, name, address and phone (Settings → Club details; set `APP_URL` so links
+  and the logo work), a button when there is a link, and a plain-text copy. Announcement emails carry a one-click
+  unsubscribe link (`/unsubscribe/<token>`, signed with `APP_SECRET`, with "Subscribe again") and the standard
+  `List-Unsubscribe` headers; transactional emails don't. Email needs the email capability.
+- Every send is in the Notification Log and the Message Log with the template and version, the masked recipient, who
+  sent it and its status.
+
+### Bar menu and "Bar & Café" orders
+
+- **Menu** (Bar staff menu → "Menu"; the Manager and Owner at `/app/bar/menu`): build the menu from nothing —
+  categories (drag to reorder, active or not) and items (name, category, description, one photo, price in rupees,
+  veg / non-veg / egg for food, alcoholic, allergens, prep time, available now, draft / active / archived). Prices go
+  into the price book as the item's base price (history in the item editor and under Price Book → "Price history");
+  promotions, time bands and plan discounts stay with the Owner. Alcoholic items are taxed outside GST and refused to
+  Juniors and under-18s. Archiving never deletes; old tabs keep their prices. Members and the bar grid see only active,
+  available items of active categories. The same screen has **Preview as member**, **Print menu (A4)** and **Table QR
+  cards** (one printable card per bar table, a signed link `/t/<token>`).
+- After upgrading from v4, the existing items sit in "Food", "Drinks" and "Alcoholic drinks" with no food type: filter
+  "Food type: not set" on the Menu screen and set each food item's symbol.
+- **Ordering (member portal → "Bar & Café"):** the menu with each member's own price, a cart with a note per line, and
+  "My tab" with each line's status and the running total. A member can order after scanning the QR on their table
+  (valid 3 hours on that login) or while checked in today; otherwise "Ordering is available when you're at the club".
+  Juniors never see or get alcohol; a guardian can order for their Junior. Orders go on the member's open tab and are
+  paid in cash at the bar (`Settle at the bar before you leave`).
+- **At the bar:** new orders appear under **Incoming orders** on the bar screen with a badge and sound (turn the sound
+  on once per device); they turn red after the set minutes. **Accept** (confirm the table) sends them to the kitchen;
+  **Reject** with a reason tells the member. The tab screen and the kitchen display mark each line "via app" or "by
+  staff". The member is told when the order is accepted, rejected or ready, and gets the receipt when the tab is
+  settled (in the app and by push).
+- **Settings → Hours & policies → "Bar & Café member orders"** (Owner): accept table-scan orders automatically (off by
+  default), the member tab limit (₹3,000; a carried-over tab counts) and the minutes before an order turns red (5).
+
+### Phone and email rules
+
+Every phone and email field uses the same checks in the browser and on the server (`src/lib/validation/contact.ts`,
+inputs in `src/components/contact-inputs.tsx`); errors show under the field when it is left or the form is submitted.
+
+- **Mobile:** an Indian mobile — spaces, dashes, brackets and a leading `+91`, `91` or `0` are fine; stored as the
+  10 digits (first digit 6–9). All-same digits and running sequences such as 9876543210 are refused.
+- **Club and business phone:** a mobile, or a landline with its STD code (10 digits without the leading 0, first digit
+  2–5 — so 011 Delhi numbers are not accepted; 079, 080 and 0265 are). Shown as "+91 22 2345 6789".
+- **Email:** trimmed and lower-cased; one login per email, ignoring case.
+- **Login:** a mobile, an email or a member code.
+- A phone or email already in use is refused at sign-up and when adding staff, naming the existing member to staff
+  only. Search boxes still take part of a number or a name.
+- **Existing data:** `npm run contacts:normalise` is a read-only dry run for the database in `DATABASE_URL`; it writes
+  that database's section of `contacts-report.md` (values masked): what would be reformatted, what is invalid, and any
+  duplicates reformatting would create. `npm run contacts:normalise -- --apply` writes the safe changes (each audited)
+  and creates the case-insensitive email index once nothing clashes. Nothing is merged or deleted; invalid values are
+  fixed by hand.
+- `npm test` and `npm run audit:dummy` fail on a phone or email input that doesn't use the shared inputs.
+
 ## Where things are
 
 | Area | URL |
 |---|---|
 | Public website | `/`, `/plans`, `/availability`, `/shop`, `/trial`, `/enquire`, `/quote/[token]` |
-| Signed links (no login) | `/r/<token>` — choose a new time or a refund after a club cancellation (sent on WhatsApp to the booker); `/rq/<token>` — a refund's collection QR |
-| Member portal | `/portal` (card QR, book, social, bookings, orders, tab, invoices, membership, refunds, payments) |
-| Staff app | `/app` (dashboard per role) — front desk `/app/desk` (check-in risk `/app/desk/risk`, renewals & dues `/app/desk/expiring`), my cash drawer `/app/drawer`, refunds `/app/refunds`, courts `/app/courts` (Close courts), shop `/app/shop` (products `/app/shop/products`), bar `/app/bar`, KDS `/app/bar/kds`, CRM `/app/crm`, messages `/app/messages`, notifications `/app/notifications`, price book `/app/pricing`, employees `/app/employees`, finance `/app/finance/*` (cash drawers, safe and bank deposits `/app/finance/drawers`, cash reconciliation `/app/finance/cash`), staff `/app/staff/*` (directory, attendance, roster, leave), reports `/app/reports`, settings `/app/settings` |
-| Menus and access | The Owner, Manager and Front desk menus are fixed lists (`src/app/(staff)/app/_nav.ts`); the other roles' menus are unchanged. For the Manager and the Front desk, a staff page that is not on their menu answers 403, except detail pages opened from a listed page (a member, a refund, a receipt…); the Owner can open any page by its address. The Owner's and Manager's dashboards start with **Needs your approval** (refunds within their limit, leave, missing clock-outs, drawer variances). The price book is the Owner's alone |
+| Signed links (no login) | `/r/<token>` — choose a new time or a refund after a club cancellation (sent on WhatsApp to the booker); `/rq/<token>` — a refund's collection QR; `/t/<token>` — a bar table's QR (opens Bar & Café after login); `/unsubscribe/<token>` — announcement emails |
+| Member portal | `/portal` (card QR, book, social, bookings, orders, Bar & Café `/portal/bar`, tab, invoices, membership, refunds, payments) |
+| Staff app | `/app` (dashboard per role) — front desk `/app/desk` (check-in risk `/app/desk/risk`, renewals & dues `/app/desk/expiring`), my cash drawer `/app/drawer`, refunds `/app/refunds`, courts `/app/courts` (Close courts), shop `/app/shop` (products `/app/shop/products`), bar `/app/bar` (incoming member orders), menu `/app/bar/menu` (print `/print/menu`, table QR cards `/print/menu/tables`), KDS `/app/bar/kds`, CRM `/app/crm`, messages `/app/messages`, notifications `/app/notifications`, price book `/app/pricing`, employees `/app/employees`, finance `/app/finance/*` (cash drawers, safe and bank deposits `/app/finance/drawers`, cash reconciliation `/app/finance/cash`), staff `/app/staff/*` (directory, attendance, roster, leave), reports `/app/reports`, settings `/app/settings` |
+| Menus and access | The Owner, Manager and Front desk menus are fixed flat lists without group headings (`src/app/(staff)/app/_nav.ts`); the other roles' menus keep their groups. For the Manager and the Front desk, a staff page that is not on their menu answers 403, except detail pages opened from a listed page (a member, a refund, a receipt…); the Owner can open any page by its address. The Owner's and Manager's dashboards start with **Needs your approval** (refunds within their limit, leave, missing clock-outs, drawer variances). The price book is the Owner's alone, except menu item prices, which Bar staff and the Manager also set from the Menu screen. The Bar staff menu gains "Menu"; the Manager opens it by its address |
 | Lists | Every list has the same filter bar: search, date presets, filters with counts, sort, 25/50/100 per page, chips, CSV export (roles that may export) and saved views; the filters live in the address, so a view can be shared |
 | Webhooks | Razorpay `POST /api/payments/razorpay/webhook`; WhatsApp Cloud API `GET/POST /api/whatsapp/webhook` (the older `/api/webhooks/whatsapp` still answers) |
 | Razorpay webhook | `POST /api/payments/razorpay/webhook` (set the same secret as `RAZORPAY_WEBHOOK_SECRET`) |
@@ -233,7 +323,8 @@ npm run verify:integrity    # the §9 checklist (13 checks) against the dev data
 npm run demo:race           # with the app running: 20 simultaneous bookings → exactly 1 success, 19 SLOT_TAKEN
 npm run test:e2e            # Playwright (needs `npx playwright install chromium` once): the §12 demo, the
                             # click-through UI flows twice (cash only; card + UPI), the v4 flows (menus, cash drawer,
-                            # refunds, push, WhatsApp) and a fresh install on its own port and database.
+                            # refunds, push, WhatsApp), the v5 flows (contact fields, menu, member
+                            # ordering, message templates and sending) and a fresh install on its own port and database.
                             # Run on fresh sample data: ALLOW_DEMO_RESET=1 npm run demo:reset
 npm run audit:dummy         # is anything fake left? source scan + every role × page on desktop and 360 px → AUDIT.md
 ```

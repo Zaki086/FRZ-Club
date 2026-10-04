@@ -9,6 +9,7 @@ import { RelTime } from "@/components/rel-time";
 import { RejectionBanner } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SendNextPanel } from "@/components/message-composer-send-next";
 
 type Row = {
   id: string; event: string; channel: string; status: string; created_at: string; title: string; body: string; error: string | null;
@@ -83,6 +84,8 @@ export function MessagesList({ canSend }: { canSend: boolean }) {
       list="notifications"
       searchPlaceholder="Name, member code, number or title"
       pollMs={30_000}
+      // v5 §3.4: step through the WhatsApp messages to send by hand — open the next, send, mark sent, next.
+      toolbar={canSend ? <SendNextPanel /> : undefined}
       columns={[
         { key: "when", header: "When", cell: (r) => <RelTime when={r.created_at} className="text-sm" /> },
         { key: "who", header: "To", cell: (r) => (

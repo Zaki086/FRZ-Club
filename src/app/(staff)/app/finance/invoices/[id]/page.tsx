@@ -7,5 +7,5 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   const actor = await requireUser();
   if (!can(actor, "invoices")) forbidden();
   const { id } = await params;
-  return <InvoiceActions invoiceId={id} />;
+  return <InvoiceActions invoiceId={id} canMessage={can(actor, "messages.compose")} />;
 }

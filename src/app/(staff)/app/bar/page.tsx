@@ -6,6 +6,7 @@ import { TODO_HOME } from "@/server/services/todo";
 import { TodoPanel } from "../_components/todo-panel";
 import { ClockInBanner } from "./_components/clock-in-banner";
 import { TablesMap } from "./tables-map";
+import { IncomingOrders } from "./incoming-orders";
 
 export default async function BarPage() {
   const actor = await requireUser();
@@ -15,6 +16,7 @@ export default async function BarPage() {
       <PageHeader title="Bar & cafeteria" subtitle="Tables and open tabs. Tap a tab to order, send to the kitchen and settle." />
       <ClockInBanner />
       {TODO_HOME[actor.role] === "bar" ? <TodoPanel /> : null}
+      <IncomingOrders />
       <TablesMap />
     </div>
   );

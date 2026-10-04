@@ -16,6 +16,7 @@ import { formatINR, parseRupees } from "@/lib/money";
 import { fmtDateTime } from "@/lib/time";
 import type { LeadDetail } from "../types";
 import { WhatsAppButton } from "@/components/whatsapp-button";
+import { SendMessageButton } from "@/components/message-composer";
 import { useCapabilities } from "@/components/capabilities";
 
 type Plan = { code: string; name: string; price1m: number; price3m: number; price12m: number };
@@ -174,7 +175,7 @@ function QuoteBuilder({ leadId, hasEmail, onDone }: { leadId: string; hasEmail: 
   );
 }
 
-export function LeadDetailView({ leadId, canConvert }: { leadId: string; canConvert: boolean }) {
+export function LeadDetailView({ leadId, canConvert, canMessage = false }: { leadId: string; canConvert: boolean; canMessage?: boolean }) {
   const router = useRouter();
   const state = useApi<LeadDetail>(`/api/crm/leads/${leadId}`);
   const [assignError, setAssignError] = useState<{ code?: string; message: string } | null>(null);
@@ -206,6 +207,7 @@ export function LeadDetailView({ leadId, canConvert }: { leadId: string; canConv
               </div>
               <div className="flex flex-wrap gap-2">
                 {l.phone ? <WhatsAppButton target={{ template: "LEAD", leadId: l.id }} /> : null}
+                {canMessage ? <SendMessageButton context="LEAD" recordId={l.id} onSent={reload} /> : null}
                 {open && canConvert ? (
                   <Button onClick={() => router.push(l.convertUrl)} data-testid="convert-lead"><UserPlus className="h-4 w-4" /> Convert to member</Button>
                 ) : null}

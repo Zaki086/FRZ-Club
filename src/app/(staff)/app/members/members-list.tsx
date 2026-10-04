@@ -8,6 +8,8 @@ import { TierBadge } from "@/components/badges";
 import { Money } from "@/components/money";
 import { RelTime } from "@/components/rel-time";
 import { FilteredList } from "@/components/list/filtered-list";
+import { BulkSendButton } from "@/components/message-composer-bulk";
+import { bulkTarget } from "@/components/message-composer-logic";
 
 type Row = {
   id: string; code: string; name: string; phone: string; email: string | null; tier: string; status: string; ends_on: string | null;
@@ -28,12 +30,13 @@ function NextAction({ r }: { r: Row }) {
   return null;
 }
 
-export function MembersList({ canCreate }: { canCreate: boolean }) {
+export function MembersList({ canCreate, canBulkSend = false, canEditText = false }: { canCreate: boolean; canBulkSend?: boolean; canEditText?: boolean }) {
   return (
     <FilteredList<Row>
       list="members"
       searchPlaceholder="Name, mobile or CC-000123"
       toolbar={canCreate ? <Button asChild><Link href="/app/members/new"><UserPlus className="h-4 w-4" /> New member</Link></Button> : null}
+      selection={canBulkSend ? { rowLabel: (r) => r.name, actions: (sel, clear) => <BulkSendButton list="members" target={{ ...bulkTarget(sel), count: sel.total }} onDone={clear} canEditText={canEditText} /> } : undefined}
       columns={[
         { key: "name", header: "Member", cell: (r) => (
           <span className="flex flex-col">

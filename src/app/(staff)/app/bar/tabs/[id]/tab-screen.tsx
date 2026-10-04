@@ -14,6 +14,7 @@ import { ConfirmButton } from "@/components/confirm";
 import { cn } from "@/components/ui/cn";
 import { formatINR } from "@/lib/money";
 import { fmtDateTime } from "@/lib/time";
+import { SendMessageButton } from "@/components/message-composer";
 import { SettleDialog } from "../../_components/settle-dialog";
 import type { MenuItem, TablesData, TabLine, TabView } from "../../_components/types";
 import { toRejection, type Rejection } from "../../_components/err";
@@ -43,7 +44,9 @@ function LineRow({ line, perms, onDone, otherTabs }: { line: TabLine; perms: { m
           <Money paise={line.netAmount} className="font-semibold" />
           {line.discountAmount ? <span className="text-xs text-green-700">−{formatINR(line.discountAmount)} ({line.discountPct}%)</span> : null}
           <span className="flex gap-1">
-            {!line.sent && line.status === "NEW" ? <Badge tone="neutral">not sent</Badge> : null}
+            {/* v5 MO-10: where the line came from; MO-3: app lines wait for Accept in "Incoming orders". */}
+            {line.source === "APP" ? <Badge tone="blue">via app</Badge> : <Badge tone="neutral">by staff</Badge>}
+            {line.awaitingAcceptance ? <Badge tone="amber">awaiting accept</Badge> : !line.sent && line.status === "NEW" ? <Badge tone="neutral">not sent</Badge> : null}
             <StatusBadge status={line.status} />
           </span>
         </div>
@@ -100,7 +103,7 @@ function LineRow({ line, perms, onDone, otherTabs }: { line: TabLine; perms: { m
   );
 }
 
-export function TabScreen({ tabId, perms }: { tabId: string; perms: { manager: boolean } }) {
+export function TabScreen({ tabId, perms }: { tabId: string; perms: { manager: boolean; message?: boolean } }) {
   const tab = useApi<TabView>(`/api/bar/tabs/${tabId}`, { pollMs: 10000 });
   const menu = useApi<MenuItem[]>("/api/bar/menu");
   const openTabs = useApi<OpenTab[]>("/api/bar/tabs");
@@ -131,7 +134,7 @@ export function TabScreen({ tabId, perms }: { tabId: string; perms: { manager: b
     <DataState state={tab}>
       {(t) => {
         const editable = t.status === "OPEN";
-        const unsent = t.lines.filter((l) => l.status === "NEW" && !l.sent).length;
+        const unsent = t.lines.filter((l) => l.status === "NEW" && !l.sent && !l.awaitingAcceptance).length;
         return (
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center gap-3">
@@ -142,6 +145,7 @@ export function TabScreen({ tabId, perms }: { tabId: string; perms: { manager: b
               <StatusBadge status={t.status} />
               {t.guestId ? (t.guestIdVerified ? <Badge tone="green"><ShieldCheck className="mr-1 h-3 w-3" />ID verified 18+</Badge> : <Badge tone="amber">ID not verified</Badge>) : null}
               <span className="text-sm text-muted-foreground">Opened {fmtDateTime(t.openedAt)}</span>
+              {perms.message ? <SendMessageButton context="TAB" recordId={t.id} className="ml-auto" /> : null}
             </div>
             {t.carriedReason ? <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm">Carried over: {t.carriedReason}</p> : null}
 

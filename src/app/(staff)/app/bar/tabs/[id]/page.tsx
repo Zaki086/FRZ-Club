@@ -11,7 +11,7 @@ export default async function TabPage({ params }: { params: Promise<{ id: string
   return (
     <div>
       <ClockInBanner />
-      <TabScreen tabId={id} perms={{ manager: can(actor, "bar.close_day") }} />
+      <TabScreen tabId={id} perms={{ manager: can(actor, "bar.close_day"), message: can(actor, "messages.compose") }} />
     </div>
   );
 }

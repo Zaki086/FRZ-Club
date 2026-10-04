@@ -20,6 +20,7 @@ import { ConfirmButton } from "@/components/confirm";
 import { fmtDate, fmtDateTime, fmtRange } from "@/lib/time";
 import { formatINR, parseRupees } from "@/lib/money";
 import { WhatsAppButton } from "@/components/whatsapp-button";
+import { SendMessageButton } from "@/components/message-composer";
 import { ResetLinkButton } from "@/components/reset-link-button";
 
 type P360 = {
@@ -43,7 +44,7 @@ type P360 = {
   totals: { bookings: number; courtSpend: number; shopSpend: number; barSpend: number; membershipSpend: number; discountsSaved: number; visits: number; dueTotal: number };
 };
 
-type Perms = { manage: boolean; cancel: boolean; checkin: boolean; book: boolean; passwordLinks: boolean };
+type Perms = { manage: boolean; cancel: boolean; checkin: boolean; book: boolean; passwordLinks: boolean; message?: boolean };
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -216,6 +217,7 @@ export function Member360({ memberId, perms }: { memberId: string; perms: Perms 
                 ) : null}
                 {perms.cancel && (current || pending) ? <CancelMembership membershipId={(current ?? pending)!.id} onDone={reload} /> : null}
                 <WhatsAppButton target={{ template: "MEMBERSHIP", memberId: p.member.id }} label="WhatsApp membership status" />
+                {perms.message ? <SendMessageButton context="MEMBER" recordId={p.member.id} /> : null}
                 {perms.passwordLinks ? <ResetLinkButton url={`/api/members/${p.member.id}/reset-link`} /> : null}
               </div>
             </div>
