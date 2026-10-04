@@ -59,7 +59,6 @@ export function PortalBook({ memberId, memberName, today }: { memberId: string; 
           </button>
         ))}
       </div>
-      <p className="text-xs text-muted-foreground">Sessions are 60 minutes. How far ahead you can book depends on your plan; the club checks it when you confirm.</p>
       <DataState state={avail}>
         {(a) => (
           <div className="flex flex-col gap-3">

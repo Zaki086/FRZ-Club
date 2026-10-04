@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { getSettings } from "@/server/services/settings";
+import { clubOpenGraph } from "@/server/services/og";
 import { Toaster } from "sonner";
 import { SampleDataBanner } from "@/components/sample-data-banner";
 import { SwRegister } from "@/components/sw-register";
@@ -19,7 +20,9 @@ export async function generateMetadata(): Promise<Metadata> {
     // database not reachable (e.g. at build time): fall back to a neutral title
   }
   const club = name || "Club";
-  return { title: { default: club, template: `%s · ${club}` }, description: `${club}: courts, memberships, shop and café.` };
+  // URL-6: Open Graph (club name + logo, absolute on APP_URL) on every page, so a WhatsApp preview of any link —
+  // including /portal/* links that redirect to the login page — shows the club, not a hostname.
+  return { title: { default: club, template: `%s · ${club}` }, description: `${club}: courts, memberships, shop and café.`, ...(await clubOpenGraph()) };
 }
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#1f3a2e" };

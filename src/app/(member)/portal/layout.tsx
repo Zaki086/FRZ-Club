@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { SessionGuard } from "@/components/session-guard";
 import { requireUser } from "@/server/auth/current";
@@ -6,8 +7,14 @@ import { LogoutButton } from "@/components/logout-button";
 import { LogoMark } from "@/components/logo";
 import { getSettings } from "@/server/services/settings";
 import { PortalNav } from "./portal-nav";
+import { clubOpenGraph } from "@/server/services/og";
 
 export const dynamic = "force-dynamic";
+
+/** URL-6: member-portal links preview as the club (name + logo), whether or not the visitor is logged in. */
+export async function generateMetadata(): Promise<Metadata> {
+  return clubOpenGraph({ description: "Member portal — your bookings, bills, refunds and membership." });
+}
 
 export default async function MemberLayout({ children }: { children: React.ReactNode }) {
   const actor = await requireUser(["MEMBER"], "/portal");

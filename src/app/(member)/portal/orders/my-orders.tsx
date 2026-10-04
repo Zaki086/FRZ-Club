@@ -97,13 +97,13 @@ export function MyOrders() {
       </div>
       {params.get("payment") === "success" ? <div className="rounded-md border border-success/40 bg-success/10 p-3 text-sm">Payment received — thank you!</div> : null}
       {params.get("payment") === "failed" ? <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">The payment did not go through. You can try again.</div> : null}
-      <DataState state={orders} isEmpty={(d) => d.length === 0} empty={{ title: "No orders yet", hint: "Order gear online and collect it at the club or get it delivered." }}>
+      <DataState state={orders} isEmpty={(d) => d.length === 0} empty={{ title: "No orders yet" }}>
         {(rows) => <div className="flex flex-col gap-3">{rows.map((o) => <OrderCard key={o.id} o={o} onChange={() => void orders.reload()} />)}</div>}
       </DataState>
       <Card>
         <CardHeader><CardTitle>Racket restringing</CardTitle></CardHeader>
         <CardContent>
-          <DataState state={tickets} isEmpty={(d) => d.length === 0} empty={{ title: "No restring tickets", hint: "Hand in your racket at the shop counter." }}>
+          <DataState state={tickets} isEmpty={(d) => d.length === 0} empty={{ title: "No restring tickets" }}>
             {(rows) => (
               <div className="divide-y">
                 {rows.map((t) => (

@@ -33,7 +33,7 @@ export function RefundQrButton({ refunds, label = "Show QR" }: { refunds: Waitin
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <Button size="sm" onClick={() => setOpen(true)}><QrCode className="h-4 w-4" /> {label}</Button>
-      <DialogContent title="Show this at the front desk" description="The desk scans the QR (or your member card) and hands you the cash.">
+      <DialogContent title="Show this at the front desk">
         <div className="flex flex-col gap-6" data-testid="refund-qr-dialog">
           {shown.map((r) => (
             <div key={r.id} className="flex flex-col items-center gap-1 text-center">
