@@ -2,7 +2,7 @@
 // v3 §3: the standard FilterBar + summary strip + dense table every list uses.
 // Search (300 ms), date presets (IST) with a day stepper, multi-select facets with counts, sort, page size,
 // removable chips, "Clear all", "N results", CSV export, saved views — all in the URL.
-import { createContext, Fragment, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, Fragment, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import * as Menu from "@radix-ui/react-dropdown-menu";
 import { Bookmark, Check, ChevronDown, ChevronLeft, ChevronRight, Download, Search, X } from "lucide-react";
 import { api, ApiError, useApi } from "../api";
@@ -23,6 +23,76 @@ const ReloadContext = createContext<() => void>(() => {});
 export const useListReload = () => useContext(ReloadContext);
 
 export type Column<R> = { key: string; header: ReactNode; className?: string; cell: (r: R) => ReactNode };
+
+// v5 §3.4: optional row selection (bulk actions). Off unless a list passes `selection`; every other list is unchanged.
+/** The most rows one bulk action may take ("all N matching the filter" included). */
+export const SELECTION_MAX = 500;
+/** What is selected: picked row ids, or every row matching the current filter (`qs`, the list's query string). */
+export type ListSelection = { list: string; ids: string[]; allMatching: boolean; total: number; qs: string };
+type SelectionState = { on: boolean; has: (id: string) => boolean; toggle: (id: string) => void; disabled: (id: string) => boolean };
+const SelectionContext = createContext<SelectionState>({ on: false, has: () => false, toggle: () => {}, disabled: () => true });
+/** For a custom `view` (e.g. a board): render a checkbox per row while the list's selection mode is on. */
+export const useListSelection = () => useContext(SelectionContext);
+
+/** A row checkbox (stops the row's own click). */
+export function SelectBox({ id, label }: { id: string; label: string }) {
+  const sel = useListSelection();
+  if (!sel.on) return null;
+  return (
+    <input
+      type="checkbox"
+      className="h-4 w-4 accent-primary"
+      checked={sel.has(id)}
+      disabled={sel.disabled(id)}
+      onClick={(e) => e.stopPropagation()}
+      onChange={() => sel.toggle(id)}
+      aria-label={`Select ${label}`}
+      data-testid="row-select"
+    />
+  );
+}
+
+/** The header checkbox: every row on this page (up to the limit). */
+function PageSelectBox({ ids, picked, allMatching, setPicked }: { ids: string[]; picked: string[]; allMatching: boolean; setPicked: (f: (p: string[]) => string[]) => void }) {
+  const all = allMatching || (ids.length > 0 && ids.every((id) => picked.includes(id)));
+  return (
+    <input
+      type="checkbox"
+      className="h-4 w-4 accent-primary"
+      checked={all}
+      disabled={allMatching}
+      onChange={() => setPicked((p) => (all ? p.filter((x) => !ids.includes(x)) : [...p, ...ids.filter((x) => !p.includes(x))].slice(0, SELECTION_MAX)))}
+      aria-label="Select every row on this page"
+      data-testid="page-select"
+    />
+  );
+}
+
+function SelectionBar<R>({ list, data, qs, picked, allMatching, onAll, onClear, actions }: {
+  list: string; data: ListData<R>; qs: string; picked: string[]; allMatching: boolean; onAll: () => void; onClear: () => void;
+  actions: (sel: ListSelection, clear: () => void) => ReactNode;
+}) {
+  if (!picked.length && !allMatching) return null;
+  const sel: ListSelection = { list, ids: allMatching ? [] : picked, allMatching, total: allMatching ? data.total : picked.length, qs };
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-primary/40 bg-primary/5 px-3 py-2 text-sm" data-testid="selection-bar">
+      <span className="font-semibold" data-testid="selection-count">
+        {allMatching ? `All ${data.total.toLocaleString("en-IN")} matching the filter` : `${picked.length} selected`}
+      </span>
+      {!allMatching && data.total > picked.length ? (
+        data.total <= SELECTION_MAX ? (
+          <button type="button" className="text-xs font-semibold text-primary underline" onClick={onAll} data-testid="select-all-matching">
+            Select all {data.total.toLocaleString("en-IN")} matching the filter
+          </button>
+        ) : (
+          <span className="text-xs text-muted-foreground">{data.total.toLocaleString("en-IN")} match — at most {SELECTION_MAX} at once: narrow the filter to take them all</span>
+        )
+      ) : null}
+      <button type="button" className="text-xs font-semibold text-muted-foreground underline" onClick={onClear}>Clear selection</button>
+      <span className="ml-auto flex flex-wrap gap-2">{actions(sel, onClear)}</span>
+    </div>
+  );
+}
 
 function SummaryStrip<R>({ data, update }: { data: ListData<R>; update: (p: Record<string, string | null>) => void }) {
   if (!data.summary.length) return null;
@@ -159,8 +229,22 @@ export function FilterBar<R>({ data, params, update, replaceAll, qs, list, searc
   }, [q, params.q, update]);
   const range = params.range ?? "";
   // Step from the day in the address bar, not the last response, so quick repeated clicks all count.
-  const singleDay =
+  const shownDay =
     range === "CUSTOM" && params.from && params.from === params.to ? params.from : data.range.from && data.range.from === data.range.to ? data.range.from : null;
+  // The address bar only changes once the navigation lands; remember the day already asked for, so a second click
+  // before that moves on from it instead of asking for the same day again.
+  const pendingDay = useRef<string | null>(null);
+  useEffect(() => {
+    if (pendingDay.current && params.from === pendingDay.current) pendingDay.current = null;
+  }, [params.from]);
+  const singleDay = shownDay;
+  const stepDay = (delta: number) => {
+    const base = pendingDay.current ?? shownDay;
+    if (!base) return;
+    const day = addDays(base, delta);
+    pendingDay.current = day;
+    update({ range: "CUSTOM", from: day, to: day });
+  };
   const chips: Array<{ label: string; clear: Record<string, string | null> }> = [];
   if (params.q) chips.push({ label: `“${params.q}”`, clear: { q: null } });
   if (range) chips.push({ label: `${data.dateLabel ?? "Date"}: ${range === "CUSTOM" ? `${data.range.from ?? "…"} → ${data.range.to ?? "…"}` : PRESETS.find((p) => p[0] === range)?.[1] ?? range}`, clear: { range: null, from: null, to: null } });
@@ -178,7 +262,7 @@ export function FilterBar<R>({ data, params, update, replaceAll, qs, list, searc
         {data.dateLabel ? (
           <div className="flex items-center gap-1">
             {dayStepper && singleDay ? (
-              <Button variant="outline" size="icon" className="h-9 w-9" aria-label="Previous day" onClick={() => update({ range: "CUSTOM", from: addDays(singleDay, -1), to: addDays(singleDay, -1) })}>
+              <Button variant="outline" size="icon" className="h-9 w-9" aria-label="Previous day" onClick={() => stepDay(-1)}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
             ) : null}
@@ -187,7 +271,7 @@ export function FilterBar<R>({ data, params, update, replaceAll, qs, list, searc
               {PRESETS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </Select>
             {dayStepper && singleDay ? (
-              <Button variant="outline" size="icon" className="h-9 w-9" aria-label="Next day" onClick={() => update({ range: "CUSTOM", from: addDays(singleDay, 1), to: addDays(singleDay, 1) })}>
+              <Button variant="outline" size="icon" className="h-9 w-9" aria-label="Next day" onClick={() => stepDay(1)}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
             ) : null}
@@ -244,7 +328,7 @@ export function Pager<R>({ data, update }: { data: ListData<R>; update: (p: Reco
 }
 
 /** A list page body: summary strip, FilterBar, then a dense table (or a custom view of the rows), then paging. */
-export function FilteredList<R extends { id: string }>({ list, columns, searchPlaceholder, onRowClick, rowExtra, toolbar, pollMs, dayStepper, view, empty, summaryView }: {
+export function FilteredList<R extends { id: string }>({ list, columns: baseColumns, searchPlaceholder, onRowClick, rowExtra, toolbar, pollMs, dayStepper, view, empty, summaryView, selection }: {
   list: string;
   columns: Column<R>[];
   searchPlaceholder: string;
@@ -259,17 +343,38 @@ export function FilteredList<R extends { id: string }>({ list, columns, searchPl
   empty?: { title: string; hint?: string };
   /** Replace the standard summary strip (e.g. a figure that combines two summary values). */
   summaryView?: (data: ListData<R>, update: (p: Record<string, string | null>) => void) => ReactNode;
+  /** v5 §3.4: row checkboxes, "all N matching the filter" (max 500) and the actions on the selection. */
+  selection?: { actions: (sel: ListSelection, clear: () => void) => ReactNode; rowLabel?: (r: R) => string };
 }) {
   const s = useList<R>(list, { pollMs });
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  // "All matching" holds for the filter it was chosen on; changing the filter drops it.
+  const [allQs, setAllQs] = useState<string | null>(null);
+  const allMatching = !!selection && allQs !== null && allQs === s.qs;
+  const clearSelection = () => { setPicked([]); setAllQs(null); };
+  const selState: SelectionState = {
+    on: !!selection,
+    has: (id) => allMatching || picked.includes(id),
+    toggle: (id) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.length >= SELECTION_MAX ? p : [...p, id])),
+    disabled: (id) => allMatching || (!picked.includes(id) && picked.length >= SELECTION_MAX),
+  };
+  const label = (r: R) => selection?.rowLabel?.(r) ?? r.id;
+  const columns: Column<R>[] = selection
+    ? [{ key: "__select", header: null, className: "w-8", cell: (r) => <SelectBox id={r.id} label={label(r)} /> }, ...baseColumns]
+    : baseColumns;
   return (
     <ReloadContext.Provider value={s.reload}>
+    <SelectionContext.Provider value={selState}>
     <DataState state={s}>
       {(data) => (
         <div className="flex flex-col gap-3">
           {toolbar ? <div className="flex flex-wrap justify-end gap-2">{toolbar}</div> : null}
           {summaryView ? summaryView(data, s.update) : <SummaryStrip data={data} update={s.update} />}
           <FilterBar data={data} params={s.params} update={s.update} replaceAll={s.replaceAll} qs={s.qs} list={list} searchPlaceholder={searchPlaceholder} dayStepper={dayStepper} />
+          {selection ? (
+            <SelectionBar list={list} data={data} qs={s.qs} picked={picked} allMatching={allMatching} onAll={() => setAllQs(s.qs)} onClear={clearSelection} actions={selection.actions} />
+          ) : null}
           {data.rows.length === 0 ? (
             <Empty title={empty?.title ?? "Nothing matches these filters"} hint={empty?.hint ?? "Remove a filter or widen the dates."} />
           ) : view ? (
@@ -277,7 +382,7 @@ export function FilteredList<R extends { id: string }>({ list, columns, searchPl
           ) : (
             <Table>
               <THead>
-                <TR>{columns.map((c) => <TH key={c.key} className={c.className}>{c.header}</TH>)}</TR>
+                <TR>{columns.map((c) => <TH key={c.key} className={c.className}>{c.key === "__select" ? <PageSelectBox ids={data.rows.map((r) => r.id)} picked={picked} allMatching={allMatching} setPicked={setPicked} /> : c.header}</TH>)}</TR>
               </THead>
               <TBody>
                 {data.rows.map((r) => (
@@ -302,6 +407,7 @@ export function FilteredList<R extends { id: string }>({ list, columns, searchPl
         </div>
       )}
     </DataState>
+    </SelectionContext.Provider>
     </ReloadContext.Provider>
   );
 }

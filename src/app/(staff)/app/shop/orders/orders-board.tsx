@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import { Truck, Store, Phone } from "lucide-react";
 import { api, ApiError } from "@/components/api";
 import { RejectionBanner } from "@/components/states";
@@ -20,10 +20,15 @@ import { formatINR } from "@/lib/money";
 import { STATUS_LABEL, type OrderView } from "../_components/types";
 import { OrderTimeline } from "../_components/order-timeline";
 import { WhatsAppButton } from "@/components/whatsapp-button";
+import { SendMessageButton } from "@/components/message-composer";
+
+/** v5 §3.3: "Send message" is for those who may use the composer (shop staff fulfil orders but don't compose messages). */
+const CanMessage = createContext(false);
 
 const COLUMNS: string[] = ["PENDING_PAYMENT", "CONFIRMED", "READY_FOR_PICKUP", "PACKED", "OUT_FOR_DELIVERY"];
 
 function OrderCard({ o, onChange }: { o: OrderView; onChange: () => void }) {
+  const canMessage = useContext(CanMessage);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
@@ -85,6 +90,7 @@ function OrderCard({ o, onChange }: { o: OrderView; onChange: () => void }) {
           </Button>
         ))}
         <WhatsAppButton target={{ template: "ORDER", orderId: o.id }} />
+        {canMessage ? <SendMessageButton context="ORDER" recordId={o.id} /> : null}
         {o.due > 0 && o.status !== "CANCELLED" ? (
           <Dialog open={payOpen} onOpenChange={(v) => { setPayOpen(v); if (!v) onChange(); }}>
             <DialogTrigger asChild><Button size="sm" variant="outline">Take payment</Button></DialogTrigger>
@@ -157,9 +163,10 @@ function RowCard({ o }: { o: ListOrder }) {
 
 const PAYS: Record<string, string> = { ONLINE: "Paid online", PAY_AT_PICKUP: "Pay at pickup", PAY_ON_DELIVERY: "Pay on delivery" };
 
-export function OrdersBoard() {
+export function OrdersBoard({ canMessage = false }: { canMessage?: boolean }) {
   const [layout, setLayout] = useState<"board" | "list">("board");
   return (
+    <CanMessage.Provider value={canMessage}>
     <FilteredList<ListOrder>
       list="orders"
       searchPlaceholder="Order code, customer, mobile or item"
@@ -209,5 +216,6 @@ export function OrdersBoard() {
       rowExtra={(o) => <RowCard o={o} />}
       empty={{ title: "No orders match these filters", hint: "New website and portal orders appear here automatically." }}
     />
+    </CanMessage.Provider>
   );
 }

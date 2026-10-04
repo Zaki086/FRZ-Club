@@ -7,6 +7,7 @@ import * as D from "@radix-ui/react-dialog";
 import { api, ApiError, SESSION_ENDED_EVENT, SESSION_RESTORED_EVENT } from "./api";
 import { Button } from "./ui/button";
 import { Field, Input } from "./ui/input";
+import { LoginIdentifierInput } from "./contact-inputs";
 import { RejectionBanner } from "./states";
 
 export function SessionGuard() {
@@ -57,7 +58,7 @@ export function SessionGuard() {
             }}
           >
             <Field label="Phone or email">
-              <Input name="identifier" autoComplete="username" value={identifier} onChange={(e) => setIdentifier(e.target.value)} required autoFocus />
+              <LoginIdentifierInput name="identifier" value={identifier} onChange={(e) => setIdentifier(e.target.value)} required autoFocus />
             </Field>
             <Field label="Password">
               <Input name="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />

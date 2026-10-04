@@ -8,6 +8,7 @@ import { DataState, RejectionBanner } from "./states";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Field, Input } from "./ui/input";
+import { checkContactInputs, EmailInput, PhoneInput } from "./contact-inputs";
 import { fmtDateTime } from "@/lib/time";
 
 type Profile = {
@@ -34,18 +35,19 @@ function Details({ p, onSaved }: { p: Profile; onSaved: () => void }) {
           <span className="text-muted-foreground">Last login</span><span data-testid="last-login">{p.lastLoginAt ? fmtDateTime(p.lastLoginAt) : "—"}</span>
         </div>
         <p className="text-xs text-muted-foreground">To change your name or mobile number, ask the {p.member ? "front desk" : "club owner"}.</p>
-        <Field label="Email"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+        <Field label="Email"><EmailInput name="email" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
         {p.member ? (
           <div className="grid gap-2 sm:grid-cols-2">
             <Field label="Emergency contact"><Input value={ecName} onChange={(e) => setEcName(e.target.value)} /></Field>
-            <Field label="Emergency contact mobile"><Input inputMode="tel" value={ecPhone} onChange={(e) => setEcPhone(e.target.value)} /></Field>
+            <Field label="Emergency contact mobile"><PhoneInput name="emergencyContactPhone" value={ecPhone} onChange={(e) => setEcPhone(e.target.value)} /></Field>
           </div>
         ) : null}
         <RejectionBanner error={error} />
         <div className="flex items-center gap-2">
           <Button
             size="sm"
-            onClick={async () => {
+            onClick={async (e) => {
+              if (!checkContactInputs(e.currentTarget.parentElement?.parentElement)) return;
               setError(null);
               setSaved(false);
               try {

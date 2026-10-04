@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import type { refundReceipt } from "@/server/services/refunds";
 import { formatINR } from "@/lib/money";
 import { fmtDateTime } from "@/lib/time";
+import { formatPhone } from "@/lib/validation/contact";
 
 export type RefundReceiptData = Awaited<ReturnType<typeof refundReceipt>>;
 
@@ -14,7 +15,7 @@ export function RefundReceipt({ r, children }: { r: RefundReceiptData; children?
       <div className="text-center">
         <p className="text-[14px] font-bold">{r.club.name}</p>
         {r.club.address ? <p>{r.club.address}</p> : null}
-        {r.club.phone ? <p>{r.club.phone}</p> : null}
+        {r.club.phone ? <p>{formatPhone(r.club.phone)}</p> : null}
         <p className="mt-1 font-bold">REFUND RECEIPT</p>
       </div>
       <p className="mt-2">Refund: <b>{r.code}</b></p>

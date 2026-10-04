@@ -5,6 +5,7 @@ import { Star, Trash2, UserPlus } from "lucide-react";
 import { useApi } from "@/components/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PhoneInput } from "@/components/contact-inputs";
 import { TierBadge } from "@/components/badges";
 import { cn } from "@/components/ui/cn";
 import type { MemberHit, PickedPlayer } from "./types";
@@ -113,7 +114,7 @@ export function PlayerPicker({
             ) : null}
           </div>
           <form
-            className="flex gap-1"
+            className="flex items-start gap-1"
             onSubmit={(e) => {
               e.preventDefault();
               const name = guestName.trim();
@@ -130,7 +131,7 @@ export function PlayerPicker({
             }}
           >
             <Input placeholder="Guest name" value={guestName} onChange={(e) => setGuestName(e.target.value)} aria-label="Guest name" />
-            <Input className="w-32" placeholder="Phone" value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} aria-label="Guest phone" />
+            <PhoneInput wrapperClassName="w-44 shrink-0" placeholder="Phone" name="guestPhone" value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} aria-label="Guest phone" />
             <Button type="submit" variant="outline" aria-label="Add guest">
               <UserPlus className="h-4 w-4" />
             </Button>
