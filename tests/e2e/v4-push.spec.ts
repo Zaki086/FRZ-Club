@@ -88,6 +88,8 @@ test("v4-push 2. notification settings: in-app always on; push devices listed wi
 test("v4-push 3. the Owner's Message Log → WhatsApp messages: template, status timeline and tries, with event/template/status/date filters", async ({ browser }) => {
   const owner = await loginUi(browser, "owner@championsclub.example", STAFF_PW);
   await owner.page.goto("/app/settings/messages");
+  // The list first writes its default filters into the address; click only after that, or it undoes the navigation.
+  await owner.page.waitForURL(/range=/);
   await owner.page.getByRole("link", { name: /WhatsApp messages/ }).click();
   await owner.page.waitForURL(/\/app\/settings\/messages\/whatsapp/);
   await expect(owner.page.getByRole("heading", { name: "WhatsApp messages" })).toBeVisible();

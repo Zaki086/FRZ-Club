@@ -7,6 +7,7 @@ import { writeFileSync } from "node:fs";
 import type { Role } from "@prisma/client";
 import { test, type Browser, type Page } from "@playwright/test";
 import { navFor, type StaffRole } from "@/app/(staff)/app/_nav";
+import { CONTACT_FIELD_SOURCE, NON_TEXT_TYPES, SEARCH_BOX_SOURCE } from "./contact-inputs";
 
 const STAFF_PW = process.env.SEED_STAFF_PASSWORD ?? "";
 const MEMBER_PW = process.env.SEED_MEMBER_PASSWORD ?? "";
@@ -33,7 +34,7 @@ const DUMMY = /lorem ipsum|\bundefined\b|\bNaN\b|\[object Object\]|\bTODO\b|\bFI
 // Pages that are not ordinary screens (camera, downloads, print) are visited but not judged on width.
 const SKIP_WIDTH = /^\/kiosk|^\/print\//;
 
-type Result = { role: string; path: string; viewport: string; status: number; consoleErrors: string[]; dummyText: string | null; overflowPx: number; menuMismatch?: string | null };
+type Result = { role: string; path: string; viewport: string; status: number; consoleErrors: string[]; dummyText: string | null; overflowPx: number; menuMismatch?: string | null; contactInputs?: string[] };
 const results: Result[] = [];
 
 async function newPage(browser: Browser, width: number, height: number) {
@@ -92,7 +93,24 @@ for (const r of ROLES) {
         const text = await s.page.locator("body").innerText().catch(() => "");
         const m = DUMMY.exec(text);
         const overflow = SKIP_WIDTH.test(path) ? 0 : await s.page.evaluate(() => Math.max(0, document.documentElement.scrollWidth - window.innerWidth));
-        results.push({ role: r.role, path, viewport: label, status: res?.status() ?? 0, consoleErrors: errors.filter((e) => !/camera|NotAllowedError|NotFoundError: Requested device/i.test(e)), dummyText: m ? text.slice(Math.max(0, m.index - 40), m.index + 60).replace(/\s+/g, " ") : null, overflowPx: overflow });
+        // v5 CV-10: a rendered phone / mobile / email input without the shared validator (search boxes excluded).
+        const contactInputs = await s.page
+          .evaluate(({ contact, search, nonText }) => {
+            const out: string[] = [];
+            for (const el of Array.from(document.querySelectorAll("input"))) {
+              const type = (el.getAttribute("type") ?? "text").toLowerCase();
+              if (nonText.includes(type)) continue;
+              const label = el.labels?.[0]?.innerText ?? "";
+              const words = [el.name, el.id, el.getAttribute("aria-label"), el.placeholder, label].filter(Boolean).join(" ");
+              if (!(new RegExp(contact, "i").test(words) || type === "tel" || type === "email")) continue;
+              if (/^(phone|email|login)$/.test(el.dataset.validate ?? "")) continue;
+              if (type === "search" || el.getAttribute("role") === "searchbox" || new RegExp(search, "i").test(words)) continue;
+              out.push((el.name || el.getAttribute("aria-label") || el.placeholder || label || type).slice(0, 60));
+            }
+            return out;
+          }, { contact: CONTACT_FIELD_SOURCE, search: SEARCH_BOX_SOURCE, nonText: NON_TEXT_TYPES })
+          .catch(() => [] as string[]);
+        results.push({ role: r.role, path, viewport: label, status: res?.status() ?? 0, consoleErrors: errors.filter((e) => !/camera|NotAllowedError|NotFoundError: Requested device/i.test(e)), dummyText: m ? text.slice(Math.max(0, m.index - 40), m.index + 60).replace(/\s+/g, " ") : null, overflowPx: overflow, contactInputs });
         s.page.off("console", onConsole);
         s.page.off("pageerror", onError);
       }

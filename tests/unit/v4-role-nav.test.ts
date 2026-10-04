@@ -50,7 +50,8 @@ const SCREEN: Record<string, string> = {
 /** Shop, bar, kitchen and accountant menus as they were in v3 (unchanged by v4). */
 const UNCHANGED: Record<"SHOP_STAFF" | "BAR_STAFF" | "KITCHEN" | "ACCOUNTANT", string[]> = {
   SHOP_STAFF: ["Counter POS", "Online orders", "Restring queue", "Counter sales", "Products & pricing", "Stock & receipts", "Stock movements", "Purchase orders", "Stock take", "Refunds", "My cash drawer", "My shifts & leave", "My account"],
-  BAR_STAFF: ["Tables & tabs", "Ready to serve", "Kitchen display", "All bar tabs", "Bar day & close", "Refunds", "My cash drawer", "My shifts & leave", "My account"],
+  // v5 §1.1 changed this (was: no "Menu"): the Bar staff menu gains "Menu" (the menu builder) — the only v5 staff-menu addition.
+  BAR_STAFF: ["Tables & tabs", "Ready to serve", "Kitchen display", "All bar tabs", "Bar day & close", "Menu", "Refunds", "My cash drawer", "My shifts & leave", "My account"],
   KITCHEN: ["Kitchen display", "My shifts & leave", "My account"],
   ACCOUNTANT: ["Cash reconciliation", "All cash drawers", "Invoices", "Business clients", "Expenses", "Payroll", "GST report", "Ledger", "Refunds", "My cash drawer", "Dashboard", "Reports & sharing", "Attendance", "Staff directory", "My shifts & leave", "My account"],
 };
@@ -94,7 +95,7 @@ describe("v4 §1.1 — exact sidebars", () => {
 describe("v4 §1.3 — access rule", () => {
   // A sample of v3 screens the v4 menus dropped.
   const REMOVED: Record<"MANAGER" | "FRONT_DESK", string[]> = {
-    MANAGER: ["/app/pricing", "/app/reports", "/app/desk", "/app/desk/expiring", "/app/desk/visits", "/app/messages", "/app/shop", "/app/shop/orders", "/app/shop/products", "/app/shop/movements", "/app/shop/stock-take", "/app/bar", "/app/bar/kds", "/app/bar/menu", "/app/bar/tabs", "/app/employees", "/app/settings", "/app/finance/payroll", "/app/finance/ledger"],
+    MANAGER: ["/app/pricing", "/app/reports", "/app/desk", "/app/desk/expiring", "/app/desk/visits", "/app/messages", "/app/shop", "/app/shop/orders", "/app/shop/products", "/app/shop/movements", "/app/shop/stock-take", "/app/bar", "/app/bar/kds", "/app/bar/tabs", "/app/employees", "/app/settings", "/app/finance/payroll", "/app/finance/ledger"],
     FRONT_DESK: ["/app/members", "/app/shop", "/app/desk/risk/x", "/app/courts/bookings/x", "/app/pricing", "/app/reports", "/app/finance/invoices", "/app/staff/employees", "/app/staff/roster", "/app/staff/leave", "/app/bar", "/app/settings", "/app/employees", "/app/finance/drawers"],
   };
 
@@ -116,6 +117,10 @@ describe("v4 §1.3 — access rule", () => {
     for (const p of ["/app/members/m1", "/app/crm/l1", "/app/desk/visits", "/print/bill/b1", "/print/welcome/m1", "/app/notifications", "/kiosk"]) {
       expect(canOpenPage("FRONT_DESK", p), p).toBe(true);
     }
+    // v5 §1.1 changed this (was: /app/bar/menu returned 403 for the Manager): the menu builder and its "Preview as
+    // member" open by direct link (they are not on the Manager's menu); its prints are under /print/**.
+    for (const p of ["/app/bar/menu", "/app/bar/menu/preview", "/print/menu", "/print/menu/tables"]) expect(canOpenPage("MANAGER", p), p).toBe(true);
+    expect(canOpenPage("FRONT_DESK", "/app/bar/menu")).toBe(false);
     // One segment only: a detail pattern never opens a deeper screen.
     expect(canOpenPage("MANAGER", "/app/members/m1/edit")).toBe(false);
     expect(canOpenPage("FRONT_DESK", "/app/members")).toBe(false);
