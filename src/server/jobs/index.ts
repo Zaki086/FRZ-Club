@@ -95,9 +95,11 @@ export async function runAllJobs() {
 /** Advisory-lock key held by `seed:demo` while it rebuilds the history with its own clock. */
 export const SEED_LOCK_KEY = 7310;
 
-/** True while a seed run holds the lock: the worker must not run real-clock jobs on half-built sample data. */
+/** True while a seed run holds the lock on THIS database: the worker must not run real-clock jobs on half-built sample
+ *  data. pg_locks lists every database's locks, so a reset of another database (e.g. the test club's) must not count. */
 export async function seedInProgress(): Promise<boolean> {
   const rows = await prisma.$queryRaw<{ held: boolean }[]>`
-    SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 0 AND objid = ${SEED_LOCK_KEY} AND objsubid = 1 AND granted) AS held`;
+    SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 0 AND objid = ${SEED_LOCK_KEY} AND objsubid = 1 AND granted
+                   AND database = (SELECT oid FROM pg_database WHERE datname = current_database())) AS held`;
   return rows[0]?.held ?? false;
 }
