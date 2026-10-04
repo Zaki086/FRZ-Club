@@ -5,9 +5,13 @@ import { isDomainError } from "@/server/errors";
 import { clientIp } from "@/server/rate-limit";
 import { viewResolution, type ResolutionView } from "@/server/services/whatsapp/resolution";
 import { ResolutionChoice } from "./choice";
+import { clubOpenGraph } from "@/server/services/og";
 
 // v4 §5.3: the club-cancellation choice from the WhatsApp button (no login). The token is the only key.
-export const metadata: Metadata = { title: "Cancelled session", robots: { index: false, follow: false } };
+/** URL-6: link preview with the club's name, logo and what this page is. */
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: "Cancelled session", robots: { index: false, follow: false }, ...(await clubOpenGraph({ description: "A club session was cancelled — choose your refund or credit." })) };
+}
 export const dynamic = "force-dynamic";
 
 function Unavailable({ title, text }: { title: string; text: string }) {

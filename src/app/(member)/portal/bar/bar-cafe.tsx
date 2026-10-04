@@ -112,7 +112,6 @@ function Cart({ memberId, menu, ordering, onPlaced }: { memberId: string; menu: 
           <span className="text-muted-foreground">Estimated total (your prices)</span>
           <Money paise={estimate} className="font-semibold" />
         </div>
-        <p className="text-xs text-muted-foreground">Added to your bar tab — you pay at the bar. The bar&apos;s till confirms the final price.</p>
         <RejectionBanner error={error} />
         <Button
           size="lg"
@@ -213,7 +212,7 @@ function MyTab({ d, reload }: { d: MyBar; reload: () => void }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {!t ? (
-          <p className="text-sm text-muted-foreground">No open tab. Your first order opens one; you settle it at the bar.</p>
+          <p className="text-sm text-muted-foreground">No open tab.</p>
         ) : (
           <>
             {rejected.map((o) => (
@@ -287,7 +286,6 @@ export function BarCafe() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">Bar &amp; Café</h1>
-          <p className="text-sm text-muted-foreground">Order from your table — it goes on your bar tab, and your member discount is applied automatically.</p>
         </div>
         {bar.data?.family.length ? (
           <label className="flex items-center gap-2 text-sm font-semibold">

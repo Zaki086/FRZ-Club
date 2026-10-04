@@ -19,7 +19,7 @@ type Data = { rows: Row[]; totals: { paid: number; refunded: number; net: number
 export function MyPaymentsView() {
   const state = useApi<Data>("/api/portal/payments");
   return (
-    <DataState state={state} isEmpty={(d) => d.rows.length === 0} empty={{ title: "No payments yet", hint: "Payments and refunds on your bookings, orders, tabs and membership appear here." }}>
+    <DataState state={state} isEmpty={(d) => d.rows.length === 0} empty={{ title: "No payments yet" }}>
       {(d) => (
         <div className="flex flex-col gap-4">
           <h1 className="text-2xl font-bold">My payments</h1>

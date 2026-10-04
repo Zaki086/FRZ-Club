@@ -112,7 +112,7 @@ export function MyBookings({ memberId }: { memberId: string }) {
               <Card>
                 <CardHeader><CardTitle>Upcoming</CardTitle></CardHeader>
                 <CardContent className="divide-y">
-                  {upcoming.length === 0 ? <Empty title="No upcoming bookings" hint="Book a court for up to your plan's booking window." /> : upcoming.map((b) => <BookingRow key={b.id} b={b} memberId={memberId} onChanged={changed} upcoming />)}
+                  {upcoming.length === 0 ? <Empty title="No upcoming bookings" /> : upcoming.map((b) => <BookingRow key={b.id} b={b} memberId={memberId} onChanged={changed} upcoming />)}
                 </CardContent>
               </Card>
               <Card>

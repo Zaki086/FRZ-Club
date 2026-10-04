@@ -34,7 +34,7 @@ export function ShopCatalogue({ products, initialCategory }: { products: Catalog
         </Link>
       ) : null}
       {shown.length === 0 ? (
-        <Empty title="Nothing matches" hint="Try another category or search." />
+        <Empty title="Nothing matches" />
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {shown.map((p) => {

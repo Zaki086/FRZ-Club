@@ -52,7 +52,7 @@ export function PortalHome({ memberId }: { memberId: string }) {
               </CardHeader>
               <CardContent>
                 {upcoming.length === 0 ? (
-                  <Empty title="No upcoming bookings" hint="Book a court or join Friday social play." />
+                  <Empty title="No upcoming bookings" />
                 ) : (
                   <div className="divide-y">
                     {upcoming.map((b) => (

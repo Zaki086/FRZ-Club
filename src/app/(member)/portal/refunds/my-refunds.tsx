@@ -129,7 +129,7 @@ export function MyRefundsView() {
             </Card>
           ) : null}
           {d.refunds.length === 0 ? (
-            <Empty title="No refunds yet" hint="Refunds for cancelled bookings and orders appear here, from request to collection." />
+            <Empty title="No refunds yet" />
           ) : (
             d.refunds.map((r) => {
               const l = label(r);

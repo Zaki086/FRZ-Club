@@ -53,7 +53,7 @@ export function MyTabs() {
   return (
     <div className="flex flex-col gap-3">
       <h1 className="text-2xl font-bold">My bar tab</h1>
-      <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: "No bar tabs yet", hint: "Your member discount is applied automatically at the bar." }}>
+      <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: "No bar tabs yet" }}>
         {(tabs) => {
           const open = tabs.filter((t) => t.status === "OPEN" || t.status === "CARRIED");
           const past = tabs.filter((t) => !(t.status === "OPEN" || t.status === "CARRIED"));

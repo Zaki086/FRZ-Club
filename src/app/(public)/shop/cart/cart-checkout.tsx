@@ -44,7 +44,7 @@ export function CartCheckout() {
     fulfilment === "DELIVERY" ? (online ? "ONLINE" : "PAY_ON_DELIVERY") : !online ? "PAY_AT_PICKUP" : isMember ? paymentOption : "ONLINE";
 
   if (!cart.length) {
-    return <Empty title="Your cart is empty" hint="Browse rackets, balls, shoes and more." action={<Button asChild><Link href="/shop">Go to the shop</Link></Button>} />;
+    return <Empty title="Your cart is empty" action={<Button asChild><Link href="/shop">Go to the shop</Link></Button>} />;
   }
 
   return (

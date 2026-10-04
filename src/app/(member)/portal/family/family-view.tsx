@@ -14,7 +14,7 @@ export function FamilyView() {
     <DataState state={state}>
       {(list) =>
         list.length === 0 ? (
-          <Empty title="No one listed under you" hint="When the desk signs up a Junior with your mobile number as the guardian, they appear here." />
+          <Empty title="No one listed under you" />
         ) : (
           <div className="flex flex-col gap-4" data-testid="family">
             {list.map((j) => (

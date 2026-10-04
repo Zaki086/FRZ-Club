@@ -14,7 +14,7 @@ export default function PortalInvoicesPage() {
   return (
     <div className="flex flex-col gap-3">
       <h1 className="text-2xl font-bold">Invoices</h1>
-      <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: "No invoices yet", hint: "Membership payments issue a tax invoice automatically." }}>
+      <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: "No invoices yet" }}>
         {(rows) => (
           <Card className="divide-y">
             {rows.map((i) => (

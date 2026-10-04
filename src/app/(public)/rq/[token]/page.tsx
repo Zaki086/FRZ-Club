@@ -6,8 +6,12 @@ import { fmtDate, fmtDateTime, istDate } from "@/lib/time";
 import { isDomainError } from "@/server/errors";
 import { publicRefundByToken } from "@/server/services/refunds";
 import { getSettings } from "@/server/services/settings";
+import { clubOpenGraph } from "@/server/services/og";
 
-export const metadata: Metadata = { title: "Refund to collect", robots: { index: false, follow: false } };
+/** URL-6: link preview with the club's name, logo and what this page is. */
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: "Refund to collect", robots: { index: false, follow: false }, ...(await clubOpenGraph({ description: "Your refund is ready to collect at the front desk." })) };
+}
 export const dynamic = "force-dynamic";
 
 /**
