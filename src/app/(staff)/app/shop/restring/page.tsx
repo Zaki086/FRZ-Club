@@ -9,7 +9,7 @@ export default async function RestringPage() {
   if (!can(actor, "shop.view")) forbidden();
   return (
     <div>
-      <PageHeader title="Restring queue" subtitle="Racket restringing tickets (E-10). The customer is notified automatically when a ticket is marked READY." />
+      <PageHeader title="Restring queue" />
       <RestringQueue canAdvance={can(actor, "shop.fulfil")} />
     </div>
   );

@@ -20,10 +20,7 @@ export function PrivacyPanel() {
     <Card>
       <CardHeader><CardTitle>Your data</CardTitle></CardHeader>
       <CardContent className="flex flex-col gap-3 text-sm">
-        <p className="text-muted-foreground">
-          Download everything the club holds about you, or ask for your personal details to be erased. Bills and invoices are kept as the tax
-          law requires. <a className="text-primary underline" href="/privacy">Privacy notice</a>
-        </p>
+        <a className="self-start text-primary underline" href="/privacy">Privacy notice</a>
         <Button asChild variant="outline" size="sm" className="self-start">
           <a href="/api/portal/my-data" download data-testid="download-my-data">Download my data</a>
         </Button>

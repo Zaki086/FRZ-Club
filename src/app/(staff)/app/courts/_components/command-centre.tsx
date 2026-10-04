@@ -177,7 +177,6 @@ export function CommandCentre({ initialDate, perms, prefillMemberId }: { initial
                     ))}
                   </tbody>
                 </table>
-                <p className="p-2 text-[11px] text-muted-foreground">Auto-refreshes every 10 seconds. Sessions are 60 minutes; a new start every 30 minutes.</p>
               </div>
             );
           }}

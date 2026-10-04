@@ -6,10 +6,11 @@ import { RelTime } from "@/components/rel-time";
 import { StatusBadge } from "@/components/badges";
 import { formatINR } from "@/lib/money";
 import { ReturnDialog, type Sale } from "../_components/today-sales";
+import { FindReceipt } from "./sales-tools";
 
 type Row = {
   id: string; code: string; created_at: string; bill_id: string; member_id: string | null; sold_by_name: string | null; customer: string;
-  customer_kind: "member" | "walkin"; total: number; discount: number; refunded: number; status: string; methods: string[]; units: number;
+  customer_kind: "member" | "walkin"; bill_customer_kind?: string; total: number; discount: number; refunded: number; status: string; methods: string[]; units: number;
   lines: Sale["lines"];
 };
 
@@ -29,6 +30,7 @@ export function SalesList({ canReturn }: { canReturn: boolean }) {
       searchPlaceholder="Sale code, customer or item"
       pollMs={30_000}
       dayStepper
+      toolbar={<FindReceipt />}
       columns={[
         { key: "code", header: "Sale", cell: (r) => (
           <span className="flex flex-col">
@@ -39,7 +41,7 @@ export function SalesList({ canReturn }: { canReturn: boolean }) {
         { key: "customer", header: "Customer", cell: (r) => (
           <span className="flex flex-col">
             <span className="font-semibold">{r.customer}</span>
-            <span className="text-xs text-muted-foreground">{r.customer_kind === "member" ? "Member" : "Walk-in"}</span>
+            <span className="text-xs text-muted-foreground">{r.customer_kind === "member" ? "Member" : r.bill_customer_kind === "WALK_IN" ? "Walk-in · no phone" : "Walk-in"}</span>
           </span>
         ) },
         { key: "items", header: "Items", cell: (r) => <span className="text-sm">{r.lines.map((l) => `${l.qty}× ${l.description}`).join(", ")}</span> },
@@ -55,7 +57,7 @@ export function SalesList({ canReturn }: { canReturn: boolean }) {
         { key: "staff", header: "Sold by", cell: (r) => <span className="text-sm">{r.sold_by_name ?? "—"}</span> },
         ...(canReturn ? [{ key: "return", header: "", cell: (r: Row) => <Return r={r} /> }] : []),
       ]}
-      empty={{ title: "No counter sales match these filters", hint: "Sales from the counter POS appear here. Try another day or clear the filters." }}
+      empty={{ title: "No counter sales match these filters" }}
     />
   );
 }

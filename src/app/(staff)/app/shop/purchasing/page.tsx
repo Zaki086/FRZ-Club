@@ -12,7 +12,7 @@ export default async function PurchasingPage() {
   if (!can(actor, "shop.view")) forbidden();
   return (
     <div>
-      <PageHeader title="Purchase orders" subtitle="Order from suppliers; receiving an order puts the stock on the shelf and creates the supplier bill." />
+      <PageHeader title="Purchase orders" />
       <PurchaseOrders canManage={can(actor, "shop.stock")} />
     </div>
   );

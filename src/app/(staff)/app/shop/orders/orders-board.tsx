@@ -214,7 +214,7 @@ export function OrdersBoard({ canMessage = false }: { canMessage?: boolean }) {
         ) },
       ]}
       rowExtra={(o) => <RowCard o={o} />}
-      empty={{ title: "No orders match these filters", hint: "New website and portal orders appear here automatically." }}
+      empty={{ title: "No orders match these filters" }}
     />
     </CanMessage.Provider>
   );

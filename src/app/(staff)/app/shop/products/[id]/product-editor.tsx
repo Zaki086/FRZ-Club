@@ -228,7 +228,7 @@ export function ProductEditor({ id }: { id: string }) {
         <div className="flex flex-col gap-4">
           <PageHeader
             title={d.name}
-            subtitle={<>{[d.brand, nice(d.category)].filter(Boolean).join(" · ")}{d.archivedAt ? " · archived (hidden from sale)" : ""}</>}
+            meta={<>{[d.brand, nice(d.category)].filter(Boolean).join(" · ")}{d.archivedAt ? " · archived (hidden from sale)" : ""}</>}
             actions={
               <>
                 <Button asChild variant="ghost"><Link href="/app/shop/products">All products</Link></Button>

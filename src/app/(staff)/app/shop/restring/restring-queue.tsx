@@ -10,7 +10,7 @@ import { cn } from "@/components/ui/cn";
 import { fmtDateTime } from "@/lib/time";
 import { useNow } from "../_components/use-now";
 
-type Ticket = { id: string; code: string; customerName: string; racket: string; notes: string; status: string; promisedAt: string; createdAt: string };
+type Ticket = { id: string; code: string; customerName: string; memberId?: string | null; racket: string; notes: string; status: string; promisedAt: string; createdAt: string };
 
 const NEXT: Record<string, { to: string; label: string }> = {
   RECEIVED: { to: "IN_PROGRESS", label: "Start stringing" },
@@ -27,7 +27,7 @@ function TicketRow({ t, onDone, now, canAdvance }: { t: Ticket; onDone: () => vo
     <div className={cn("flex flex-wrap items-center gap-3 p-3", overdue && "bg-red-50")}>
       <div className="min-w-48 flex-1">
         <p className="font-semibold">{t.racket} <span className="font-mono text-xs text-muted-foreground">{t.code}</span></p>
-        <p className="text-sm">{t.customerName}{t.notes ? <span className="text-muted-foreground"> · {t.notes}</span> : null}</p>
+        <p className="text-sm">{t.customerName}{t.memberId === null ? <span className="text-muted-foreground"> · Walk-in</span> : null}{t.notes ? <span className="text-muted-foreground"> · {t.notes}</span> : null}</p>
       </div>
       <div className="text-sm">
         Promised {fmtDateTime(t.promisedAt)} {overdue ? <Badge tone="red">OVERDUE</Badge> : null}
@@ -57,7 +57,7 @@ export function RestringQueue({ canAdvance }: { canAdvance: boolean }) {
         <Button size="sm" variant={all ? "default" : "outline"} onClick={() => setAll(true)}>All tickets</Button>
       </div>
       <Card>
-        <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: "No restring tickets", hint: "Sell “Racket restring” at the counter POS to create one." }}>
+        <DataState state={state} isEmpty={(d) => d.length === 0} empty={{ title: "No restring tickets" }}>
           {(rows) => <div className="divide-y">{rows.map((t) => <TicketRow key={t.id} t={t} now={now} canAdvance={canAdvance} onDone={() => void state.reload()} />)}</div>}
         </DataState>
       </Card>

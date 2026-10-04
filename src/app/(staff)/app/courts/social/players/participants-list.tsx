@@ -72,7 +72,7 @@ export function ParticipantsList({ perms }: { perms: Perms }) {
           {r.session_status !== "SCHEDULED" ? ` · session ${r.session_status.toLowerCase()}` : ""}
         </p>
       )}
-      empty={{ title: "No players match these filters", hint: "Players join a session from the social play board or the member portal." }}
+      empty={{ title: "No players match these filters" }}
     />
   );
 }

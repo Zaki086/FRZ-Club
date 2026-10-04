@@ -11,7 +11,7 @@ export default async function SocialPage() {
   if (!can(actor, "courts.view")) forbidden();
   return (
     <div>
-      <PageHeader title="Social play" subtitle="Many players share a court held by one social reservation, so no regular booking can overlap it (SP-4)." />
+      <PageHeader title="Social play" />
       <SocialBoard
         today={istDate(clock.now())}
         perms={{ manage: can(actor, "social.manage"), book: can(actor, "bookings.any"), checkin: can(actor, "checkin") }}

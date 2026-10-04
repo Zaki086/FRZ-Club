@@ -12,7 +12,7 @@ export default async function StockTakePage() {
   if (!can(actor, "shop.stock")) forbidden();
   return (
     <div>
-      <PageHeader title="Stock take" subtitle="Count what is on the shelf. Leave a row empty to skip it; differences are posted as stock adjustments." />
+      <PageHeader title="Stock take" />
       <StockTakes />
     </div>
   );

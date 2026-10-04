@@ -28,7 +28,7 @@ export function NotificationsList() {
       <DataState
         state={state}
         isEmpty={(d) => d.items.length === 0}
-        empty={{ title: "No notifications yet", hint: "Bookings, orders, reminders and alerts will appear here." }}
+        empty={{ title: "No notifications yet" }}
       >
         {(d) => (
           <Card className="divide-y">

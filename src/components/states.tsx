@@ -11,12 +11,15 @@ export function Loading({ label = "Loading…" }: { label?: string }) {
   );
 }
 
-export function Empty({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {
+/**
+ * Empty state (v6 UI-4): one short line and at most one action. `hint` is kept so older call sites type-check, but it
+ * is no longer shown — no explanatory sentence under an empty list.
+ */
+export function Empty({ title, action }: { title: string; /** @deprecated v6 UI-4 — ignored */ hint?: string; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed bg-card py-10 text-center">
-      <Inbox className="h-8 w-8 text-muted-foreground" />
-      <p className="font-semibold">{title}</p>
-      {hint ? <p className="max-w-sm text-sm text-muted-foreground">{hint}</p> : null}
+    <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed bg-card px-4 py-6 text-center" data-empty-state>
+      <Inbox className="h-6 w-6 text-muted-foreground" aria-hidden />
+      <p className="text-sm font-semibold">{title}</p>
       {action}
     </div>
   );

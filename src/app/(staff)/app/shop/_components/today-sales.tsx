@@ -41,7 +41,7 @@ export function ReturnDialog({ sale, onDone }: { sale: Sale; onDone: () => void 
       <DialogTrigger asChild>
         <Button size="sm" variant="outline"><Undo2 className="h-4 w-4" /> Return</Button>
       </DialogTrigger>
-      <DialogContent title={`Return from ${sale.code}`} description="Within 7 days of purchase (SH-10). Goods go back on the shelf and the returned amount is refunded.">
+      <DialogContent title={`Return from ${sale.code}`}>
         {done !== null ? (
           <div className="flex flex-col gap-3">
             <p className="rounded-md border border-green-300 bg-green-50 p-3 text-sm">Return recorded — {formatINR(done)} refunded.</p>

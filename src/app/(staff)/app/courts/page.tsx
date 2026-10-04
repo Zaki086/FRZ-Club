@@ -13,7 +13,7 @@ export default async function CourtsPage({ searchParams }: { searchParams: Promi
   const today = istDate(clock.now());
   return (
     <div>
-      <PageHeader title="Court command centre" subtitle="Live view of every court. Click a free slot to book, a booking to check in, take payment, change players or cancel." />
+      <PageHeader title="Court command centre" />
       <CommandCentre
         initialDate={sp.date && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : today}
         prefillMemberId={sp.member ?? null}

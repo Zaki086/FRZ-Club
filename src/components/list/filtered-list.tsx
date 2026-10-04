@@ -376,7 +376,7 @@ export function FilteredList<R extends { id: string }>({ list, columns: baseColu
             <SelectionBar list={list} data={data} qs={s.qs} picked={picked} allMatching={allMatching} onAll={() => setAllQs(s.qs)} onClear={clearSelection} actions={selection.actions} />
           ) : null}
           {data.rows.length === 0 ? (
-            <Empty title={empty?.title ?? "Nothing matches these filters"} hint={empty?.hint ?? "Remove a filter or widen the dates."} />
+            <Empty title={empty?.title ?? "Nothing matches these filters"} />
           ) : view ? (
             view(data.rows, data)
           ) : (

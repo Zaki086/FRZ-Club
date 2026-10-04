@@ -58,7 +58,7 @@ export function StockTakes() {
               </Table>
             </div>
           )}
-          empty={{ title: "No stock takes match these filters", hint: "Count the shelf above and post it." }}
+          empty={{ title: "No stock takes match these filters" }}
         />
       </section>
     </div>

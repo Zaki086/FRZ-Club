@@ -12,10 +12,14 @@ type Row = {
   min_price: number | null; max_price: number | null; available: number; low: boolean | null; has_promotion: boolean; track_stock: boolean;
 };
 
-/** The existing "New product" dialog (stock page), reloading this list after a create. */
+/**
+ * v6 SM-2: the primary "Add product" button — the v3 §9.3 create form (name, description, variants, prices); the new
+ * product's page then opens for its photos and its discount (within the staff guardrail).
+ */
 function Create() {
   const reload = useListReload();
-  return <NewProductDialog onDone={reload} />;
+  const router = useRouter();
+  return <NewProductDialog label="Add product" onDone={reload} onCreated={(id) => router.push(`/app/shop/products/${id}`)} />;
 }
 
 export function ProductsList({ canCreate }: { canCreate: boolean }) {

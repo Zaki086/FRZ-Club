@@ -22,12 +22,22 @@ import { METHOD_LABEL } from "@/components/capabilities";
 type MemberHit = { id: string; memberCode: string; name: string; phone: string; status: MemberStatus };
 type CartRow = CartItem & { name: string; isRestring: boolean; stockLabel: string };
 type PayRow = TenderDraft;
-type SaleResult = { code: string; billId: string; total: number; discountTotal: number; changeGiven: number; tickets: string[]; lines: QuoteLine[] };
+type SaleResult = {
+  code: string; billId: string; total: number; discountTotal: number; changeGiven: number; tickets: string[]; lines: QuoteLine[];
+  walkIn?: boolean; customerKind?: string;
+};
+type PhoneMembers = { phone: string | null; members: MemberHit[] };
 
 function variantName(p: CatalogueProduct, v: CatalogueVariant) {
   return `${p.name}${v.label !== "Standard" ? ` — ${v.label}` : ""}`;
 }
 
+/**
+ * Counter POS (shop staff; the Manager's Counter Sales "New sale"). v6 WI-1: the "Walk-in customer" switch hides the
+ * member search — the sale needs no member, with an optional name and phone (v5 PhoneInput). WI-2: walk-ins pay
+ * WALK_IN prices (the server's pricing engine). WI-3: a phone that belongs to a member is pointed out — one tap
+ * switches to that member; member pricing is never applied silently. JR-1: no split payment on a Junior's sale.
+ */
 export function CounterPos() {
   const catalogue = useApi<CatalogueProduct[]>("/api/shop/catalogue");
   const [q, setQ] = useState("");
@@ -36,8 +46,10 @@ export function CounterPos() {
   const [member, setMember] = useState<MemberHit | null>(null);
   const [memberQ, setMemberQ] = useState("");
   const [memberTerm, setMemberTerm] = useState("");
+  const [walkIn, setWalkIn] = useState(false);
   const [walkName, setWalkName] = useState("");
   const [walkPhone, setWalkPhone] = useState("");
+  const [phoneTerm, setPhoneTerm] = useState("");
   const [racket, setRacket] = useState("");
   const [notes, setNotes] = useState("");
   const [split, setSplit] = useState(false);
@@ -55,12 +67,28 @@ export function CounterPos() {
     const t = setTimeout(() => setMemberTerm(memberQ.trim()), 250);
     return () => clearTimeout(t);
   }, [memberQ]);
-  const memberHits = useApi<MemberHit[]>(!member && memberTerm.length >= 2 ? `/api/members?q=${encodeURIComponent(memberTerm)}` : null);
+  const memberHits = useApi<MemberHit[]>(!member && !walkIn && memberTerm.length >= 2 ? `/api/members?q=${encodeURIComponent(memberTerm)}` : null);
+  // WI-3: a complete walk-in mobile number is checked against the members (the prompt below; nothing is switched).
+  useEffect(() => {
+    const t = setTimeout(() => setPhoneTerm(walkPhone.replace(/\D/g, "").length >= 10 ? walkPhone.trim() : ""), 300);
+    return () => clearTimeout(t);
+  }, [walkPhone]);
+  const phoneMembers = useApi<PhoneMembers>(walkIn && phoneTerm ? `/api/shop/walk-in-phone?phone=${encodeURIComponent(phoneTerm)}` : null);
+  const switchToMember = (m: MemberHit) => {
+    setMember(m);
+    setWalkIn(false);
+    setWalkName("");
+    setWalkPhone("");
+    setMemberQ("");
+  };
 
   const items = useMemo(() => cart.map((c) => ({ variantId: c.variantId, qty: c.qty })), [cart]);
-  const quoteReq = useMemo(() => (items.length ? { memberId: member?.id ?? undefined, items } : null), [items, member]);
+  const quoteReq = useMemo(() => (items.length ? { memberId: walkIn ? undefined : member?.id ?? undefined, items } : null), [items, member, walkIn]);
   const { quote, error: quoteError, loading } = useShopQuote(quoteReq);
   const hasRestring = cart.some((c) => c.isRestring);
+  const noSplit = !!quote?.noSplit; // JR-1
+  const splitting = split && !noSplit;
+  const needsCustomer = !walkIn && !member;
 
   const filtered = (catalogue.data ?? []).filter(
     (p) =>
@@ -101,6 +129,7 @@ export function CounterPos() {
     setCart([]);
     setMember(null);
     setMemberQ("");
+    setWalkIn(false);
     setWalkName("");
     setWalkPhone("");
     setRacket("");
@@ -113,11 +142,12 @@ export function CounterPos() {
   };
 
   const submit = async () => {
-    if (!member && !checkContactInputs(walkInRef.current)) return;
+    if (needsCustomer) return setError({ code: "VALIDATION_FAILED", message: "Choose the member, or switch on “Walk-in customer”." });
+    if (walkIn && !checkContactInputs(walkInRef.current)) return;
     setBusy(true);
     setError(null);
     try {
-      const payments = split
+      const payments = splitting
         ? rows.map((r) => {
             const amount = parseRupees(r.amount);
             if (!amount) throw new ApiError("VALIDATION_FAILED", "Enter an amount for every split payment row.", 422, null);
@@ -126,9 +156,10 @@ export function CounterPos() {
         : [tenderProof(single)];
       const r = await api<SaleResult>("/api/shop/counter-sale", {
         body: {
-          memberId: member?.id,
-          customerName: member ? undefined : walkName || undefined,
-          customerPhone: member ? undefined : walkPhone || undefined,
+          memberId: walkIn ? undefined : member?.id,
+          walkIn: walkIn || undefined,
+          customerName: walkIn ? walkName.trim() || undefined : undefined,
+          customerPhone: walkIn ? walkPhone.trim() || undefined : undefined,
           items,
           payments,
           restring: hasRestring ? { racket, notes } : undefined,
@@ -189,7 +220,7 @@ export function CounterPos() {
               </Button>
             ))}
           </div>
-          <DataState state={catalogue} isEmpty={() => filtered.length === 0} empty={{ title: "No products match", hint: "Try another search or category." }}>
+          <DataState state={catalogue} isEmpty={() => filtered.length === 0} empty={{ title: "No products match" }}>
             {() => (
               <div className="grid max-h-[60vh] grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3">
                 {filtered.flatMap((p) =>
@@ -227,6 +258,7 @@ export function CounterPos() {
           {result ? (
             <div className="flex flex-col gap-2 rounded-md border border-green-300 bg-green-50 p-3 text-sm" data-testid="sale-receipt">
               <p className="flex items-center gap-2 text-base font-semibold"><Receipt className="h-4 w-4" /> Sale {result.code} complete
+                {result.walkIn ? <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium" data-testid="sale-walk-in">Walk-in</span> : null}
                 <a className="ml-auto text-sm font-normal text-primary underline" href={`/print/bill/${result.billId}`} target="_blank" rel="noreferrer">Print receipt</a>
               </p>
               {result.lines.map((l, i) => (
@@ -244,8 +276,36 @@ export function CounterPos() {
           ) : null}
 
           <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium">Customer</p>
-            {member ? (
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium">Customer</p>
+              {/* WI-1: the walk-in switch — on: no member search, the sale needs no member. */}
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-checked={walkIn}
+                  className="h-4 w-4"
+                  checked={walkIn}
+                  data-testid="walk-in-switch"
+                  onChange={(e) => { setWalkIn(e.target.checked); if (e.target.checked) { setMember(null); setMemberQ(""); } setError(null); }}
+                />
+                Walk-in customer
+              </label>
+            </div>
+            {walkIn ? (
+              <div className="flex flex-col gap-2">
+                <div ref={walkInRef} className="grid grid-cols-2 items-start gap-2">
+                  <Input placeholder="Name (optional)" aria-label="Walk-in name" maxLength={100} value={walkName} onChange={(e) => setWalkName(e.target.value)} />
+                  <PhoneInput placeholder="Phone (optional)" aria-label="Walk-in phone" name="customerPhone" value={walkPhone} onChange={(e) => setWalkPhone(e.target.value)} />
+                </div>
+                {(phoneMembers.data?.members ?? []).map((m) => (
+                  <div key={m.id} role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/60 bg-warning/15 p-2 text-sm" data-testid="walk-in-member-prompt">
+                    <span>This number belongs to <b>{m.name}</b> ({m.memberCode}) — use member pricing?</span>
+                    <Button size="sm" variant="outline" onClick={() => switchToMember(m)}>Use member pricing</Button>
+                  </div>
+                ))}
+              </div>
+            ) : member ? (
               <div className="flex items-center justify-between gap-2 rounded-md border bg-accent/40 p-2 text-sm">
                 <div>
                   <p className="font-semibold">{member.name} <span className="font-mono text-xs text-muted-foreground">{member.memberCode}</span></p>
@@ -255,7 +315,7 @@ export function CounterPos() {
               </div>
             ) : (
               <>
-                <Input placeholder="Member name, phone or code (for the plan discount)" value={memberQ} onChange={(e) => setMemberQ(e.target.value)} data-testid="pos-member-search" />
+                <Input placeholder="Member name, phone or code" value={memberQ} onChange={(e) => setMemberQ(e.target.value)} data-testid="pos-member-search" />
                 {memberTerm.length >= 2 ? (
                   <div className="max-h-40 divide-y overflow-y-auto rounded-md border">
                     {(memberHits.data ?? []).map((m) => (
@@ -268,10 +328,6 @@ export function CounterPos() {
                     {memberHits.error ? <p className="p-2 text-sm text-destructive">{memberHits.error.message}</p> : null}
                   </div>
                 ) : null}
-                <div ref={walkInRef} className="grid grid-cols-2 items-start gap-2">
-                  <Input placeholder="Walk-in name (optional)" value={walkName} onChange={(e) => setWalkName(e.target.value)} />
-                  <PhoneInput placeholder="Walk-in phone (optional)" aria-label="Walk-in phone" name="customerPhone" value={walkPhone} onChange={(e) => setWalkPhone(e.target.value)} />
-                </div>
               </>
             )}
           </div>
@@ -293,7 +349,7 @@ export function CounterPos() {
 
           {hasRestring ? (
             <div className="grid gap-2 rounded-md border border-blue-200 bg-blue-50 p-2">
-              <p className="text-sm font-medium">Restringing ticket (needs a member or a walk-in phone)</p>
+              <p className="text-sm font-medium">Restringing ticket{walkIn ? " — a walk-in needs a phone so we can tell them when it's ready" : ""}</p>
               <Input placeholder="Racket (e.g. Wilson Blade 98)" value={racket} onChange={(e) => setRacket(e.target.value)} />
               <Input placeholder="Notes (string, tension)" value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
@@ -303,11 +359,11 @@ export function CounterPos() {
             <div className="flex flex-col gap-2 rounded-md border bg-muted/40 p-3">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold">Payment (in full)</p>
-                {methods.length > 1 ? (
+                {methods.length > 1 && !noSplit ? (
                   <Button size="sm" variant="ghost" onClick={() => { if (!split) setRows([emptyTender("CASH"), emptyTender(methods.find((m) => m !== "CASH") ?? "CASH")]); setSplit(!split); }}><Split className="h-4 w-4" /> {split ? "Single payment" : "Split payment"}</Button>
                 ) : null}
               </div>
-              {!split ? (
+              {!splitting ? (
                 <div className="grid grid-cols-3 gap-2">
                   <div className="col-span-3 flex gap-1">
                     {methods.map((m) => (
@@ -334,7 +390,8 @@ export function CounterPos() {
                 </div>
               )}
               {error?.code === "DRAWER_NOT_OPEN" ? <DrawerOpener defaultArea="SHOP" onOpened={() => setError(null)} /> : <RejectionBanner error={error} />}
-              <Button size="xl" disabled={busy || !quote} onClick={submit} data-testid="pos-submit">
+              {needsCustomer ? <p className="text-xs text-muted-foreground" data-testid="pos-needs-customer">Choose the member, or switch on “Walk-in customer”.</p> : null}
+              <Button size="xl" disabled={busy || !quote || needsCustomer} onClick={submit} data-testid="pos-submit">
                 {busy ? "Completing…" : quote ? `Complete sale · ${formatINR(quote.total)}` : "Complete sale"}
               </Button>
               <Button variant="ghost" size="sm" onClick={reset}>Clear sale</Button>

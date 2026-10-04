@@ -17,8 +17,8 @@ export function ResetLinkButton({ url, label = "Password reset link" }: { url: s
         onClick={async () => {
           setError(null);
           try {
-            const r = await api<{ link: string; phone: string; name: string }>(url, { body: {} });
-            setLink({ full: `${window.location.origin}${r.link}`, phone: r.phone, name: r.name });
+            const r = await api<{ link: string; url: string; phone: string; name: string }>(url, { body: {} });
+            setLink({ full: r.url, phone: r.phone, name: r.name }); // URL-1: built on the server from APP_URL
           } catch (e) {
             setError(e instanceof ApiError ? e.message : String(e));
           }

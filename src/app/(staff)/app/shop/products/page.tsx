@@ -13,7 +13,7 @@ export default async function ProductsPage() {
   if (!can(actor, "shop.view")) forbidden();
   return (
     <div>
-      <PageHeader title="Products" subtitle="Everything the shop sells: photos, sizes, prices and discounts. Stock changes only through receipts, stock takes and adjustments." />
+      <PageHeader title="Products" />
       <ProductsList canCreate={can(actor, "shop.stock")} />
       <ShopDiscounts />
     </div>

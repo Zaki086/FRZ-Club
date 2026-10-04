@@ -9,7 +9,7 @@ export default async function ShopOrdersPage() {
   if (!can(actor, "shop.fulfil")) forbidden();
   return (
     <div>
-      <PageHeader title="Online orders" subtitle="Pickup and delivery orders from the website and member portal. Stock is reserved at checkout and leaves the shelf at handover." />
+      <PageHeader title="Online orders" />
       <OrdersBoard canMessage={can(actor, "messages.compose")} />
     </div>
   );

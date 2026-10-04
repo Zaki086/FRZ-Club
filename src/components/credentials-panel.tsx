@@ -13,7 +13,7 @@ import { fmtDateTime } from "@/lib/time";
 
 type Status = {
   username: string; memberCode: string; canLogIn: boolean; lastLoginAt: string | null; credentialsIssuedAt: string | null;
-  linkActiveUntil: string | null; noOwnLogin: boolean;
+  linkActiveUntil: string | null; noOwnLogin: boolean; publicOrigin?: string;
   deliveries: Array<{ id: string; channel: string; status: string; error: string | null; at: string }>;
 };
 
@@ -23,8 +23,9 @@ const STATUS: Record<string, { label: string; tone: "green" | "amber" | "red" | 
   LINK_OPENED: { label: "WhatsApp opened", tone: "blue" }, FAILED: { label: "Failed", tone: "red" }, SKIPPED: { label: "Not available", tone: "neutral" },
 };
 
-export function linkFor(token: string) {
-  return `${typeof window === "undefined" ? "" : window.location.origin}/set-password/${token}`;
+/** URL-1: the set-password link on the club's public address (APP_URL, sent by the server), never this browser's host. */
+export function linkFor(token: string, origin = "") {
+  return `${origin.replace(/\/$/, "")}/set-password/${token}`;
 }
 
 function Qr({ text }: { text: string }) {
@@ -75,8 +76,7 @@ export function CredentialsPanel({ memberId, initialToken }: { memberId: string;
             </div>
             {token ? (
               <div className="flex flex-wrap items-start gap-3">
-                <Qr text={linkFor(token)} />
-                <p className="max-w-xs text-xs text-muted-foreground">The member scans this to set their own password now. The link works once.</p>
+                <Qr text={linkFor(token, s.publicOrigin)} />
               </div>
             ) : null}
             {s.deliveries.length ? (

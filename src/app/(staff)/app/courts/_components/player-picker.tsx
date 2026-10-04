@@ -44,7 +44,7 @@ export function PlayerPicker({
   return (
     <div className="flex flex-col gap-2">
       <div className="divide-y rounded-md border">
-        {players.length === 0 ? <p className="p-3 text-sm text-muted-foreground">No players yet — search a member or add a walk-in guest.</p> : null}
+        {players.length === 0 ? <p className="p-3 text-sm text-muted-foreground">No players yet.</p> : null}
         {players.map((p, i) => (
           <div key={p.key} className="flex items-center gap-2 p-2 text-sm">
             {onPrimary ? (
