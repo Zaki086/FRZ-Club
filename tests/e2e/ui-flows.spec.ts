@@ -216,12 +216,13 @@ test("5. the shop sells at the till after opening its drawer", async ({ browser 
   await page.getByRole("button", { name: /avail\./ }).first().click();
   // v6 WI-1 changed this (was: no customer chosen = a walk-in): a sale without a member is a walk-in by the switch.
   await page.getByTestId("walk-in-switch").check();
-  const methods = page.locator("div.col-span-3.flex.gap-1 button");
-  const labels = (await methods.allTextContents()).map((t) => t.trim());
+  // The payment-method buttons by name (the cash panel also has quick-amount buttons such as "Exact").
+  const method = (name: string) => page.getByRole("button", { name, exact: true });
+  const shown = async () => (await Promise.all(["Cash", "Card", "UPI", "Online"].map(async (m) => ((await method(m).count()) ? m : null)))).filter(Boolean);
   if (mode === "cash") {
-    expect(labels).toEqual(["Cash"]);
+    expect(await shown()).toEqual(["Cash"]);
   } else {
-    expect(labels).toEqual(["Cash", "Card", "UPI"]);
+    expect(await shown()).toEqual(["Cash", "Card", "UPI"]);
     await page.getByRole("button", { name: "UPI", exact: true }).click();
     await page.getByLabel("UPI reference (UTR)").fill(utr());
     await expect(page.getByAltText("UPI QR code")).toBeVisible();
